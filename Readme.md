@@ -48,14 +48,19 @@ curl http://localhost:8000/health
 
 ### LLM Configuration (Optional)
 
-If no key is configured, backend automatically returns mock JSON.
+If no token is configured, backend automatically returns mock JSON.
+
+The model layer now uses an OpenAI-compatible request body against GitHub Models.
 
 ```bash
-# Optional
-set OPENAI_API_KEY=your_key
-set OPENAI_BASE_URL=https://api.openai.com/v1
-set OPENAI_MODEL=gpt-4o-mini
+# Windows
+set GITHUB_MODELS_TOKEN=your_github_pat
+set OPENAI_BASE_URL=https://models.github.ai/inference
+set OPENAI_MODEL=openai/gpt-4.1-mini
+set GITHUB_API_VERSION=2022-11-28
 ```
+
+You can also use `GITHUB_TOKEN` or `OPENAI_API_KEY` as a fallback token env name.
 
 ## 2. Run Frontend (React + Vite + TypeScript)
 

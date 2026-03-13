@@ -1,4 +1,4 @@
-﻿"""LLM adapter with OpenAI-compatible API and mock fallback strategy."""
+"""LLM adapter using an OpenAI-style payload against GitHub Models."""
 
 import json
 import os
@@ -10,9 +10,9 @@ from app.mock_data import get_mock_reasoning
 from app.schemas import ReasonResponse
 
 
-SYSTEM_PROMPT = """你是司法推理结构化引擎。请仅返回 JSON，不要返回任何额外文字。
-JSON 字段必须包含：entities, events, claims, conflicts, evidence_paths, recommended_view, summary。
-recommended_view 必须是 conflict_compare / timeline_reasoning / hypothesis_board 之一。"""
+SYSTEM_PROMPT = """You are a legal reasoning engine. Return JSON only.
+The JSON must contain: entities, events, claims, conflicts, evidence_paths, recommended_view, summary.
+recommended_view must be one of: conflict_compare, timeline_reasoning, hypothesis_board."""
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -26,11 +26,16 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 async def run_reasoning(case_text: str, question: str) -> ReasonResponse:
-    """Call LLM when configured; fallback to mock data on any failure."""
+    """Call GitHub Models when configured; fallback to mock data on any failure."""
 
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    api_key = (
+        os.getenv("GITHUB_MODELS_TOKEN", "").strip()
+        or os.getenv("GITHUB_TOKEN", "").strip()
+        or os.getenv("OPENAI_API_KEY", "").strip()
+    )
+    base_url = os.getenv("OPENAI_BASE_URL", "https://models.github.ai/inference").rstrip("/")
+    model = os.getenv("OPENAI_MODEL", "openai/gpt-4.1-mini")
+    api_version = os.getenv("GITHUB_API_VERSION", "2022-11-28")
 
     if not api_key:
         return get_mock_reasoning()
@@ -41,13 +46,22 @@ async def run_reasoning(case_text: str, question: str) -> ReasonResponse:
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": f"案件材料：\n{case_text}\n\n推理问题：\n{question}\n\n只返回 JSON。",
+                "content": (
+                    f"Case materials:\n{case_text}\n\n"
+                    f"Reasoning question:\n{question}\n\n"
+                    "Return JSON only."
+                ),
             },
         ],
         "temperature": 0.1,
     }
 
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": api_version,
+    }
 
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
