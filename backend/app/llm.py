@@ -15,6 +15,31 @@ The JSON must contain: entities, events, claims, conflicts, evidence_paths, reco
 recommended_view must be one of: conflict_compare, timeline_reasoning, hypothesis_board."""
 
 
+def _load_local_env() -> None:
+    """Load a simple .env file from project root without extra dependencies."""
+
+    if os.getenv("_REASONING_ENV_LOADED") == "1":
+        return
+
+    env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+    if not os.path.exists(env_path):
+        os.environ["_REASONING_ENV_LOADED"] = "1"
+        return
+
+    with open(env_path, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            os.environ.setdefault(key, value)
+
+    os.environ["_REASONING_ENV_LOADED"] = "1"
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     """Parse plain JSON or JSON wrapped in markdown code fences."""
 
@@ -28,13 +53,23 @@ def _extract_json(text: str) -> dict[str, Any]:
 async def run_reasoning(case_text: str, question: str) -> ReasonResponse:
     """Call GitHub Models when configured; fallback to mock data on any failure."""
 
+    _load_local_env()
+
     api_key = (
-        os.getenv("GITHUB_MODELS_TOKEN", "").strip()
-        or os.getenv("GITHUB_TOKEN", "").strip()
+        os.getenv("GITHUB_TOKEN", "").strip()
+        or os.getenv("GITHUB_MODELS_TOKEN", "").strip()
         or os.getenv("OPENAI_API_KEY", "").strip()
     )
-    base_url = os.getenv("OPENAI_BASE_URL", "https://models.github.ai/inference").rstrip("/")
-    model = os.getenv("OPENAI_MODEL", "openai/gpt-4.1-mini")
+    base_url = (
+        os.getenv("GITHUB_ENDPOINT", "").strip()
+        or os.getenv("OPENAI_BASE_URL", "").strip()
+        or "https://models.github.ai/inference"
+    ).rstrip("/")
+    model = (
+        os.getenv("GITHUB_MODEL_ID", "").strip()
+        or os.getenv("OPENAI_MODEL", "").strip()
+        or "openai/gpt-4.1-mini"
+    )
     api_version = os.getenv("GITHUB_API_VERSION", "2022-11-28")
 
     if not api_key:

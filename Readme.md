@@ -50,17 +50,23 @@ curl http://localhost:8000/health
 
 If no token is configured, backend automatically returns mock JSON.
 
-The model layer now uses an OpenAI-compatible request body against GitHub Models.
+The model layer uses an OpenAI-compatible request body against GitHub Models and will auto-read the project root `.env`.
+
+Example `.env`:
 
 ```bash
-# Windows
-set GITHUB_MODELS_TOKEN=your_github_pat
-set OPENAI_BASE_URL=https://models.github.ai/inference
-set OPENAI_MODEL=openai/gpt-4.1-mini
-set GITHUB_API_VERSION=2022-11-28
+GITHUB_TOKEN=your_github_pat
+GITHUB_ENDPOINT=https://models.inference.ai.azure.com
+GITHUB_MODEL_ID=gpt-4o-mini
+GITHUB_API_VERSION=2022-11-28
 ```
 
-You can also use `GITHUB_TOKEN` or `OPENAI_API_KEY` as a fallback token env name.
+Compatibility fallback env names are still supported:
+
+```bash
+OPENAI_BASE_URL=https://models.github.ai/inference
+OPENAI_MODEL=openai/gpt-4.1-mini
+```
 
 ## 2. Run Frontend (React + Vite + TypeScript)
 
