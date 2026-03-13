@@ -41,6 +41,14 @@ textarea {
   font-size: 14px;
 }
 
+input,
+select {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  font-size: 14px;
+}
+
 button {
   padding: 8px 12px;
   border: 1px solid #333;
@@ -52,6 +60,78 @@ button {
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.secondary {
+  background: #f4f4f4;
+  color: #222;
+}
+
+.danger {
+  background: #fff3f3;
+  color: #9a1212;
+  border-color: #d67a7a;
+}
+
+.evidence-editor,
+.evidence-list {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid #e1e1e1;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.evidence-card {
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.evidence-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.evidence-card p {
+  margin: 8px 0;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid transparent;
+}
+
+.status-success {
+  background: #edf8ef;
+  color: #176b2f;
+  border-color: #9ed0aa;
+}
+
+.status-partial {
+  background: #fff8e8;
+  color: #8a6200;
+  border-color: #e4c57b;
+}
+
+.status-unsupported,
+.status-unknown {
+  background: #fff1f1;
+  color: #8f1f1f;
+  border-color: #d9a0a0;
+}
+
+.hint {
+  margin: 8px 0 0;
+  color: #555;
+  font-size: 13px;
 }
 
 .error {
