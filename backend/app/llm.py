@@ -8,11 +8,13 @@ import httpx
 
 from app.evidence_tools import build_evidence_context
 from app.mock_data import get_mock_reasoning
-from app.schemas import EvidenceInput, EvidenceItem, ReasonResponse
+from app.schemas import EvidenceInput, EvidenceItem, LLMLog, ReasonResponse
 
 
-SYSTEM_PROMPT = """You are a legal reasoning engine. Return JSON only.
-The JSON must contain:
+SYSTEM_PROMPT = """你是一个法律推理引擎。只返回 JSON，不要返回 Markdown，不要返回额外解释。
+请使用中文填写所有自然语言字段，例如 summary、description、content、quote、notes、relation_type、event_type、location。
+
+返回的 JSON 必须包含以下字段：
 - evidence_items
 - entities
 - relations
@@ -23,25 +25,26 @@ The JSON must contain:
 - recommended_view
 - summary
 
-evidence_items fields:
+evidence_items 字段：
 id, type, original_content, source_file, page_or_paragraph, time, producer_or_speaker, is_original_evidence, notes
 
-entities fields:
+entities 字段：
 id, name, type, aliases, source_evidence_ids
 
-relations fields:
+relations 字段：
 id, subject_entity, object_entity, relation_type, time, evidence_sources, confidence_status
 
-events fields:
+events 字段：
 id, event_type, participant_entities, time, location, description, source_evidence_ids
 
-claims fields:
+claims 字段：
 id, content, source, target_ids, stance, credibility_status, quote
 
-Entity type must be one of: person, location, organization, object, account, time.
-stance must be one of: support, oppose, neutral.
-confidence_status and credibility_status must be one of: high, medium, low, unknown.
-recommended_view must be one of: conflict_compare, timeline_reasoning, hypothesis_board."""
+type 限制：
+- Entity.type 只能是 person, location, organization, object, account, time
+- Claim.stance 只能是 support, oppose, neutral
+- Relation.confidence_status 和 Claim.credibility_status 只能是 high, medium, low, unknown
+- recommended_view 只能是 conflict_compare, timeline_reasoning, hypothesis_board"""
 
 
 def _load_local_env() -> None:
@@ -79,18 +82,44 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(text)
 
 
+def _extract_message_text(content: Any) -> str:
+    """Normalize OpenAI-style message content into a plain string."""
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_parts.append(str(item.get("text", "")))
+        return "\n".join(part for part in text_parts if part).strip()
+
+    return str(content or "")
+
+
+def _describe_exception(exc: Exception) -> str:
+    """Return a stable, readable error string even when str(exc) is empty."""
+
+    detail = str(exc).strip()
+    if detail:
+        return f"{type(exc).__name__}: {detail}"
+    return type(exc).__name__
+
+
 def _format_evidence_context(evidences: list[EvidenceInput]) -> tuple[list, str]:
-    """Parse uploaded evidences and serialize them into the prompt."""
+    """Parse uploaded evidences and serialize a concise parser summary."""
 
     parsed_evidences = build_evidence_context(evidences)
     if not parsed_evidences:
-        return [], "No uploaded evidences."
+        return [], "无上传证据。"
 
     serialized = "\n\n".join(
         [
             f"[{item.type}] {item.name}\n"
-            f"tool={item.parser_tool}\n"
-            f"content=\n{item.normalized_text}"
+            f"解析工具: {item.parser_tool}\n"
+            f"解析说明: {(item.metadata or {}).get('parser_detail', '')}\n"
+            f"解析状态: {(item.metadata or {}).get('parse_status', '')}"
             for item in parsed_evidences
         ]
     )
@@ -143,26 +172,42 @@ async def run_reasoning(case_text: str, question: str, evidences: list[EvidenceI
         or "openai/gpt-4.1-mini"
     )
     api_version = os.getenv("GITHUB_API_VERSION", "2022-11-28")
+    llm_log = LLMLog(provider="github_models", model=model, endpoint=base_url)
 
     if not api_key:
-        mock_result = get_mock_reasoning()
+        fallback_reason = "no_token"
+        error_detail = "No API token configured. Set GITHUB_TOKEN/GITHUB_MODELS_TOKEN/OPENAI_API_KEY."
+        mock_result = get_mock_reasoning(fallback_reason, error_detail)
+        llm_log.fallback_reason = "no_token"
+        llm_log.error = error_detail
+        mock_result.llm_used = False
+        mock_result.fallback_reason = fallback_reason
+        mock_result.llm_log = llm_log
         mock_result.parsed_evidences = parsed_evidences
         mock_result.evidence_items = evidence_items or mock_result.evidence_items
         return mock_result
 
+    system_prompt = SYSTEM_PROMPT
+    user_prompt = (
+        f"以下是案件材料与证据，请基于这些内容进行结构化推理。\n\n"
+        f"案件材料：\n{case_text}\n\n"
+        f"结构化证据条目（这是主要证据输入，请优先基于它输出）：\n"
+        f"{json.dumps([item.model_dump() for item in evidence_items], ensure_ascii=False, indent=2)}\n\n"
+        f"证据解析摘要（仅用于帮助你理解证据来源和解析方式，不要与上面的证据内容重复计数）：\n"
+        f"{evidence_context}\n\n"
+        f"推理问题：\n{question}\n\n"
+        "请严格返回 JSON，字段值尽量使用中文，除人名、地名等专有名词外。"
+    )
+    llm_log.prompt_system = system_prompt
+    llm_log.prompt_user = user_prompt
+
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": (
-                    f"Case materials:\n{case_text}\n\n"
-                    f"Structured evidence items:\n{json.dumps([item.model_dump() for item in evidence_items], ensure_ascii=False, indent=2)}\n\n"
-                    f"Uploaded evidences parsed by tools:\n{evidence_context}\n\n"
-                    f"Reasoning question:\n{question}\n\n"
-                    "Return JSON only."
-                ),
+                "content": user_prompt,
             },
         ],
         "temperature": 0.1,
@@ -175,21 +220,94 @@ async def run_reasoning(case_text: str, question: str, evidences: list[EvidenceI
         "X-GitHub-Api-Version": api_version,
     }
 
+    response: httpx.Response | None = None
+
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
 
-        content = data["choices"][0]["message"]["content"]
+        content = _extract_message_text(data["choices"][0]["message"]["content"])
+        llm_log.llm_used = True
+        llm_log.raw_response = data
+        llm_log.raw_content = content
+        llm_log.usage = data.get("usage", {})
+        llm_log.limits = {
+            "x-ratelimit-limit-requests": response.headers.get("x-ratelimit-limit-requests", ""),
+            "x-ratelimit-remaining-requests": response.headers.get("x-ratelimit-remaining-requests", ""),
+            "x-ratelimit-reset-requests": response.headers.get("x-ratelimit-reset-requests", ""),
+            "x-ratelimit-limit-tokens": response.headers.get("x-ratelimit-limit-tokens", ""),
+            "x-ratelimit-remaining-tokens": response.headers.get("x-ratelimit-remaining-tokens", ""),
+            "x-ratelimit-reset-tokens": response.headers.get("x-ratelimit-reset-tokens", ""),
+        }
         parsed = _extract_json(content)
         response_model = ReasonResponse.model_validate(parsed)
+        response_model.llm_used = True
+        response_model.fallback_reason = ""
+        response_model.llm_log = llm_log
         response_model.parsed_evidences = parsed_evidences
         if not response_model.evidence_items:
             response_model.evidence_items = evidence_items
         return response_model
-    except Exception:
-        mock_result = get_mock_reasoning()
+    except httpx.HTTPStatusError as exc:
+        fallback_reason = "request_failed_or_invalid_json"
+        error_detail = _describe_exception(exc)
+        if exc.response is not None:
+            llm_log.raw_response = {
+                "status_code": exc.response.status_code,
+                "response_text": exc.response.text,
+            }
+        llm_log.fallback_reason = fallback_reason
+        llm_log.error = error_detail
+        mock_result = get_mock_reasoning(fallback_reason, error_detail)
+        mock_result.llm_used = False
+        mock_result.fallback_reason = fallback_reason
+        mock_result.llm_log = llm_log
+        mock_result.parsed_evidences = parsed_evidences
+        mock_result.evidence_items = evidence_items or mock_result.evidence_items
+        return mock_result
+    except httpx.RequestError as exc:
+        fallback_reason = "request_failed_or_invalid_json"
+        error_detail = _describe_exception(exc)
+        llm_log.fallback_reason = fallback_reason
+        llm_log.error = error_detail
+        llm_log.raw_response = {
+            "request_url": str(exc.request.url) if exc.request is not None else "",
+        }
+        mock_result = get_mock_reasoning(fallback_reason, error_detail)
+        mock_result.llm_used = False
+        mock_result.fallback_reason = fallback_reason
+        mock_result.llm_log = llm_log
+        mock_result.parsed_evidences = parsed_evidences
+        mock_result.evidence_items = evidence_items or mock_result.evidence_items
+        return mock_result
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
+        fallback_reason = "request_failed_or_invalid_json"
+        error_detail = _describe_exception(exc)
+        llm_log.fallback_reason = fallback_reason
+        llm_log.error = error_detail
+        if response is not None:
+            llm_log.raw_response = {
+                "status_code": response.status_code,
+                "response_text": response.text,
+            }
+        mock_result = get_mock_reasoning(fallback_reason, error_detail)
+        mock_result.llm_used = False
+        mock_result.fallback_reason = fallback_reason
+        mock_result.llm_log = llm_log
+        mock_result.parsed_evidences = parsed_evidences
+        mock_result.evidence_items = evidence_items or mock_result.evidence_items
+        return mock_result
+    except Exception as exc:
+        fallback_reason = "request_failed_or_invalid_json"
+        error_detail = _describe_exception(exc)
+        mock_result = get_mock_reasoning(fallback_reason, error_detail)
+        llm_log.fallback_reason = fallback_reason
+        llm_log.error = error_detail
+        mock_result.llm_used = False
+        mock_result.fallback_reason = fallback_reason
+        mock_result.llm_log = llm_log
         mock_result.parsed_evidences = parsed_evidences
         mock_result.evidence_items = evidence_items or mock_result.evidence_items
         return mock_result

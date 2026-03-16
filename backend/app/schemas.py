@@ -94,6 +94,23 @@ class Claim(BaseModel):
     quote: str = ""
 
 
+class LLMLog(BaseModel):
+    """Diagnostic information about one model invocation."""
+
+    provider: str = "github_models"
+    model: str = ""
+    endpoint: str = ""
+    llm_used: bool = False
+    fallback_reason: str = ""
+    prompt_system: str = ""
+    prompt_user: str = ""
+    raw_response: dict = Field(default_factory=dict)
+    raw_content: str = ""
+    usage: dict = Field(default_factory=dict)
+    limits: dict = Field(default_factory=dict)
+    error: str = ""
+
+
 class ReasonRequest(BaseModel):
     """Input payload for reasoning endpoint."""
 
@@ -105,6 +122,9 @@ class ReasonRequest(BaseModel):
 class ReasonResponse(BaseModel):
     """Structured reasoning output consumed by frontend."""
 
+    llm_used: bool = False
+    fallback_reason: str = ""
+    llm_log: LLMLog = Field(default_factory=LLMLog)
     parsed_evidences: list[ParsedEvidence] = Field(default_factory=list)
     evidence_items: list[EvidenceItem] = Field(default_factory=list)
     entities: list[Entity] = Field(default_factory=list)

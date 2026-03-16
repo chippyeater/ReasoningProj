@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-  postReasonUpload,
+  postReason,
   type Claim,
   type Entity,
   type EvidenceInput,
@@ -19,6 +19,7 @@ const DEMO_CASE = `证词A：A 在 22:00 出现在仓库
 银行记录：A 在 22:10 收到转账`;
 
 const DEMO_QUESTION = "A 在 22:00 更可能在哪里？请给出证据链和冲突点。";
+
 const EVIDENCE_TYPES: EvidenceInput["type"][] = ["text", "document", "image", "video", "audio"];
 
 const DEFAULT_EVIDENCE: EvidenceInput = {
@@ -37,8 +38,8 @@ type ParsedEvidenceView = {
   metadata?: {
     parse_status?: string;
     parser_detail?: string;
-    file_name?: string;
-    mime_type?: string;
+    file_name?: string | null;
+    mime_type?: string | null;
     notes?: string;
   };
 };
@@ -87,6 +88,10 @@ function renderKeyValueRows(rows: Array<[string, string | boolean | string[]]>) 
   });
 }
 
+function firstLine(text?: string) {
+  return (text ?? "").split(/\r?\n/, 1)[0] ?? "";
+}
+
 export default function App() {
   const [caseText, setCaseText] = useState(DEMO_CASE);
   const [question, setQuestion] = useState(DEMO_QUESTION);
@@ -123,6 +128,12 @@ export default function App() {
   const relations: Relation[] = result?.relations ?? [];
   const events: Event[] = result?.events ?? [];
   const claims: Claim[] = result?.claims ?? [];
+  const fallbackReason = result?.fallback_reason?.trim() ?? "";
+  const fallbackDetail = result?.llm_log?.error?.trim() ?? "";
+  const promptSystem = result?.llm_log?.prompt_system?.trim() ?? "";
+  const promptUser = result?.llm_log?.prompt_user?.trim() ?? "";
+  const rawContent = result?.llm_log?.raw_content?.trim() ?? "";
+  const isFallback = Boolean(result && !result.llm_used);
   const isTextDraft = draftEvidence.type === "text";
 
   function updateDraft<K extends keyof EvidenceInput>(key: K, value: EvidenceInput[K]) {
@@ -211,7 +222,14 @@ export default function App() {
       .map((item) => item.file);
 
     try {
-      const data = await postReasonUpload(caseText, question, manualEvidences, files);
+      const data = await postReason(
+        {
+          case_text: caseText,
+          question,
+          evidences: manualEvidences,
+        },
+        files
+      );
       setResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
@@ -238,7 +256,7 @@ export default function App() {
             </label>
 
             <div className="evidence-editor">
-              <h3>上传证据</h3>
+              <h3>添加证据</h3>
               <label>
                 证据类型
                 <select value={draftEvidence.type} onChange={(e) => updateDraft("type", e.target.value as EvidenceInput["type"])}>
@@ -264,12 +282,10 @@ export default function App() {
                   <input accept={getFileAccept(draftEvidence.type)} type="file" onChange={onDraftFileChange} />
                 </label>
               )}
-              {!isTextDraft && draftFile ? <p className="hint">已选择文件：{draftFile.name}</p> : null}
-              {!isTextDraft ? (
-                <p className="hint">当前类型会在提交推理时上传并由后端解析。已支持真实解析的文件类型：`txt / pdf / docx / image`。</p>
-              ) : null}
+              {!isTextDraft && draftFile ? <p className="hint">已选择文件: {draftFile.name}</p> : null}
+              {!isTextDraft ? <p className="hint">文件会在提交推理时上传，并由后端做解析。</p> : null}
               <label>
-                备注（可选）
+                备注
                 <textarea rows={2} value={draftEvidence.notes ?? ""} onChange={(e) => updateDraft("notes", e.target.value)} />
               </label>
               <button className="secondary" type="button" onClick={addEvidence}>
@@ -289,7 +305,7 @@ export default function App() {
                     </button>
                   </div>
                   <p>类型: {item.type}</p>
-                  {item.kind === "text" ? <pre>{item.content}</pre> : <p>文件: {item.file.name}</p>}
+                  {item.kind === "text" ? <pre>{firstLine(item.content)}</pre> : <p>文件: {item.file.name}</p>}
                 </article>
               ))}
             </div>
@@ -303,34 +319,20 @@ export default function App() {
 
         <section className="panel right">
           <h2>Output</h2>
-          {!result ? <p>提交后将显示结构化推理结果。</p> : null}
+          {!result ? <p>提交后这里会显示结构化推理结果。</p> : null}
           {result ? (
             <>
+              {isFallback ? (
+                <div className="fallback-alert">
+                  <strong>当前结果来自 fallback，不是 LLM 的正式推理结果。</strong>
+                  <p>fallback_reason: {fallbackReason || "unknown"}</p>
+                  <p>error_detail: {fallbackDetail || "none"}</p>
+                </div>
+              ) : null}
+
               <p>
                 <strong>Summary:</strong> {result.summary}
               </p>
-
-              <div className="evidence-list">
-                <h3>解析结果</h3>
-                {parsedEvidences.length === 0 ? <p>没有可展示的解析结果。</p> : null}
-                {parsedEvidences.map((item, idx) => (
-                  <article className="evidence-card" key={item.id ?? idx}>
-                    <div className="evidence-card-header">
-                      <strong>{item.name ?? "Unnamed evidence"}</strong>
-                      <span className={`status-badge status-${item.metadata?.parse_status ?? "unknown"}`}>
-                        {statusLabel(item.metadata?.parse_status)}
-                      </span>
-                    </div>
-                    {renderKeyValueRows([
-                      ["类型", item.type ?? "-"],
-                      ["解析工具", item.parser_tool ?? "-"],
-                      ["文件名", item.metadata?.file_name ?? "-"],
-                      ["说明", item.metadata?.parser_detail ?? item.metadata?.notes ?? "-"],
-                    ])}
-                    <pre>{item.normalized_text ?? ""}</pre>
-                  </article>
-                ))}
-              </div>
 
               <div className="evidence-list">
                 <h3>EvidenceItem</h3>
@@ -345,11 +347,11 @@ export default function App() {
                       ["来源文件", item.source_file],
                       ["页码/段落", item.page_or_paragraph],
                       ["时间", item.time],
-                      ["产生者/说话者", item.producer_or_speaker],
+                      ["说话人/生产者", item.producer_or_speaker],
                       ["是否原始证据", item.is_original_evidence],
                       ["备注", item.notes],
                     ])}
-                    <pre>{item.original_content}</pre>
+                    <pre>{firstLine(item.original_content)}</pre>
                   </article>
                 ))}
               </div>
@@ -393,9 +395,9 @@ export default function App() {
                     </div>
                     {renderKeyValueRows([
                       ["ID", relation.id],
-                      ["主体实体", relation.subject_entity],
-                      ["客体实体", relation.object_entity],
-                      ["发生时间", relation.time],
+                      ["主体", relation.subject_entity],
+                      ["客体", relation.object_entity],
+                      ["时间", relation.time],
                       ["证据来源", relation.evidence_sources],
                     ])}
                   </article>
@@ -452,7 +454,58 @@ export default function App() {
                 ))}
               </div>
 
+              <div className="evidence-list">
+                <h3>LLM Log</h3>
+                {renderKeyValueRows([
+                  ["provider", result.llm_log?.provider ?? "-"],
+                  ["model", result.llm_log?.model ?? "-"],
+                  ["endpoint", result.llm_log?.endpoint ?? "-"],
+                  ["fallback_reason", result.llm_log?.fallback_reason ?? "-"],
+                  ["error", result.llm_log?.error ?? "-"],
+                ])}
+                {promptSystem ? (
+                  <>
+                    <p>system prompt</p>
+                    <pre>{promptSystem}</pre>
+                  </>
+                ) : null}
+                {promptUser ? (
+                  <>
+                    <p>user prompt</p>
+                    <pre>{promptUser}</pre>
+                  </>
+                ) : null}
+                {rawContent ? (
+                  <>
+                    <p>model raw content</p>
+                    <pre>{rawContent}</pre>
+                  </>
+                ) : null}
+              </div>
+
               {view}
+
+              <div className="evidence-list">
+                <h3>解析结果</h3>
+                {parsedEvidences.length === 0 ? <p>没有可展示的解析结果。</p> : null}
+                {parsedEvidences.map((item, idx) => (
+                  <article className="evidence-card" key={item.id ?? idx}>
+                    <div className="evidence-card-header">
+                      <strong>{item.name ?? "Unnamed evidence"}</strong>
+                      <span className={`status-badge status-${item.metadata?.parse_status ?? "unknown"}`}>
+                        {statusLabel(item.metadata?.parse_status)}
+                      </span>
+                    </div>
+                    {renderKeyValueRows([
+                      ["类型", item.type ?? "-"],
+                      ["解析工具", item.parser_tool ?? "-"],
+                      ["文件名", item.metadata?.file_name ?? "-"],
+                      ["说明", item.metadata?.parser_detail ?? item.metadata?.notes ?? "-"],
+                    ])}
+                    <pre>{firstLine(item.normalized_text)}</pre>
+                  </article>
+                ))}
+              </div>
             </>
           ) : null}
         </section>

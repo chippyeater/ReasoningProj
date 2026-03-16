@@ -1,4 +1,4 @@
-# Reasoning Interface Generator
+﻿# Reasoning Interface Generator
 
 这是一个最小可运行 demo，用来验证这条链路：
 
@@ -79,29 +79,31 @@ http://localhost:5173
 示例：
 
 ```bash
-GITHUB_TOKEN=your_github_pat
-GITHUB_ENDPOINT=https://models.inference.ai.azure.com
-GITHUB_MODEL_ID=gpt-4o-mini
-GITHUB_API_VERSION=2022-11-28
+GITHUB_TOKEN="your_github_pat"
+GITHUB_ENDPOINT="https://models.github.ai/inference"
+GITHUB_MODEL_ID="openai/gpt-4o-mini"
 ```
-
-如果没有配置 token，后端会自动回退到 mock 数据。
 
 兼容的备用环境变量名也支持：
 
 ```bash
-OPENAI_BASE_URL=https://models.github.ai/inference
-OPENAI_MODEL=openai/gpt-4.1-mini
-OPENAI_API_KEY=your_key
+OPENAI_BASE_URL="https://models.github.ai/inference"
+OPENAI_MODEL="openai/gpt-4.1-mini"
+OPENAI_API_KEY="your_key"
 ```
 
 ## 接口说明
 
-### 1. JSON 接口
+### 1. 统一推理接口
 
 `POST /api/reason`
 
-请求体：
+这个接口同时支持两种请求方式：
+
+- `application/json`
+- `multipart/form-data`
+
+如果没有文件，前端直接发送 JSON：
 
 ```json
 {
@@ -111,18 +113,19 @@ OPENAI_API_KEY=your_key
 }
 ```
 
-### 2. 文件上传接口
-
-`POST /api/reason-upload`
-
-使用 `multipart/form-data`：
+如果有文件，前端发送 `multipart/form-data`：
 
 - `case_text`: 案件材料
 - `question`: 推理问题
 - `manual_evidences`: 手工证据数组的 JSON 字符串
 - `files`: 多个上传文件
 
-### 3. 返回结构
+后端会在同一个 `/api/reason` 路由里根据 `Content-Type` 自动判断：
+
+- 有 `files` 就先解析上传文件
+- 没有 `files` 就直接走普通推理
+
+### 2. 返回结构
 
 ```json
 {
@@ -183,29 +186,35 @@ OPENAI_API_KEY=your_key
 2. 文件选择触发 `onFileChange()`
    - 把浏览器中的 `File[]` 存进 `uploadedFiles`
 3. 点击“提交推理”触发 `onSubmit()`
-4. `onSubmit()` 调用 [api.ts](/d:/VSCode/VSProj/ReasoningProj/frontend/src/api.ts) 里的 `postReasonUpload()`
-5. `postReasonUpload()`：
-   - 创建 `FormData`
+4. `onSubmit()` 调用 [api.ts](/d:/VSCode/VSProj/ReasoningProj/frontend/src/api.ts) 里的 `postReason()`
+5. `postReason()`：
+   - 如果没有文件，就发送 JSON 到 `POST /api/reason`
+   - 如果有文件，就创建 `FormData`
    - 写入 `case_text`
    - 写入 `question`
    - 写入 `manual_evidences`
    - 逐个追加 `files`
-   - 请求 `POST /api/reason-upload`
+   - 仍然请求 `POST /api/reason`
 
-### B. 后端接收 multipart 请求
+### B. 后端接收统一请求
 
-1. 请求进入 [main.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/main.py) 的 `reason_upload()`
-2. `reason_upload()` 先调用 `_parse_manual_evidences()`
+1. 请求进入 [main.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/main.py) 的 `reason()`
+2. `reason()` 根据 `Content-Type` 判断请求类型
+3. 如果是 JSON：
+   - 用 `ReasonRequest` 校验请求体
+   - 直接把 `case_text/question/evidences` 传给 `run_reasoning()`
+4. 如果是 `multipart/form-data`：
+   - 先调用 `_parse_manual_evidences()`
    - 把前端传来的 `manual_evidences` JSON 字符串转成 `EvidenceInput[]`
-3. 然后调用 [file_parsers.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/file_parsers.py) 的 `parse_uploaded_files()`
-4. `parse_uploaded_files()` 遍历每个文件并调用 `parse_uploaded_file()`
-5. `parse_uploaded_file()` 根据文件后缀分发到：
+   - 再调用 [file_parsers.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/file_parsers.py) 的 `parse_uploaded_files()`
+5. `parse_uploaded_files()` 遍历每个文件并调用 `parse_uploaded_file()`
+6. `parse_uploaded_file()` 根据文件后缀分发到：
    - `_parse_txt_file()`
    - `_parse_pdf_file()`
    - `_parse_docx_file()`
    - `_parse_image_file()`
-6. 文件被解析成统一的 `EvidenceInput`
-7. `reason_upload()` 把：
+7. 文件被解析成统一的 `EvidenceInput`
+8. `reason()` 把：
    - 手工证据 `manual_items`
    - 文件解析证据 `uploaded_items`
    合并后传给 `run_reasoning()`
@@ -228,13 +237,18 @@ OPENAI_API_KEY=your_key
    - 包含 `normalized_text`
    - 包含 `metadata.parse_status`
    - 包含 `metadata.parser_detail`
-8. `_format_evidence_context()` 把这些解析结果拼成发送给 LLM 的证据上下文文本
+8. `_format_evidence_context()` 把这些解析结果整理成简短的证据解析摘要
 9. `run_reasoning()` 再构造 OpenAI 兼容请求体：
    - `model`
    - `messages`
    - `temperature`
-10. 调用 GitHub Models 的 `/chat/completions`
-11. 如果模型失败或没配 token：
+10. `messages` 中会包含：
+   - 中文 system prompt
+   - 中文 user prompt
+   - 结构化证据条目
+   - 证据解析摘要
+11. 调用 GitHub Models 的 `/chat/completions`
+12. 如果模型失败或没配 token：
    - 回退到 [mock_data.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/mock_data.py) 的 `get_mock_reasoning()`
 
 ### D. 前端接收结果并渲染
@@ -243,8 +257,9 @@ OPENAI_API_KEY=your_key
 2. [App.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/App.tsx) 把结果存入 `result`
 3. 右侧结果区展示：
    - `summary`
+   - `evidence_items / entities / relations / events / claims`
+   - `llm_log` 中的 prompt 和模型原始返回
    - `parsed_evidences`
-   - `entities`
 4. 然后按 `recommended_view` 选择组件：
    - `conflict_compare` -> [ConflictCompare.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/ConflictCompare.tsx)
    - `timeline_reasoning` -> [TimelineReasoning.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/TimelineReasoning.tsx)
@@ -262,8 +277,8 @@ OPENAI_API_KEY=your_key
 
 [api.ts](/d:/VSCode/VSProj/ReasoningProj/frontend/src/api.ts)
 - 定义前端用到的请求/响应类型
-- 封装 `/api/reason`
-- 封装 `/api/reason-upload`
+- 统一封装 `/api/reason`
+- 根据是否存在 `files` 自动选择 JSON 或 `FormData`
 
 [ConflictCompare.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/ConflictCompare.tsx)
 - 渲染冲突对比视图
@@ -283,7 +298,7 @@ OPENAI_API_KEY=your_key
 - FastAPI 入口
 - 暴露 `/health`
 - 暴露 `/api/reason`
-- 暴露 `/api/reason-upload`
+- 在同一路由中同时处理 JSON 和 multipart 请求
 - 负责把请求参数交给推理层
 
 [schemas.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/schemas.py)
@@ -304,6 +319,7 @@ OPENAI_API_KEY=your_key
 [llm.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/llm.py)
 - 加载 `.env`
 - 构造 GitHub Models 的 OpenAI 兼容请求
+- 记录 prompt、模型原始返回和异常信息
 - 调用模型
 - 解析模型返回 JSON
 - 出错时回退 mock

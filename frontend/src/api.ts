@@ -65,6 +65,22 @@ export type ReasonRequest = {
 };
 
 export type ReasonResponse = {
+  llm_used?: boolean;
+  fallback_reason?: string;
+  llm_log?: {
+    provider?: string;
+    model?: string;
+    endpoint?: string;
+    llm_used?: boolean;
+    fallback_reason?: string;
+    prompt_system?: string;
+    prompt_user?: string;
+    raw_response?: Record<string, unknown>;
+    raw_content?: string;
+    usage?: Record<string, unknown>;
+    limits?: Record<string, unknown>;
+    error?: string;
+  };
   parsed_evidences?: Array<Record<string, unknown>>;
   evidence_items: EvidenceItem[];
   entities: Entity[];
@@ -86,35 +102,30 @@ async function readReasonResponse(response: Response): Promise<ReasonResponse> {
   return (await response.json()) as ReasonResponse;
 }
 
-export async function postReason(payload: ReasonRequest): Promise<ReasonResponse> {
-  const response = await fetch(`${API_BASE}/api/reason`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  return readReasonResponse(response);
-}
-
-export async function postReasonUpload(
-  caseText: string,
-  question: string,
-  evidences: EvidenceInput[],
-  files: File[]
+export async function postReason(
+  payload: ReasonRequest,
+  files: File[] = []
 ): Promise<ReasonResponse> {
-  const formData = new FormData();
-  formData.append("case_text", caseText);
-  formData.append("question", question);
-  formData.append("manual_evidences", JSON.stringify(evidences));
-
-  files.forEach((file) => {
-    formData.append("files", file);
-  });
-
-  const response = await fetch(`${API_BASE}/api/reason-upload`, {
-    method: "POST",
-    body: formData,
-  });
+  const response =
+    files.length > 0
+      ? await fetch(`${API_BASE}/api/reason`, {
+          method: "POST",
+          body: (() => {
+            const formData = new FormData();
+            formData.append("case_text", payload.case_text);
+            formData.append("question", payload.question);
+            formData.append("manual_evidences", JSON.stringify(payload.evidences ?? []));
+            files.forEach((file) => {
+              formData.append("files", file);
+            });
+            return formData;
+          })(),
+        })
+      : await fetch(`${API_BASE}/api/reason`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
 
   return readReasonResponse(response);
 }

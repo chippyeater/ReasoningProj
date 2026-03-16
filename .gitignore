@@ -7,4 +7,5 @@ frontend/dist/
 frontend/tsconfig.tsbuildinfo
 
 backend/app/__pycache__/
+backend/logs/
 *.pyc

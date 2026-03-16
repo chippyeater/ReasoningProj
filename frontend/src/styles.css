@@ -139,6 +139,19 @@ button:disabled {
   margin-top: 8px;
 }
 
+.fallback-alert {
+  margin-bottom: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #d9a0a0;
+  background: #fff1f1;
+  color: #7a1515;
+}
+
+.fallback-alert p {
+  margin: 6px 0 0;
+}
+
 pre {
   margin: 0;
   white-space: pre-wrap;

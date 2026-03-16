@@ -2,11 +2,12 @@
 
 import json
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.file_parsers import parse_uploaded_files
 from app.llm import run_reasoning
+from app.log_store import save_reason_response
 from app.schemas import EvidenceInput, ReasonRequest, ReasonResponse
 
 
@@ -39,21 +40,22 @@ async def health() -> dict:
 
 
 @app.post("/api/reason", response_model=ReasonResponse)
-async def reason(payload: ReasonRequest) -> ReasonResponse:
-    """Generate structured reasoning JSON from case text and question."""
+async def reason(request: Request) -> ReasonResponse:
+    """Generate reasoning JSON from JSON or multipart form data."""
 
-    return await run_reasoning(payload.case_text, payload.question, payload.evidences)
+    content_type = request.headers.get("content-type", "").lower()
 
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        case_text = str(form.get("case_text", ""))
+        question = str(form.get("question", ""))
+        manual_items = _parse_manual_evidences(str(form.get("manual_evidences", "[]")))
+        files = [item for _, item in form.multi_items() if isinstance(item, UploadFile)]
+        uploaded_items = await parse_uploaded_files(files)
+        response = await run_reasoning(case_text, question, manual_items + uploaded_items)
+    else:
+        payload = ReasonRequest.model_validate(await request.json())
+        response = await run_reasoning(payload.case_text, payload.question, payload.evidences)
 
-@app.post("/api/reason-upload", response_model=ReasonResponse)
-async def reason_upload(
-    case_text: str = Form(...),
-    question: str = Form(...),
-    manual_evidences: str = Form("[]"),
-    files: list[UploadFile] = File(default_factory=list),
-) -> ReasonResponse:
-    """Generate reasoning JSON from multipart uploads plus manual evidence."""
-
-    manual_items = _parse_manual_evidences(manual_evidences)
-    uploaded_items = await parse_uploaded_files(files)
-    return await run_reasoning(case_text, question, manual_items + uploaded_items)
+    save_reason_response(response)
+    return response
