@@ -1,16 +1,22 @@
-﻿# Reasoning Interface Generator
+# Reasoning Interface Generator
 
 这是一个最小可运行 demo，用来验证这条链路：
 
-用户输入案件材料 + 推理问题 + 手工证据/上传文件 -> 后端解析证据 -> 后端调用 LLM 输出结构化推理 JSON -> 前端根据 `recommended_view` 自动渲染推理界面。
+1. 用户先提交案件介绍和证据
+2. 后端解析证据并执行阶段 1 抽取，生成案件结构化数据
+3. 后端把“当前案件”保存到本地
+4. 用户再单独提交问题
+5. 后端基于当前案件执行阶段 2+3，生成推理结构和界面推荐
+6. 前端根据 `recommended_view` 渲染对应视图
 
-目前项目支持：
+当前实现特点：
 
-- 前端 React + Vite + TypeScript
-- 后端 Python + FastAPI
-- LLM 通过 OpenAI 兼容写法接 GitHub Models
-- 无数据库
-- 支持手工证据和真实文件上传
+- 前端：React + Vite + TypeScript
+- 后端：Python + FastAPI
+- LLM：OpenAI 兼容写法接 GitHub Models
+- 存储：单案件本地 JSON 文件，不使用数据库
+- 输入：支持手工证据和真实文件上传
+- Prompt：系统 prompt 单独存放在 `backend/prompts/*.md`
 
 ## 目录结构
 
@@ -29,12 +35,19 @@ project-root/
       main.py
       schemas.py
       llm.py
-      mock_data.py
+      case_store.py
+      log_store.py
       evidence_tools.py
       file_parsers.py
+    data/
+      current_case.json
+    logs/
+    prompts/
+      extraction_system_prompt.md
+      question_reasoning_system_prompt.md
   openclaw-integration/
     reasoningTool.ts
-  README.md
+  Readme.md
 ```
 
 ## 运行方式
@@ -84,7 +97,7 @@ GITHUB_ENDPOINT="https://models.github.ai/inference"
 GITHUB_MODEL_ID="openai/gpt-4o-mini"
 ```
 
-兼容的备用环境变量名也支持：
+也兼容以下环境变量：
 
 ```bash
 OPENAI_BASE_URL="https://models.github.ai/inference"
@@ -92,263 +105,369 @@ OPENAI_MODEL="openai/gpt-4.1-mini"
 OPENAI_API_KEY="your_key"
 ```
 
+## 当前 Pipeline
+
+### 阶段 1：案件结构化
+
+输入：
+
+- `case_text`
+- 用户提交的手工证据
+- 上传文件解析后的证据
+
+输出：
+
+- `parsed_evidences`
+- `evidence_items`
+- `entities`
+- `relations`
+- `events`
+- `claims`
+
+说明：
+
+- `evidence_items` 是系统内部生成对象，不是 LLM 输出字段
+- 阶段 1 结果会保存为“当前案件”
+
+### 阶段 2+3：问题推理
+
+输入：
+
+- 当前案件
+- 用户问题 `question`
+
+输出：
+
+- `conflicts`
+- `evidence_paths`
+- `recommended_view`
+- `summary`
+
+说明：
+
+- 阶段 2 和阶段 3 当前合并在一次 LLM 调用里执行
+- `recommended_view` 用于驱动前端视图切换
+
+## 当前数据结构
+
+当前代码里已经强类型定义的主要对象在 [schemas.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/schemas.py)：
+
+- `EvidenceItem`
+  - `id`
+  - `type`
+  - `original_content`
+  - `source_file`
+  - `page_or_paragraph`
+  - `time`
+  - `producer_or_speaker`
+  - `is_original_evidence`
+  - `notes`
+- `Entity`
+  - `id`
+  - `name`
+  - `type`
+  - `aliases`
+  - `source_evidence_ids`
+- `Relation`
+  - `id`
+  - `subject_entity`
+  - `object_entity`
+  - `relation_type`
+  - `time`
+  - `evidence_sources`
+  - `confidence_status`
+- `Event`
+  - `id`
+  - `event_type`
+  - `participant_entities`
+  - `time`
+  - `location`
+  - `description`
+  - `source_evidence_ids`
+- `Claim`
+  - `id`
+  - `content`
+  - `source`
+  - `target_ids`
+  - `stance`
+  - `credibility_status`
+  - `quote`
+
+当前仍未独立建模为强类型 schema 的部分：
+
+- `Conflict`
+- `Hypothesis`
+- `ProvenanceLink`
+
+现在它们还没有完整落到后端 schema 中，尤其 `conflicts` 和 `evidence_paths` 仍然是 `list[dict]`。
+
+## Prompt 文件
+
+系统 prompt 已经独立到 Markdown 文件：
+
+- [extraction_system_prompt.md](/d:/VSCode/VSProj/ReasoningProj/backend/prompts/extraction_system_prompt.md)
+- [question_reasoning_system_prompt.md](/d:/VSCode/VSProj/ReasoningProj/backend/prompts/question_reasoning_system_prompt.md)
+
+[llm.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/llm.py) 会在运行时优先读取这两个 `.md` 文件；如果文件不存在或读取失败，则回退到代码内置默认 prompt。
+
+阶段 1 prompt 当前已经强化为：
+
+- 顶层字段固定
+- 每类对象字段名固定
+- 明确禁止错误别名
+- 缺失值使用默认空字符串、空数组或枚举默认值
+
 ## 接口说明
 
-### 1. 统一推理接口
+### 1. 创建或替换当前案件
 
-`POST /api/reason`
+`POST /api/case`
 
-这个接口同时支持两种请求方式：
+支持两种请求方式：
 
 - `application/json`
 - `multipart/form-data`
 
-如果没有文件，前端直接发送 JSON：
+没有文件时可直接发 JSON：
 
 ```json
 {
   "case_text": "...",
-  "question": "...",
   "evidences": []
 }
 ```
 
-如果有文件，前端发送 `multipart/form-data`：
+有文件时发送 `multipart/form-data`：
 
-- `case_text`: 案件材料
-- `question`: 推理问题
-- `manual_evidences`: 手工证据数组的 JSON 字符串
-- `files`: 多个上传文件
+- `case_text`：案件介绍
+- `manual_evidences`：手工证据数组的 JSON 字符串
+- `files`：多个上传文件
 
-后端会在同一个 `/api/reason` 路由里根据 `Content-Type` 自动判断：
-
-- 有 `files` 就先解析上传文件
-- 没有 `files` 就直接走普通推理
-
-### 2. 返回结构
+返回：
 
 ```json
 {
-  "parsed_evidences": [],
-  "entities": [],
-  "events": [],
-  "claims": [],
-  "conflicts": [],
-  "evidence_paths": [],
-  "recommended_view": "conflict_compare",
-  "summary": "..."
+  "case": {
+    "case_id": "case-xxxxxxx",
+    "case_text": "...",
+    "parsed_evidences": [],
+    "evidence_items": [],
+    "entities": [],
+    "relations": [],
+    "events": [],
+    "claims": [],
+    "extraction_log": {
+      "provider": "github_models",
+      "model": "openai/gpt-4o-mini",
+      "endpoint": "https://models.github.ai/inference",
+      "pipeline_llm_used": true,
+      "fallback_reason": "",
+      "stages": []
+    }
+  }
 }
 ```
 
-其中：
+### 2. 读取当前案件
 
-- `parsed_evidences`：后端已经解析并标准化后的证据
-- `recommended_view`：前端据此决定渲染哪种推理视图
+`GET /api/case`
 
-## 支持的证据类型
+返回：
 
-统一证据结构定义在 `backend/app/schemas.py` 的 `EvidenceInput`。
+```json
+{
+  "case": null
+}
+```
 
-支持类型：
+或：
 
-- `text`：纯文本证据
-- `document`：文档证据
-- `image`：图片证据
-- `video`：视频证据
-- `audio`：音频证据
+```json
+{
+  "case": {
+    "case_id": "case-xxxxxxx",
+    "case_text": "...",
+    "parsed_evidences": [],
+    "evidence_items": [],
+    "entities": [],
+    "relations": [],
+    "events": [],
+    "claims": [],
+    "extraction_log": {
+      "provider": "github_models",
+      "model": "openai/gpt-4o-mini",
+      "endpoint": "https://models.github.ai/inference",
+      "pipeline_llm_used": true,
+      "fallback_reason": "",
+      "stages": []
+    }
+  }
+}
+```
 
-当前真实文件上传已实现的解析类型：
+说明：
 
-- `txt / md`：直接读取文本
-- `pdf`：通过 `pypdf` 提取文本
-- `docx`：通过 `python-docx` 提取文本
-- `image`：通过 `Pillow` 提取图片元信息
+- 页面刷新后，前端会自动调用这个接口恢复当前案件
+- 恢复的是后端保存的案件快照，不是浏览器文件输入框状态
 
-当前还没有实现：
+### 3. 针对当前案件提问
 
-- 图片 OCR
-- 音频转写
-- 视频转写 / 抽帧分析
+`POST /api/case/question`
 
-所以图片目前通常会显示为“部分解析”。
+请求体：
 
-## 函数调用链路
+```json
+{
+  "question": "..."
+}
+```
 
-这一节按“用户点击提交后，代码实际怎么走”来写。
+返回：
 
-### A. 前端发起上传和推理
+```json
+{
+  "case_id": "case-xxxxxxx",
+  "question": "...",
+  "conflicts": [],
+  "evidence_paths": [],
+  "recommended_view": "conflict_compare",
+  "summary": "...",
+  "reasoning_log": {
+    "provider": "github_models",
+    "model": "openai/gpt-4o-mini",
+    "endpoint": "https://models.github.ai/inference",
+    "pipeline_llm_used": true,
+    "fallback_reason": "",
+    "stages": []
+  }
+}
+```
 
-1. 用户在 [App.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/App.tsx) 中：
-   - 输入 `caseText`
-   - 输入 `question`
-   - 添加手工证据
-   - 选择上传文件
-2. 文件选择触发 `onFileChange()`
-   - 把浏览器中的 `File[]` 存进 `uploadedFiles`
-3. 点击“提交推理”触发 `onSubmit()`
-4. `onSubmit()` 调用 [api.ts](/d:/VSCode/VSProj/ReasoningProj/frontend/src/api.ts) 里的 `postReason()`
-5. `postReason()`：
-   - 如果没有文件，就发送 JSON 到 `POST /api/reason`
-   - 如果有文件，就创建 `FormData`
-   - 写入 `case_text`
-   - 写入 `question`
-   - 写入 `manual_evidences`
-   - 逐个追加 `files`
-   - 仍然请求 `POST /api/reason`
+### 4. 清空当前案件
 
-### B. 后端接收统一请求
+`DELETE /api/case`
 
-1. 请求进入 [main.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/main.py) 的 `reason()`
-2. `reason()` 根据 `Content-Type` 判断请求类型
-3. 如果是 JSON：
-   - 用 `ReasonRequest` 校验请求体
-   - 直接把 `case_text/question/evidences` 传给 `run_reasoning()`
-4. 如果是 `multipart/form-data`：
-   - 先调用 `_parse_manual_evidences()`
-   - 把前端传来的 `manual_evidences` JSON 字符串转成 `EvidenceInput[]`
-   - 再调用 [file_parsers.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/file_parsers.py) 的 `parse_uploaded_files()`
-5. `parse_uploaded_files()` 遍历每个文件并调用 `parse_uploaded_file()`
-6. `parse_uploaded_file()` 根据文件后缀分发到：
-   - `_parse_txt_file()`
-   - `_parse_pdf_file()`
-   - `_parse_docx_file()`
-   - `_parse_image_file()`
-7. 文件被解析成统一的 `EvidenceInput`
-8. `reason()` 把：
-   - 手工证据 `manual_items`
-   - 文件解析证据 `uploaded_items`
-   合并后传给 `run_reasoning()`
+返回：
 
-### C. 后端构造 LLM 上下文并调用模型
+```json
+{
+  "status": "cleared"
+}
+```
 
-1. 调用 [llm.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/llm.py) 的 `run_reasoning(case_text, question, evidences)`
-2. `run_reasoning()` 先调用 `_load_local_env()`
-   - 加载项目根目录 `.env`
-3. 然后调用 `_format_evidence_context(evidences)`
-4. `_format_evidence_context()` 再调用 [evidence_tools.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/evidence_tools.py) 的 `build_evidence_context()`
-5. `build_evidence_context()` 逐条调用 `parse_evidence()`
-6. `parse_evidence()` 根据证据类型分发到：
-   - `parse_text_evidence()`
-   - `parse_document_evidence()`
-   - `parse_image_evidence()`
-   - `parse_video_evidence()`
-   - `parse_audio_evidence()`
-7. 这些函数返回 `ParsedEvidence`
-   - 包含 `normalized_text`
-   - 包含 `metadata.parse_status`
-   - 包含 `metadata.parser_detail`
-8. `_format_evidence_context()` 把这些解析结果整理成简短的证据解析摘要
-9. `run_reasoning()` 再构造 OpenAI 兼容请求体：
-   - `model`
-   - `messages`
-   - `temperature`
-10. `messages` 中会包含：
-   - 中文 system prompt
-   - 中文 user prompt
-   - 结构化证据条目
-   - 证据解析摘要
-11. 调用 GitHub Models 的 `/chat/completions`
-12. 如果模型失败或没配 token：
-   - 回退到 [mock_data.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/mock_data.py) 的 `get_mock_reasoning()`
+## 日志与存储
 
-### D. 前端接收结果并渲染
+### 当前案件存储
 
-1. 前端拿到 `ReasonResponse`
-2. [App.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/App.tsx) 把结果存入 `result`
-3. 右侧结果区展示：
-   - `summary`
-   - `evidence_items / entities / relations / events / claims`
-   - `llm_log` 中的 prompt 和模型原始返回
-   - `parsed_evidences`
-4. 然后按 `recommended_view` 选择组件：
-   - `conflict_compare` -> [ConflictCompare.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/ConflictCompare.tsx)
-   - `timeline_reasoning` -> [TimelineReasoning.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/TimelineReasoning.tsx)
-   - `hypothesis_board` -> [HypothesisBoard.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/HypothesisBoard.tsx)
+当前案件保存在：
 
-## 各文件主要功能
+- [current_case.json](/d:/VSCode/VSProj/ReasoningProj/backend/data/current_case.json)
 
-### 前端
+用途：
 
-[App.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/App.tsx)
-- 页面主入口
-- 管理案件材料、问题、手工证据、上传文件、请求状态
-- 提交推理请求
-- 展示解析结果和推理结果
+- 页面刷新后恢复当前案件
+- 后续提问时复用结构化结果
+- 调试阶段 1 抽取结果
 
-[api.ts](/d:/VSCode/VSProj/ReasoningProj/frontend/src/api.ts)
-- 定义前端用到的请求/响应类型
-- 统一封装 `/api/reason`
-- 根据是否存在 `files` 自动选择 JSON 或 `FormData`
+### 请求日志
 
-[ConflictCompare.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/ConflictCompare.tsx)
-- 渲染冲突对比视图
+每次创建案件和每次提问都会把完整响应写入：
 
-[TimelineReasoning.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/TimelineReasoning.tsx)
-- 渲染时间线推理视图
+- `backend/logs/case-create-*.json`
+- `backend/logs/case-question-*.json`
 
-[HypothesisBoard.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/HypothesisBoard.tsx)
-- 渲染假设面板视图
+日志里会记录：
 
-[styles.css](/d:/VSCode/VSProj/ReasoningProj/frontend/src/styles.css)
-- 定义页面布局、证据卡片、状态徽标等样式
+- `prompt_system`
+- `prompt_user`
+- `raw_response`
+- `raw_content`
+- `usage`
+- `limits`
+- `fallback_reason`
+- `error`
 
-### 后端
+## 前端行为
 
-[main.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/main.py)
-- FastAPI 入口
-- 暴露 `/health`
-- 暴露 `/api/reason`
-- 在同一路由中同时处理 JSON 和 multipart 请求
-- 负责把请求参数交给推理层
+当前前端页面是“两步式”：
 
-[schemas.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/schemas.py)
-- 定义 `EvidenceInput`
-- 定义 `ParsedEvidence`
-- 定义 `ReasonRequest`
-- 定义 `ReasonResponse`
+1. 左侧提交案件介绍和证据
+2. 右侧顶部输入问题
+3. 右侧下方展示结构化结果、推理结果和日志
 
-[file_parsers.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/file_parsers.py)
-- 负责解析真实上传文件
-- 将 `txt/pdf/docx/image` 转成统一 `EvidenceInput`
+左侧“当前案件证据”会显示每条证据的状态：
 
-[evidence_tools.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/evidence_tools.py)
-- 负责把 `EvidenceInput` 标准化为 `ParsedEvidence`
-- 给每条证据打解析状态和说明
-- 供 LLM 构造证据上下文使用
+- `pending`
+- `submitted`
+- `success`
 
-[llm.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/llm.py)
-- 加载 `.env`
-- 构造 GitHub Models 的 OpenAI 兼容请求
-- 记录 prompt、模型原始返回和异常信息
-- 调用模型
-- 解析模型返回 JSON
-- 出错时回退 mock
+页面初始化时会自动请求 `GET /api/case` 恢复：
 
-[mock_data.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/mock_data.py)
-- 提供最小演示用的固定推理结果
+- `EvidenceItem`
+- `Entity`
+- `Relation`
+- `Event`
+- `Claim`
 
-### OpenClaw
+但不会恢复浏览器本地 `File` 对象本身。
 
-[reasoningTool.ts](/d:/VSCode/VSProj/ReasoningProj/openclaw-integration/reasoningTool.ts)
-- 给 OpenClaw agent 调用后端推理接口用
+## 核心文件职责
 
-## 快速测试
+[frontend/src/App.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/App.tsx)
 
-1. 启动后端 `:8000`
-2. 启动前端 `:5173`
-3. 录入案件材料与问题
-4. 选择一个 `txt/pdf/docx/image` 文件
-5. 点击“提交推理”
-6. 在右侧“解析结果”查看每条证据的：
-   - 解析状态
-   - 解析工具
-   - 文件名
-   - 解析说明
-   - 标准化文本
+- 页面主状态管理
+- 提交案件
+- 提交问题
+- 渲染日志和结果区
 
-## 当前限制
+[frontend/src/api.ts](/d:/VSCode/VSProj/ReasoningProj/frontend/src/api.ts)
 
-- 图片只解析元信息，未做 OCR
-- 不支持 `doc`
-- 不支持音频/视频真实转写
-- 若 GitHub Models 不可用，会自动回退 mock 数据
+- 封装 `POST /api/case`
+- 封装 `GET /api/case`
+- 封装 `DELETE /api/case`
+- 封装 `POST /api/case/question`
+
+[frontend/src/components/ConflictCompare.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/ConflictCompare.tsx)
+
+- 冲突对比视图
+
+[frontend/src/components/TimelineReasoning.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/TimelineReasoning.tsx)
+
+- 时间线推理视图
+
+[frontend/src/components/HypothesisBoard.tsx](/d:/VSCode/VSProj/ReasoningProj/frontend/src/components/HypothesisBoard.tsx)
+
+- 假设看板视图
+
+[backend/app/main.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/main.py)
+
+- FastAPI 接口入口
+- 处理 `json` 与 `multipart/form-data`
+
+[backend/app/schemas.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/schemas.py)
+
+- 定义当前案件、阶段响应、阶段日志等 schema
+
+[backend/app/llm.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/llm.py)
+
+- 加载系统 prompt
+- 调用 LLM
+- 执行阶段 1 和阶段 2+3
+
+[backend/app/case_store.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/case_store.py)
+
+- 保存当前案件
+- 读取当前案件
+- 清空当前案件
+
+[backend/app/log_store.py](/d:/VSCode/VSProj/ReasoningProj/backend/app/log_store.py)
+
+- 保存接口返回日志到 `backend/logs/`
+
+## 已知限制
+
+- 当前只支持单案件，不支持多用户和多案件并发
+- 当前未引入数据库
+- `Conflict`、`Hypothesis`、`ProvenanceLink` 还没有单独 schema 化
+- 阶段 1 虽然已强化 prompt，但模型仍可能偶发返回不完全符合 schema 的 JSON
+- 如果模型仍然漂字段，下一步建议在后端增加归一化适配层

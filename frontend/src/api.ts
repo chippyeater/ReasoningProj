@@ -8,6 +8,21 @@ export type EvidenceInput = {
   notes?: string;
 };
 
+export type ParsedEvidence = {
+  id: string;
+  type: "text" | "document" | "image" | "video" | "audio";
+  name: string;
+  parser_tool: string;
+  normalized_text: string;
+  metadata?: {
+    parse_status?: string;
+    parser_detail?: string;
+    file_name?: string | null;
+    mime_type?: string | null;
+    notes?: string;
+  };
+};
+
 export type EvidenceItem = {
   id: string;
   type: "text" | "document" | "image" | "video" | "audio";
@@ -58,74 +73,115 @@ export type Claim = {
   quote: string;
 };
 
-export type ReasonRequest = {
-  case_text: string;
-  question: string;
-  evidences?: EvidenceInput[];
+export type StageLog = {
+  stage_name: string;
+  llm_used: boolean;
+  fallback_used: boolean;
+  fallback_reason: string;
+  prompt_system: string;
+  prompt_user: string;
+  raw_response: Record<string, unknown>;
+  raw_content: string;
+  usage: Record<string, unknown>;
+  limits: Record<string, unknown>;
+  error: string;
 };
 
-export type ReasonResponse = {
-  llm_used?: boolean;
-  fallback_reason?: string;
-  llm_log?: {
-    provider?: string;
-    model?: string;
-    endpoint?: string;
-    llm_used?: boolean;
-    fallback_reason?: string;
-    prompt_system?: string;
-    prompt_user?: string;
-    raw_response?: Record<string, unknown>;
-    raw_content?: string;
-    usage?: Record<string, unknown>;
-    limits?: Record<string, unknown>;
-    error?: string;
-  };
-  parsed_evidences?: Array<Record<string, unknown>>;
+export type PipelineLog = {
+  provider: string;
+  model: string;
+  endpoint: string;
+  pipeline_llm_used: boolean;
+  fallback_reason: string;
+  stages: StageLog[];
+};
+
+export type CurrentCase = {
+  case_id: string;
+  case_text: string;
+  parsed_evidences: ParsedEvidence[];
   evidence_items: EvidenceItem[];
   entities: Entity[];
   relations: Relation[];
   events: Event[];
   claims: Claim[];
+  extraction_log: PipelineLog;
+};
+
+export type CaseCreateResponse = {
+  case: CurrentCase;
+};
+
+export type CurrentCaseEnvelope = {
+  case: CurrentCase | null;
+};
+
+export type CaseQuestionResponse = {
+  case_id: string;
+  question: string;
   conflicts: Array<Record<string, unknown>>;
   evidence_paths: Array<Record<string, unknown>>;
   recommended_view: "conflict_compare" | "timeline_reasoning" | "hypothesis_board";
   summary: string;
+  reasoning_log: PipelineLog;
+};
+
+export type QuestionViewData = {
+  events: Event[];
+  claims: Claim[];
+  conflicts: Array<Record<string, unknown>>;
+  evidence_paths: Array<Record<string, unknown>>;
+  recommended_view: "conflict_compare" | "timeline_reasoning" | "hypothesis_board";
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
-async function readReasonResponse(response: Response): Promise<ReasonResponse> {
+async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    const text = await response.text();
+    throw new Error(text || `API request failed: ${response.status}`);
   }
-  return (await response.json()) as ReasonResponse;
+  return (await response.json()) as T;
 }
 
-export async function postReason(
-  payload: ReasonRequest,
-  files: File[] = []
-): Promise<ReasonResponse> {
+export async function createCase(caseText: string, evidences: EvidenceInput[], files: File[]): Promise<CaseCreateResponse> {
   const response =
     files.length > 0
-      ? await fetch(`${API_BASE}/api/reason`, {
+      ? await fetch(`${API_BASE}/api/case`, {
           method: "POST",
           body: (() => {
             const formData = new FormData();
-            formData.append("case_text", payload.case_text);
-            formData.append("question", payload.question);
-            formData.append("manual_evidences", JSON.stringify(payload.evidences ?? []));
+            formData.append("case_text", caseText);
+            formData.append("manual_evidences", JSON.stringify(evidences));
             files.forEach((file) => {
               formData.append("files", file);
             });
             return formData;
           })(),
         })
-      : await fetch(`${API_BASE}/api/reason`, {
+      : await fetch(`${API_BASE}/api/case`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ case_text: caseText, evidences }),
         });
 
-  return readReasonResponse(response);
+  return readJson<CaseCreateResponse>(response);
+}
+
+export async function getCase(): Promise<CurrentCaseEnvelope> {
+  return readJson<CurrentCaseEnvelope>(await fetch(`${API_BASE}/api/case`));
+}
+
+export async function deleteCase(): Promise<void> {
+  await readJson(await fetch(`${API_BASE}/api/case`, { method: "DELETE" }));
+}
+
+export async function askCaseQuestion(question: string): Promise<CaseQuestionResponse> {
+  return readJson<CaseQuestionResponse>(
+    await fetch(`${API_BASE}/api/case/question`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    })
+  );
 }

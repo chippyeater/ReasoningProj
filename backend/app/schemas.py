@@ -1,6 +1,6 @@
 """Pydantic schemas for request/response validation."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -111,12 +111,111 @@ class LLMLog(BaseModel):
     error: str = ""
 
 
+class StageLog(BaseModel):
+    """Diagnostic information for one pipeline stage."""
+
+    stage_name: str
+    llm_used: bool = False
+    fallback_used: bool = False
+    fallback_reason: str = ""
+    prompt_system: str = ""
+    prompt_user: str = ""
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+    raw_content: str = ""
+    usage: dict[str, Any] = Field(default_factory=dict)
+    limits: dict[str, Any] = Field(default_factory=dict)
+    error: str = ""
+
+
+class PipelineLog(BaseModel):
+    """Aggregated pipeline diagnostics across multiple stages."""
+
+    provider: str = "github_models"
+    model: str = ""
+    endpoint: str = ""
+    pipeline_llm_used: bool = False
+    fallback_reason: str = ""
+    stages: list[StageLog] = Field(default_factory=list)
+
+
 class ReasonRequest(BaseModel):
     """Input payload for reasoning endpoint."""
 
     case_text: str = Field(..., min_length=1)
     question: str = Field(..., min_length=1)
     evidences: list[EvidenceInput] = Field(default_factory=list)
+
+
+class CaseCreateRequest(BaseModel):
+    """Payload used to create or replace the current case."""
+
+    case_text: str = ""
+    evidences: list[EvidenceInput] = Field(default_factory=list)
+
+
+class QuestionReasonRequest(BaseModel):
+    """Payload used to ask a question against the current case."""
+
+    question: str = Field(..., min_length=1)
+
+
+class ExtractionStageResponse(BaseModel):
+    """Stage 1 output: extracted case structure from evidence."""
+
+    entities: list[Entity] = Field(default_factory=list)
+    relations: list[Relation] = Field(default_factory=list)
+    events: list[Event] = Field(default_factory=list)
+    claims: list[Claim] = Field(default_factory=list)
+    stage_log: StageLog = Field(default_factory=lambda: StageLog(stage_name="extraction"))
+
+
+class QuestionReasoningStageResponse(BaseModel):
+    """Stage 2+3 output: reasoning graph and interface recommendation for a question."""
+
+    question: str = ""
+    conflicts: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_paths: list[dict[str, Any]] = Field(default_factory=list)
+    recommended_view: str = "conflict_compare"
+    summary: str = ""
+    stage_log: StageLog = Field(default_factory=lambda: StageLog(stage_name="question_reasoning"))
+
+
+class CurrentCase(BaseModel):
+    """The single current case stored by the backend."""
+
+    case_id: str = ""
+    case_text: str = ""
+    parsed_evidences: list[ParsedEvidence] = Field(default_factory=list)
+    evidence_items: list[EvidenceItem] = Field(default_factory=list)
+    entities: list[Entity] = Field(default_factory=list)
+    relations: list[Relation] = Field(default_factory=list)
+    events: list[Event] = Field(default_factory=list)
+    claims: list[Claim] = Field(default_factory=list)
+    extraction_log: PipelineLog = Field(default_factory=PipelineLog)
+
+
+class CaseCreateResponse(BaseModel):
+    """Response returned after creating or replacing the current case."""
+
+    case: CurrentCase = Field(default_factory=CurrentCase)
+
+
+class CaseQuestionResponse(BaseModel):
+    """Response returned after asking a question against the current case."""
+
+    case_id: str = ""
+    question: str = ""
+    conflicts: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_paths: list[dict[str, Any]] = Field(default_factory=list)
+    recommended_view: str = "conflict_compare"
+    summary: str = ""
+    reasoning_log: PipelineLog = Field(default_factory=PipelineLog)
+
+
+class CurrentCaseEnvelope(BaseModel):
+    """Wrapper used by GET /api/case."""
+
+    case: CurrentCase | None = None
 
 
 class ReasonResponse(BaseModel):

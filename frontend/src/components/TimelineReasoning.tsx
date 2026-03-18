@@ -1,10 +1,9 @@
-﻿import type { ReasonResponse } from "../api";
+import type { QuestionViewData } from "../api";
 
 type Props = {
-  data: ReasonResponse;
+  data: QuestionViewData;
 };
 
-// Render timeline-focused view when backend recommends timeline_reasoning.
 export default function TimelineReasoning({ data }: Props) {
   return (
     <section>

@@ -1,10 +1,9 @@
-﻿import type { ReasonResponse } from "../api";
+import type { QuestionViewData } from "../api";
 
 type Props = {
-  data: ReasonResponse;
+  data: QuestionViewData;
 };
 
-// Render hypothesis-oriented view when backend recommends hypothesis_board.
 export default function HypothesisBoard({ data }: Props) {
   return (
     <section>

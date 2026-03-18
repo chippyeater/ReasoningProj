@@ -1,10 +1,9 @@
-﻿import type { ReasonResponse } from "../api";
+import type { QuestionViewData } from "../api";
 
 type Props = {
-  data: ReasonResponse;
+  data: QuestionViewData;
 };
 
-// Render conflict-focused view when backend recommends conflict_compare.
 export default function ConflictCompare({ data }: Props) {
   return (
     <section>

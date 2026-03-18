@@ -1,0 +1,379 @@
+{
+  "case_id": "case-92bf6d1f",
+  "case_text": "",
+  "parsed_evidences": [
+    {
+      "id": "file-当事人证词.docx",
+      "type": "document",
+      "name": "当事人证词.docx",
+      "parser_tool": "parse_document_evidence",
+      "normalized_text": "Document: 当事人证词.docx\nSource file: 当事人证词.docx\nExtracted text:\n询问笔录\n被询问人：林浩\n性别：男\n年龄：31岁\n职业：货运司机\n询问地点：海州市公安局海东分局第二询问室\n询问时间：2024年5月13日 09时10分至10时02分\n询问人：孙磊、许安\n记录人：何欣\n问：请你说明2024年5月12日晚到星河仓储中心3号仓库的经过。\n答：我那天晚上本来没打算去仓库，是后来王丽给我打电话，说陈伟可能在仓库，我才过去的。我大概是21点40分左右到的，不会更早。\n问：你到达仓库时看到了什么？\n答：我到的时候门口已经有人了，张敏也在。我看见陈伟站在门边，情绪有点激动，好像在和别人吵架。我没有进仓库里面，只是在门口问了几句怎么回事。\n问：你是否携带灰色双肩包？\n答：是，我平时会背一个灰色双肩包，但那天我记不清是不是一直背着。也可能是我之前某次来仓库时落下的，不一定是当天带过去的。\n问：现场发现一部黑色手机和带有“LH”字样的灰色双肩包，你如何解释？\n答：手机是我的，包大概率也是我的，但手机屏幕之前就摔过，不是那天摔的。包出现在仓库里面我也解释不清，也许是有人帮我拿进去，或者我之前放在那儿忘了。\n问：你是否进入过3号仓库内部？\n答：没有，我确定没有进去。我一直在门口附近。\n问：现场监控显示21时17分已有一名男性进入仓库前区域，你怎么解释？\n答：那个人不一定是我。我是21点40分左右才到的，而且当时天也比较暗，监控不一定看得清。\n问：你是否与陈伟发生肢体冲突？\n答：没有什么肢体冲突，就是拉了他一下，因为他冲我嚷嚷，说我不该来。我只是想让他冷静一下。\n问：你认识陈伟和王丽吗？\n答：都认识。陈伟以前和我一起做过短途货运，后来因为账目问题有过争执。王丽是我朋友，我们最近联系比较多。\n问：你手机上在2024年5月12日22时10分收到一笔8500元转账，备注“先还一部分”，这笔钱是什么？\n答：那是别人还我的借款，和仓库的事情没有关系。我之前借过钱给别人，分几次还，这次只是其中一笔。\n问：付款人是谁？\n答：我现在一下想不起来，可能是熟人代转的。我得看完整转账记录才能确认。\n问：你在21时12分接到王丽来电，是否与去仓库有关？\n答：她确实给我打过电话，但主要是说别的事情，不是专门叫我去仓库。后来我是自己决定过去看看。\n问：你最后离开现场是什么时候？\n答：应该是22点左右，具体记不清了。后来警察来了，我就配合说明情况。\n问：你是否知道仓库门锁为什么会有撬痕？\n答：不知道，我没碰过锁，也没见谁撬锁。\n被询问人阅后确认：以上记录我看过，和我说的一样。\n被询问人签名：林浩\n记录人签名：何欣\n2024年5月13日",
+      "metadata": {
+        "file_name": "当事人证词.docx",
+        "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "notes": "Parsed from uploaded DOCX file.",
+        "parse_status": "success",
+        "parser_detail": "Document text extracted and normalized."
+      }
+    },
+    {
+      "id": "file-现场勘验笔录.docx",
+      "type": "document",
+      "name": "现场勘验笔录.docx",
+      "parser_tool": "parse_document_evidence",
+      "normalized_text": "Document: 现场勘验笔录.docx\nSource file: 现场勘验笔录.docx\nExtracted text:\n海州市公安局海东分局\n现场勘验笔录\n案件编号：HZ-HD-2024-0512-03\n勘验时间：2024年5月12日 22时18分至23时47分\n勘验地点：海州市海州路118号星河仓储中心3号仓库\n勘验人员：赵建国、周晨\n记录人员：刘婷\n在场人员：仓库管理员张敏、报警人陈伟\n一、现场基本情况\n星河仓储中心位于海州路118号，3号仓库位于园区西北侧，仓库正门朝南，门前为空地和简易停车区，东侧约15米处为值班室。勘验当日天气晴，地面干燥，无明显降雨痕迹。仓库卷帘门处于半开启状态，门锁有明显撬压变形痕迹，锁芯附近可见金属摩擦划痕。\n二、仓库内情况\n仓库内部照明正常，东侧货架第2排与第3排之间地面上散落若干纸箱碎片，一只灰色双肩包位于东侧货架第3排尽头靠墙位置。双肩包内发现黑色手机1部、收据若干、钥匙一串。手机屏幕存在裂纹，但仍可点亮。现场北侧办公桌下方发现一根长约42厘米的金属撬棍，表面附有灰尘及疑似新鲜擦痕。办公桌表面有一只摔落的玻璃水杯碎片，桌角附近地面可见少量水迹。\n三、现场痕迹物证\n1. 仓库正门门锁及锁扣处存在撬压痕迹；\n2. 北侧办公桌右侧地面提取到一枚鞋印，长度约27.5厘米；\n3. 东侧货架旁发现一枚黑色纽扣；\n4. 灰色双肩包肩带内侧绣有“LH”字样；\n5. 仓库监控主机处于通电状态，但监控硬盘连接线有松动现象；\n6. 值班室门口摄像头可正常回放，回放显示2024年5月12日21时17分，一名身穿深色上衣、浅色长裤的男性由南门方向步行进入3号仓库前区域；21时29分，仓库管理员张敏从东侧值班室方向小跑至3号仓库门前；21时34分，报警人陈伟到达现场；21时36分，可见两名男性在仓库门口附近发生肢体拉扯，约持续10秒；21时41分，画面中第三人王丽从停车区方向出现；21时43分，现场人员聚集于仓库门前。\n四、人员到场及初步情况\n仓库管理员张敏陈述，其于2024年5月12日21时25分左右在值班室听到仓库方向有异常撞击声，赶至3号仓库后发现门锁异常，并看见林浩与陈伟在门前争执。报警人陈伟陈述，其于21时30分左右接到张敏电话后赶来。现场到场人员王丽称其于21时40分许到达仓库附近，看到多人聚集。\n五、电子记录初查\n经对现场黑色手机进行初步查看，在未深入操作的情况下，屏幕通知栏可见一条银行转账提醒，显示时间为2024年5月12日22时10分，金额为人民币8500元，付款方备注为“先还一部分”。另在手机最近通话界面可见“王丽”于21时12分有呼入记录一次，时长34秒；“陈伟”于21时31分有呼入记录一次，未接通。\n六、现场初步判断\n根据现有情况，3号仓库在2024年5月12日21时17分前后已有人员进入仓库前区域，21时36分前后仓库门口发生争执。现场发现灰色双肩包、黑色手机、金属撬棍等物品，均已拍照固定并登记提取。相关人员已通知进一步询问。\n以下空白。\n勘验人员签名：赵建国\n记录人员签名：刘婷\n2024年5月12日 23时47分",
+      "metadata": {
+        "file_name": "现场勘验笔录.docx",
+        "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "notes": "Parsed from uploaded DOCX file.",
+        "parse_status": "success",
+        "parser_detail": "Document text extracted and normalized."
+      }
+    }
+  ],
+  "evidence_items": [
+    {
+      "id": "evidence-item-1",
+      "type": "document",
+      "original_content": "Document: 当事人证词.docx\nSource file: 当事人证词.docx\nExtracted text:\n询问笔录\n被询问人：林浩\n性别：男\n年龄：31岁\n职业：货运司机\n询问地点：海州市公安局海东分局第二询问室\n询问时间：2024年5月13日 09时10分至10时02分\n询问人：孙磊、许安\n记录人：何欣\n问：请你说明2024年5月12日晚到星河仓储中心3号仓库的经过。\n答：我那天晚上本来没打算去仓库，是后来王丽给我打电话，说陈伟可能在仓库，我才过去的。我大概是21点40分左右到的，不会更早。\n问：你到达仓库时看到了什么？\n答：我到的时候门口已经有人了，张敏也在。我看见陈伟站在门边，情绪有点激动，好像在和别人吵架。我没有进仓库里面，只是在门口问了几句怎么回事。\n问：你是否携带灰色双肩包？\n答：是，我平时会背一个灰色双肩包，但那天我记不清是不是一直背着。也可能是我之前某次来仓库时落下的，不一定是当天带过去的。\n问：现场发现一部黑色手机和带有“LH”字样的灰色双肩包，你如何解释？\n答：手机是我的，包大概率也是我的，但手机屏幕之前就摔过，不是那天摔的。包出现在仓库里面我也解释不清，也许是有人帮我拿进去，或者我之前放在那儿忘了。\n问：你是否进入过3号仓库内部？\n答：没有，我确定没有进去。我一直在门口附近。\n问：现场监控显示21时17分已有一名男性进入仓库前区域，你怎么解释？\n答：那个人不一定是我。我是21点40分左右才到的，而且当时天也比较暗，监控不一定看得清。\n问：你是否与陈伟发生肢体冲突？\n答：没有什么肢体冲突，就是拉了他一下，因为他冲我嚷嚷，说我不该来。我只是想让他冷静一下。\n问：你认识陈伟和王丽吗？\n答：都认识。陈伟以前和我一起做过短途货运，后来因为账目问题有过争执。王丽是我朋友，我们最近联系比较多。\n问：你手机上在2024年5月12日22时10分收到一笔8500元转账，备注“先还一部分”，这笔钱是什么？\n答：那是别人还我的借款，和仓库的事情没有关系。我之前借过钱给别人，分几次还，这次只是其中一笔。\n问：付款人是谁？\n答：我现在一下想不起来，可能是熟人代转的。我得看完整转账记录才能确认。\n问：你在21时12分接到王丽来电，是否与去仓库有关？\n答：她确实给我打过电话，但主要是说别的事情，不是专门叫我去仓库。后来我是自己决定过去看看。\n问：你最后离开现场是什么时候？\n答：应该是22点左右，具体记不清了。后来警察来了，我就配合说明情况。\n问：你是否知道仓库门锁为什么会有撬痕？\n答：不知道，我没碰过锁，也没见谁撬锁。\n被询问人阅后确认：以上记录我看过，和我说的一样。\n被询问人签名：林浩\n记录人签名：何欣\n2024年5月13日",
+      "source_file": "当事人证词.docx",
+      "page_or_paragraph": "",
+      "time": "",
+      "producer_or_speaker": "",
+      "is_original_evidence": true,
+      "notes": "Document text extracted and normalized."
+    },
+    {
+      "id": "evidence-item-2",
+      "type": "document",
+      "original_content": "Document: 现场勘验笔录.docx\nSource file: 现场勘验笔录.docx\nExtracted text:\n海州市公安局海东分局\n现场勘验笔录\n案件编号：HZ-HD-2024-0512-03\n勘验时间：2024年5月12日 22时18分至23时47分\n勘验地点：海州市海州路118号星河仓储中心3号仓库\n勘验人员：赵建国、周晨\n记录人员：刘婷\n在场人员：仓库管理员张敏、报警人陈伟\n一、现场基本情况\n星河仓储中心位于海州路118号，3号仓库位于园区西北侧，仓库正门朝南，门前为空地和简易停车区，东侧约15米处为值班室。勘验当日天气晴，地面干燥，无明显降雨痕迹。仓库卷帘门处于半开启状态，门锁有明显撬压变形痕迹，锁芯附近可见金属摩擦划痕。\n二、仓库内情况\n仓库内部照明正常，东侧货架第2排与第3排之间地面上散落若干纸箱碎片，一只灰色双肩包位于东侧货架第3排尽头靠墙位置。双肩包内发现黑色手机1部、收据若干、钥匙一串。手机屏幕存在裂纹，但仍可点亮。现场北侧办公桌下方发现一根长约42厘米的金属撬棍，表面附有灰尘及疑似新鲜擦痕。办公桌表面有一只摔落的玻璃水杯碎片，桌角附近地面可见少量水迹。\n三、现场痕迹物证\n1. 仓库正门门锁及锁扣处存在撬压痕迹；\n2. 北侧办公桌右侧地面提取到一枚鞋印，长度约27.5厘米；\n3. 东侧货架旁发现一枚黑色纽扣；\n4. 灰色双肩包肩带内侧绣有“LH”字样；\n5. 仓库监控主机处于通电状态，但监控硬盘连接线有松动现象；\n6. 值班室门口摄像头可正常回放，回放显示2024年5月12日21时17分，一名身穿深色上衣、浅色长裤的男性由南门方向步行进入3号仓库前区域；21时29分，仓库管理员张敏从东侧值班室方向小跑至3号仓库门前；21时34分，报警人陈伟到达现场；21时36分，可见两名男性在仓库门口附近发生肢体拉扯，约持续10秒；21时41分，画面中第三人王丽从停车区方向出现；21时43分，现场人员聚集于仓库门前。\n四、人员到场及初步情况\n仓库管理员张敏陈述，其于2024年5月12日21时25分左右在值班室听到仓库方向有异常撞击声，赶至3号仓库后发现门锁异常，并看见林浩与陈伟在门前争执。报警人陈伟陈述，其于21时30分左右接到张敏电话后赶来。现场到场人员王丽称其于21时40分许到达仓库附近，看到多人聚集。\n五、电子记录初查\n经对现场黑色手机进行初步查看，在未深入操作的情况下，屏幕通知栏可见一条银行转账提醒，显示时间为2024年5月12日22时10分，金额为人民币8500元，付款方备注为“先还一部分”。另在手机最近通话界面可见“王丽”于21时12分有呼入记录一次，时长34秒；“陈伟”于21时31分有呼入记录一次，未接通。\n六、现场初步判断\n根据现有情况，3号仓库在2024年5月12日21时17分前后已有人员进入仓库前区域，21时36分前后仓库门口发生争执。现场发现灰色双肩包、黑色手机、金属撬棍等物品，均已拍照固定并登记提取。相关人员已通知进一步询问。\n以下空白。\n勘验人员签名：赵建国\n记录人员签名：刘婷\n2024年5月12日 23时47分",
+      "source_file": "现场勘验笔录.docx",
+      "page_or_paragraph": "",
+      "time": "",
+      "producer_or_speaker": "",
+      "is_original_evidence": true,
+      "notes": "Document text extracted and normalized."
+    }
+  ],
+  "entities": [
+    {
+      "id": "ent_1",
+      "name": "林浩",
+      "type": "person",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-1"
+      ]
+    },
+    {
+      "id": "ent_2",
+      "name": "陈伟",
+      "type": "person",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-2"
+      ]
+    },
+    {
+      "id": "ent_3",
+      "name": "王丽",
+      "type": "person",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-1",
+        "evidence-item-2"
+      ]
+    },
+    {
+      "id": "ent_4",
+      "name": "张敏",
+      "type": "person",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-2"
+      ]
+    },
+    {
+      "id": "ent_5",
+      "name": "海州市公安局海东分局",
+      "type": "organization",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-2"
+      ]
+    },
+    {
+      "id": "ent_6",
+      "name": "星河仓储中心",
+      "type": "location",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-2"
+      ]
+    },
+    {
+      "id": "ent_7",
+      "name": "黑色手机",
+      "type": "object",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-2"
+      ]
+    },
+    {
+      "id": "ent_8",
+      "name": "灰色双肩包",
+      "type": "object",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-2"
+      ]
+    },
+    {
+      "id": "ent_9",
+      "name": "金属撬棍",
+      "type": "object",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-2"
+      ]
+    },
+    {
+      "id": "ent_10",
+      "name": "2024年5月12日",
+      "type": "time",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-1",
+        "evidence-item-2"
+      ]
+    },
+    {
+      "id": "ent_11",
+      "name": "2024年5月13日",
+      "type": "time",
+      "aliases": [],
+      "source_evidence_ids": [
+        "evidence-item-1"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "rel_1",
+      "subject_entity": "ent_1",
+      "object_entity": "ent_2",
+      "relation_type": "争执",
+      "time": "2024年5月12日",
+      "evidence_sources": [
+        "evidence-item-1",
+        "evidence-item-2"
+      ],
+      "confidence_status": "medium"
+    },
+    {
+      "id": "rel_2",
+      "subject_entity": "ent_1",
+      "object_entity": "ent_3",
+      "relation_type": "朋友",
+      "time": "",
+      "evidence_sources": [
+        "evidence-item-1"
+      ],
+      "confidence_status": "medium"
+    },
+    {
+      "id": "rel_3",
+      "subject_entity": "ent_1",
+      "object_entity": "ent_10",
+      "relation_type": "转账",
+      "time": "2024年5月12日22时10分",
+      "evidence_sources": [
+        "evidence-item-1"
+      ],
+      "confidence_status": "medium"
+    },
+    {
+      "id": "rel_4",
+      "subject_entity": "ent_2",
+      "object_entity": "ent_4",
+      "relation_type": "报警",
+      "time": "2024年5月12日",
+      "evidence_sources": [
+        "evidence-item-2"
+      ],
+      "confidence_status": "medium"
+    }
+  ],
+  "events": [
+    {
+      "id": "evt_1",
+      "event_type": "现场勘验",
+      "participant_entities": [
+        "ent_1",
+        "ent_2",
+        "ent_3",
+        "ent_4",
+        "ent_5"
+      ],
+      "time": "2024年5月12日 22时18分至23时47分",
+      "location": "海州市海州路118号星河仓储中心3号仓库",
+      "description": "对仓库进行现场勘验，发现撬压痕迹和相关物证。",
+      "source_evidence_ids": [
+        "evidence-item-2"
+      ]
+    }
+  ],
+  "claims": [
+    {
+      "id": "clm_1",
+      "content": "林浩声称与陈伟没有肢体冲突。",
+      "source": "林浩",
+      "target_ids": [
+        "ent_2"
+      ],
+      "stance": "support",
+      "credibility_status": "medium",
+      "quote": ""
+    },
+    {
+      "id": "clm_2",
+      "content": "林浩表示8500元转账与仓库事件无关。",
+      "source": "林浩",
+      "target_ids": [],
+      "stance": "support",
+      "credibility_status": "medium",
+      "quote": ""
+    }
+  ],
+  "extraction_log": {
+    "provider": "github_models",
+    "model": "openai/gpt-4o-mini",
+    "endpoint": "https://models.github.ai/inference",
+    "pipeline_llm_used": true,
+    "fallback_reason": "",
+    "stages": [
+      {
+        "stage_name": "extraction",
+        "llm_used": true,
+        "fallback_used": false,
+        "fallback_reason": "",
+        "prompt_system": "你是一个法律案件信息抽取引擎。\n你必须严格按照指定 schema 返回 JSON。只返回 JSON，不要返回 Markdown，不要返回解释，不要返回 schema 之外的字段。\n所有自然语言字段尽量使用中文。不要输出 evidence_items。\n\n顶层 JSON 必须且只能包含以下 4 个字段：\n- entities\n- relations\n- events\n- claims\n\n字段要求如下。\n\n1. entities: 数组。每个元素必须是对象，且必须包含以下字段：\n- id: string，例如 \"ent_1\"\n- name: string\n- type: string，只能是 person, location, organization, object, account, time\n- aliases: string[]\n- source_evidence_ids: string[]\n\n2. relations: 数组。每个元素必须是对象，且必须包含以下字段：\n- id: string，例如 \"rel_1\"\n- subject_entity: string，填写实体 id 或明确实体名\n- object_entity: string，填写实体 id 或明确实体名\n- relation_type: string\n- time: string\n- evidence_sources: string[]\n- confidence_status: string，只能是 high, medium, low, unknown\n\n3. events: 数组。每个元素必须是对象，且必须包含以下字段：\n- id: string，例如 \"evt_1\"\n- event_type: string\n- participant_entities: string[]\n- time: string\n- location: string\n- description: string\n- source_evidence_ids: string[]\n\n4. claims: 数组。每个元素必须是对象，且必须包含以下字段：\n- id: string，例如 \"clm_1\"\n- content: string\n- source: string\n- target_ids: string[]\n- stance: string，只能是 support, oppose, neutral\n- credibility_status: string，只能是 high, medium, low, unknown\n- quote: string\n\n禁止使用不符合 schema 的替代字段名。例如：\n- entities 中不要缺少 id，不要只返回 name 和 type\n- relations 中不要使用 source、target、relation，必须使用 subject_entity、object_entity、relation_type\n- events 中不要使用 name、participants，必须使用 event_type、participant_entities\n- claims 中不要使用 claim，必须使用 content\n\n如果某个字段无法确定，也必须保留该字段，并使用以下默认值：\n- 字符串字段填 \"\"\n- 数组字段填 []\n- confidence_status 或 credibility_status 填 unknown\n- stance 填 neutral\n\n示例结构：\n{\n  \"entities\": [\n    {\n      \"id\": \"ent_1\",\n      \"name\": \"张三\",\n      \"type\": \"person\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"ev_1\"]\n    }\n  ],\n  \"relations\": [\n    {\n      \"id\": \"rel_1\",\n      \"subject_entity\": \"ent_1\",\n      \"object_entity\": \"ent_2\",\n      \"relation_type\": \"转账\",\n      \"time\": \"\",\n      \"evidence_sources\": [\"ev_1\"],\n      \"confidence_status\": \"medium\"\n    }\n  ],\n  \"events\": [\n    {\n      \"id\": \"evt_1\",\n      \"event_type\": \"签订合同\",\n      \"participant_entities\": [\"ent_1\", \"ent_2\"],\n      \"time\": \"\",\n      \"location\": \"\",\n      \"description\": \"\",\n      \"source_evidence_ids\": [\"ev_2\"]\n    }\n  ],\n  \"claims\": [\n    {\n      \"id\": \"clm_1\",\n      \"content\": \"张三主张双方存在借款关系\",\n      \"source\": \"张三\",\n      \"target_ids\": [\"ent_2\"],\n      \"stance\": \"support\",\n      \"credibility_status\": \"medium\",\n      \"quote\": \"\"\n    }\n  ]\n}",
+        "prompt_user": "案件介绍：\n无\n\n结构化证据条目（系统内部生成，作为主要输入）：\n[\n  {\n    \"id\": \"evidence-item-1\",\n    \"type\": \"document\",\n    \"original_content\": \"Document: 当事人证词.docx\\nSource file: 当事人证词.docx\\nExtracted text:\\n询问笔录\\n被询问人：林浩\\n性别：男\\n年龄：31岁\\n职业：货运司机\\n询问地点：海州市公安局海东分局第二询问室\\n询问时间：2024年5月13日 09时10分至10时02分\\n询问人：孙磊、许安\\n记录人：何欣\\n问：请你说明2024年5月12日晚到星河仓储中心3号仓库的经过。\\n答：我那天晚上本来没打算去仓库，是后来王丽给我打电话，说陈伟可能在仓库，我才过去的。我大概是21点40分左右到的，不会更早。\\n问：你到达仓库时看到了什么？\\n答：我到的时候门口已经有人了，张敏也在。我看见陈伟站在门边，情绪有点激动，好像在和别人吵架。我没有进仓库里面，只是在门口问了几句怎么回事。\\n问：你是否携带灰色双肩包？\\n答：是，我平时会背一个灰色双肩包，但那天我记不清是不是一直背着。也可能是我之前某次来仓库时落下的，不一定是当天带过去的。\\n问：现场发现一部黑色手机和带有“LH”字样的灰色双肩包，你如何解释？\\n答：手机是我的，包大概率也是我的，但手机屏幕之前就摔过，不是那天摔的。包出现在仓库里面我也解释不清，也许是有人帮我拿进去，或者我之前放在那儿忘了。\\n问：你是否进入过3号仓库内部？\\n答：没有，我确定没有进去。我一直在门口附近。\\n问：现场监控显示21时17分已有一名男性进入仓库前区域，你怎么解释？\\n答：那个人不一定是我。我是21点40分左右才到的，而且当时天也比较暗，监控不一定看得清。\\n问：你是否与陈伟发生肢体冲突？\\n答：没有什么肢体冲突，就是拉了他一下，因为他冲我嚷嚷，说我不该来。我只是想让他冷静一下。\\n问：你认识陈伟和王丽吗？\\n答：都认识。陈伟以前和我一起做过短途货运，后来因为账目问题有过争执。王丽是我朋友，我们最近联系比较多。\\n问：你手机上在2024年5月12日22时10分收到一笔8500元转账，备注“先还一部分”，这笔钱是什么？\\n答：那是别人还我的借款，和仓库的事情没有关系。我之前借过钱给别人，分几次还，这次只是其中一笔。\\n问：付款人是谁？\\n答：我现在一下想不起来，可能是熟人代转的。我得看完整转账记录才能确认。\\n问：你在21时12分接到王丽来电，是否与去仓库有关？\\n答：她确实给我打过电话，但主要是说别的事情，不是专门叫我去仓库。后来我是自己决定过去看看。\\n问：你最后离开现场是什么时候？\\n答：应该是22点左右，具体记不清了。后来警察来了，我就配合说明情况。\\n问：你是否知道仓库门锁为什么会有撬痕？\\n答：不知道，我没碰过锁，也没见谁撬锁。\\n被询问人阅后确认：以上记录我看过，和我说的一样。\\n被询问人签名：林浩\\n记录人签名：何欣\\n2024年5月13日\",\n    \"source_file\": \"当事人证词.docx\",\n    \"page_or_paragraph\": \"\",\n    \"time\": \"\",\n    \"producer_or_speaker\": \"\",\n    \"is_original_evidence\": true,\n    \"notes\": \"Document text extracted and normalized.\"\n  },\n  {\n    \"id\": \"evidence-item-2\",\n    \"type\": \"document\",\n    \"original_content\": \"Document: 现场勘验笔录.docx\\nSource file: 现场勘验笔录.docx\\nExtracted text:\\n海州市公安局海东分局\\n现场勘验笔录\\n案件编号：HZ-HD-2024-0512-03\\n勘验时间：2024年5月12日 22时18分至23时47分\\n勘验地点：海州市海州路118号星河仓储中心3号仓库\\n勘验人员：赵建国、周晨\\n记录人员：刘婷\\n在场人员：仓库管理员张敏、报警人陈伟\\n一、现场基本情况\\n星河仓储中心位于海州路118号，3号仓库位于园区西北侧，仓库正门朝南，门前为空地和简易停车区，东侧约15米处为值班室。勘验当日天气晴，地面干燥，无明显降雨痕迹。仓库卷帘门处于半开启状态，门锁有明显撬压变形痕迹，锁芯附近可见金属摩擦划痕。\\n二、仓库内情况\\n仓库内部照明正常，东侧货架第2排与第3排之间地面上散落若干纸箱碎片，一只灰色双肩包位于东侧货架第3排尽头靠墙位置。双肩包内发现黑色手机1部、收据若干、钥匙一串。手机屏幕存在裂纹，但仍可点亮。现场北侧办公桌下方发现一根长约42厘米的金属撬棍，表面附有灰尘及疑似新鲜擦痕。办公桌表面有一只摔落的玻璃水杯碎片，桌角附近地面可见少量水迹。\\n三、现场痕迹物证\\n1. 仓库正门门锁及锁扣处存在撬压痕迹；\\n2. 北侧办公桌右侧地面提取到一枚鞋印，长度约27.5厘米；\\n3. 东侧货架旁发现一枚黑色纽扣；\\n4. 灰色双肩包肩带内侧绣有“LH”字样；\\n5. 仓库监控主机处于通电状态，但监控硬盘连接线有松动现象；\\n6. 值班室门口摄像头可正常回放，回放显示2024年5月12日21时17分，一名身穿深色上衣、浅色长裤的男性由南门方向步行进入3号仓库前区域；21时29分，仓库管理员张敏从东侧值班室方向小跑至3号仓库门前；21时34分，报警人陈伟到达现场；21时36分，可见两名男性在仓库门口附近发生肢体拉扯，约持续10秒；21时41分，画面中第三人王丽从停车区方向出现；21时43分，现场人员聚集于仓库门前。\\n四、人员到场及初步情况\\n仓库管理员张敏陈述，其于2024年5月12日21时25分左右在值班室听到仓库方向有异常撞击声，赶至3号仓库后发现门锁异常，并看见林浩与陈伟在门前争执。报警人陈伟陈述，其于21时30分左右接到张敏电话后赶来。现场到场人员王丽称其于21时40分许到达仓库附近，看到多人聚集。\\n五、电子记录初查\\n经对现场黑色手机进行初步查看，在未深入操作的情况下，屏幕通知栏可见一条银行转账提醒，显示时间为2024年5月12日22时10分，金额为人民币8500元，付款方备注为“先还一部分”。另在手机最近通话界面可见“王丽”于21时12分有呼入记录一次，时长34秒；“陈伟”于21时31分有呼入记录一次，未接通。\\n六、现场初步判断\\n根据现有情况，3号仓库在2024年5月12日21时17分前后已有人员进入仓库前区域，21时36分前后仓库门口发生争执。现场发现灰色双肩包、黑色手机、金属撬棍等物品，均已拍照固定并登记提取。相关人员已通知进一步询问。\\n以下空白。\\n勘验人员签名：赵建国\\n记录人员签名：刘婷\\n2024年5月12日 23时47分\",\n    \"source_file\": \"现场勘验笔录.docx\",\n    \"page_or_paragraph\": \"\",\n    \"time\": \"\",\n    \"producer_or_speaker\": \"\",\n    \"is_original_evidence\": true,\n    \"notes\": \"Document text extracted and normalized.\"\n  }\n]\n\n证据解析摘要：\n[document] 当事人证词.docx\n解析工具: parse_document_evidence\n解析说明: Document text extracted and normalized.\n解析状态: success\n\n[document] 现场勘验笔录.docx\n解析工具: parse_document_evidence\n解析说明: Document text extracted and normalized.\n解析状态: success\n\n请严格输出 entities、relations、events、claims 四个顶层字段，且每个数组元素都必须符合 schema 要求。",
+        "raw_response": {
+          "choices": [
+            {
+              "content_filter_results": {
+                "hate": {
+                  "filtered": false,
+                  "severity": "safe"
+                },
+                "protected_material_code": {
+                  "detected": false,
+                  "filtered": false
+                },
+                "protected_material_text": {
+                  "detected": false,
+                  "filtered": false
+                },
+                "self_harm": {
+                  "filtered": false,
+                  "severity": "safe"
+                },
+                "sexual": {
+                  "filtered": false,
+                  "severity": "safe"
+                },
+                "violence": {
+                  "filtered": false,
+                  "severity": "safe"
+                }
+              },
+              "finish_reason": "stop",
+              "index": 0,
+              "logprobs": null,
+              "message": {
+                "annotations": [],
+                "content": "{\n  \"entities\": [\n    {\n      \"id\": \"ent_1\",\n      \"name\": \"林浩\",\n      \"type\": \"person\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-1\"]\n    },\n    {\n      \"id\": \"ent_2\",\n      \"name\": \"陈伟\",\n      \"type\": \"person\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_3\",\n      \"name\": \"王丽\",\n      \"type\": \"person\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-1\", \"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_4\",\n      \"name\": \"张敏\",\n      \"type\": \"person\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_5\",\n      \"name\": \"海州市公安局海东分局\",\n      \"type\": \"organization\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_6\",\n      \"name\": \"星河仓储中心\",\n      \"type\": \"location\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_7\",\n      \"name\": \"黑色手机\",\n      \"type\": \"object\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_8\",\n      \"name\": \"灰色双肩包\",\n      \"type\": \"object\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_9\",\n      \"name\": \"金属撬棍\",\n      \"type\": \"object\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_10\",\n      \"name\": \"2024年5月12日\",\n      \"type\": \"time\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-1\", \"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_11\",\n      \"name\": \"2024年5月13日\",\n      \"type\": \"time\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-1\"]\n    }\n  ],\n  \"relations\": [\n    {\n      \"id\": \"rel_1\",\n      \"subject_entity\": \"ent_1\",\n      \"object_entity\": \"ent_2\",\n      \"relation_type\": \"争执\",\n      \"time\": \"2024年5月12日\",\n      \"evidence_sources\": [\"evidence-item-1\", \"evidence-item-2\"],\n      \"confidence_status\": \"medium\"\n    },\n    {\n      \"id\": \"rel_2\",\n      \"subject_entity\": \"ent_1\",\n      \"object_entity\": \"ent_3\",\n      \"relation_type\": \"朋友\",\n      \"time\": \"\",\n      \"evidence_sources\": [\"evidence-item-1\"],\n      \"confidence_status\": \"medium\"\n    },\n    {\n      \"id\": \"rel_3\",\n      \"subject_entity\": \"ent_1\",\n      \"object_entity\": \"ent_10\",\n      \"relation_type\": \"转账\",\n      \"time\": \"2024年5月12日22时10分\",\n      \"evidence_sources\": [\"evidence-item-1\"],\n      \"confidence_status\": \"medium\"\n    },\n    {\n      \"id\": \"rel_4\",\n      \"subject_entity\": \"ent_2\",\n      \"object_entity\": \"ent_4\",\n      \"relation_type\": \"报警\",\n      \"time\": \"2024年5月12日\",\n      \"evidence_sources\": [\"evidence-item-2\"],\n      \"confidence_status\": \"medium\"\n    }\n  ],\n  \"events\": [\n    {\n      \"id\": \"evt_1\",\n      \"event_type\": \"现场勘验\",\n      \"participant_entities\": [\"ent_1\", \"ent_2\", \"ent_3\", \"ent_4\", \"ent_5\"],\n      \"time\": \"2024年5月12日 22时18分至23时47分\",\n      \"location\": \"海州市海州路118号星河仓储中心3号仓库\",\n      \"description\": \"对仓库进行现场勘验，发现撬压痕迹和相关物证。\",\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    }\n  ],\n  \"claims\": [\n    {\n      \"id\": \"clm_1\",\n      \"content\": \"林浩声称与陈伟没有肢体冲突。\",\n      \"source\": \"林浩\",\n      \"target_ids\": [\"ent_2\"],\n      \"stance\": \"support\",\n      \"credibility_status\": \"medium\",\n      \"quote\": \"\"\n    },\n    {\n      \"id\": \"clm_2\",\n      \"content\": \"林浩表示8500元转账与仓库事件无关。\",\n      \"source\": \"林浩\",\n      \"target_ids\": [],\n      \"stance\": \"support\",\n      \"credibility_status\": \"medium\",\n      \"quote\": \"\"\n    }\n  ]\n}",
+                "refusal": null,
+                "role": "assistant"
+              }
+            }
+          ],
+          "created": 1773668266,
+          "id": "chatcmpl-DK2Qcd1IfMGE1va6u30xGw6AWuIMe",
+          "model": "gpt-4o-mini-2024-07-18",
+          "object": "chat.completion",
+          "prompt_filter_results": [
+            {
+              "prompt_index": 0,
+              "content_filter_results": {
+                "hate": {
+                  "filtered": false,
+                  "severity": "safe"
+                },
+                "jailbreak": {
+                  "detected": false,
+                  "filtered": false
+                },
+                "self_harm": {
+                  "filtered": false,
+                  "severity": "safe"
+                },
+                "sexual": {
+                  "filtered": false,
+                  "severity": "safe"
+                },
+                "violence": {
+                  "filtered": false,
+                  "severity": "safe"
+                }
+              }
+            }
+          ],
+          "system_fingerprint": "fp_eb37e061ec",
+          "usage": {
+            "completion_tokens": 1174,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": 0,
+              "audio_tokens": 0,
+              "reasoning_tokens": 0,
+              "rejected_prediction_tokens": 0
+            },
+            "prompt_tokens": 3064,
+            "prompt_tokens_details": {
+              "audio_tokens": 0,
+              "cached_tokens": 0
+            },
+            "total_tokens": 4238
+          }
+        },
+        "raw_content": "{\n  \"entities\": [\n    {\n      \"id\": \"ent_1\",\n      \"name\": \"林浩\",\n      \"type\": \"person\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-1\"]\n    },\n    {\n      \"id\": \"ent_2\",\n      \"name\": \"陈伟\",\n      \"type\": \"person\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_3\",\n      \"name\": \"王丽\",\n      \"type\": \"person\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-1\", \"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_4\",\n      \"name\": \"张敏\",\n      \"type\": \"person\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_5\",\n      \"name\": \"海州市公安局海东分局\",\n      \"type\": \"organization\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_6\",\n      \"name\": \"星河仓储中心\",\n      \"type\": \"location\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_7\",\n      \"name\": \"黑色手机\",\n      \"type\": \"object\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_8\",\n      \"name\": \"灰色双肩包\",\n      \"type\": \"object\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_9\",\n      \"name\": \"金属撬棍\",\n      \"type\": \"object\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_10\",\n      \"name\": \"2024年5月12日\",\n      \"type\": \"time\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-1\", \"evidence-item-2\"]\n    },\n    {\n      \"id\": \"ent_11\",\n      \"name\": \"2024年5月13日\",\n      \"type\": \"time\",\n      \"aliases\": [],\n      \"source_evidence_ids\": [\"evidence-item-1\"]\n    }\n  ],\n  \"relations\": [\n    {\n      \"id\": \"rel_1\",\n      \"subject_entity\": \"ent_1\",\n      \"object_entity\": \"ent_2\",\n      \"relation_type\": \"争执\",\n      \"time\": \"2024年5月12日\",\n      \"evidence_sources\": [\"evidence-item-1\", \"evidence-item-2\"],\n      \"confidence_status\": \"medium\"\n    },\n    {\n      \"id\": \"rel_2\",\n      \"subject_entity\": \"ent_1\",\n      \"object_entity\": \"ent_3\",\n      \"relation_type\": \"朋友\",\n      \"time\": \"\",\n      \"evidence_sources\": [\"evidence-item-1\"],\n      \"confidence_status\": \"medium\"\n    },\n    {\n      \"id\": \"rel_3\",\n      \"subject_entity\": \"ent_1\",\n      \"object_entity\": \"ent_10\",\n      \"relation_type\": \"转账\",\n      \"time\": \"2024年5月12日22时10分\",\n      \"evidence_sources\": [\"evidence-item-1\"],\n      \"confidence_status\": \"medium\"\n    },\n    {\n      \"id\": \"rel_4\",\n      \"subject_entity\": \"ent_2\",\n      \"object_entity\": \"ent_4\",\n      \"relation_type\": \"报警\",\n      \"time\": \"2024年5月12日\",\n      \"evidence_sources\": [\"evidence-item-2\"],\n      \"confidence_status\": \"medium\"\n    }\n  ],\n  \"events\": [\n    {\n      \"id\": \"evt_1\",\n      \"event_type\": \"现场勘验\",\n      \"participant_entities\": [\"ent_1\", \"ent_2\", \"ent_3\", \"ent_4\", \"ent_5\"],\n      \"time\": \"2024年5月12日 22时18分至23时47分\",\n      \"location\": \"海州市海州路118号星河仓储中心3号仓库\",\n      \"description\": \"对仓库进行现场勘验，发现撬压痕迹和相关物证。\",\n      \"source_evidence_ids\": [\"evidence-item-2\"]\n    }\n  ],\n  \"claims\": [\n    {\n      \"id\": \"clm_1\",\n      \"content\": \"林浩声称与陈伟没有肢体冲突。\",\n      \"source\": \"林浩\",\n      \"target_ids\": [\"ent_2\"],\n      \"stance\": \"support\",\n      \"credibility_status\": \"medium\",\n      \"quote\": \"\"\n    },\n    {\n      \"id\": \"clm_2\",\n      \"content\": \"林浩表示8500元转账与仓库事件无关。\",\n      \"source\": \"林浩\",\n      \"target_ids\": [],\n      \"stance\": \"support\",\n      \"credibility_status\": \"medium\",\n      \"quote\": \"\"\n    }\n  ]\n}",
+        "usage": {
+          "completion_tokens": 1174,
+          "completion_tokens_details": {
+            "accepted_prediction_tokens": 0,
+            "audio_tokens": 0,
+            "reasoning_tokens": 0,
+            "rejected_prediction_tokens": 0
+          },
+          "prompt_tokens": 3064,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 4238
+        },
+        "limits": {
+          "x-ratelimit-limit-requests": "20000",
+          "x-ratelimit-remaining-requests": "19968",
+          "x-ratelimit-reset-requests": "",
+          "x-ratelimit-limit-tokens": "2000000",
+          "x-ratelimit-remaining-tokens": "1931213",
+          "x-ratelimit-reset-tokens": ""
+        },
+        "error": ""
+      }
+    ]
+  }
+}

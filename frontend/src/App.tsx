@@ -1,53 +1,43 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  postReason,
+  askCaseQuestion,
+  createCase,
+  deleteCase,
+  getCase,
+  type CaseQuestionResponse,
   type Claim,
+  type CurrentCase,
   type Entity,
   type EvidenceInput,
   type EvidenceItem,
   type Event,
-  type ReasonResponse,
+  type ParsedEvidence,
+  type PipelineLog,
+  type QuestionViewData,
   type Relation,
 } from "./api";
 import ConflictCompare from "./components/ConflictCompare";
 import TimelineReasoning from "./components/TimelineReasoning";
 import HypothesisBoard from "./components/HypothesisBoard";
 
-const DEMO_CASE = `证词A：A 在 22:00 出现在仓库
-证词B：A 在 22:00 在公司加班
-监控：A 在 21:45 进入仓库
-银行记录：A 在 22:10 收到转账`;
-
-const DEMO_QUESTION = "A 在 22:00 更可能在哪里？请给出证据链和冲突点。";
-
+const DEMO_CASE = `请输入案件介绍，包括案件背景、涉及人员、关键时间线等基本信息。你也可以上传相关证据材料。提交后，系统会先做证据解析和结构化抽取。`;
+const DEMO_QUESTION = "例如：案件中有哪些关键事件？哪些证据彼此冲突？";
 const EVIDENCE_TYPES: EvidenceInput["type"][] = ["text", "document", "image", "video", "audio"];
 
 const DEFAULT_EVIDENCE: EvidenceInput = {
   type: "text",
-  name: "补充证据",
+  name: "",
   content: "",
   notes: "",
 };
 
-type ParsedEvidenceView = {
-  id?: string;
-  name?: string;
-  type?: string;
-  parser_tool?: string;
-  normalized_text?: string;
-  metadata?: {
-    parse_status?: string;
-    parser_detail?: string;
-    file_name?: string | null;
-    mime_type?: string | null;
-    notes?: string;
-  };
-};
+type EvidenceStatus = "pending" | "submitted" | "success";
 
 type AddedEvidence =
   | {
       id: string;
       kind: "text";
+      status: EvidenceStatus;
       name: string;
       type: "text";
       content: string;
@@ -56,17 +46,28 @@ type AddedEvidence =
   | {
       id: string;
       kind: "file";
+      status: EvidenceStatus;
       name: string;
       type: "document" | "image" | "video" | "audio";
       file: File;
       notes?: string;
     };
 
-function statusLabel(status?: string) {
+function firstLine(text?: string) {
+  return (text ?? "").split(/\r?\n/, 1)[0] ?? "";
+}
+
+function parseStatusLabel(status?: string) {
   if (status === "success") return "解析成功";
   if (status === "partial") return "部分解析";
   if (status === "unsupported") return "暂不支持";
   return "状态未知";
+}
+
+function evidenceStatusLabel(status: EvidenceStatus) {
+  if (status === "submitted") return "submitted";
+  if (status === "success") return "success";
+  return "pending";
 }
 
 function getFileAccept(type: EvidenceInput["type"]) {
@@ -88,8 +89,39 @@ function renderKeyValueRows(rows: Array<[string, string | boolean | string[]]>) 
   });
 }
 
-function firstLine(text?: string) {
-  return (text ?? "").split(/\r?\n/, 1)[0] ?? "";
+function PipelineLogView({ title, log }: { title: string; log?: PipelineLog }) {
+  if (!log) return null;
+  return (
+    <div className="evidence-list">
+      <h3>{title}</h3>
+      {renderKeyValueRows([
+        ["provider", log.provider],
+        ["model", log.model],
+        ["endpoint", log.endpoint],
+        ["pipeline_llm_used", log.pipeline_llm_used],
+        ["fallback_reason", log.fallback_reason],
+      ])}
+      {log.stages.map((stage) => (
+        <article className="evidence-card" key={stage.stage_name}>
+          <div className="evidence-card-header">
+            <strong>{stage.stage_name}</strong>
+            <span className={`status-badge status-${stage.fallback_used ? "unknown" : "success"}`}>
+              {stage.fallback_used ? "fallback" : "llm"}
+            </span>
+          </div>
+          {renderKeyValueRows([
+            ["llm_used", stage.llm_used],
+            ["fallback_used", stage.fallback_used],
+            ["fallback_reason", stage.fallback_reason],
+            ["error", stage.error],
+          ])}
+          {stage.prompt_system ? <pre>{stage.prompt_system}</pre> : null}
+          {stage.prompt_user ? <pre>{stage.prompt_user}</pre> : null}
+          {stage.raw_content ? <pre>{stage.raw_content}</pre> : null}
+        </article>
+      ))}
+    </div>
+  );
 }
 
 export default function App() {
@@ -97,54 +129,58 @@ export default function App() {
   const [question, setQuestion] = useState(DEMO_QUESTION);
   const [draftEvidence, setDraftEvidence] = useState<EvidenceInput>(DEFAULT_EVIDENCE);
   const [draftFile, setDraftFile] = useState<File | null>(null);
-  const [evidences, setEvidences] = useState<AddedEvidence[]>([
-    {
-      id: "demo-text-1",
-      kind: "text",
-      type: "text",
-      name: "监控补充说明",
-      content: "监控截图文字：A 于 21:45 进入仓库入口。",
-      notes: "手工录入的演示证据",
-    },
-  ]);
-  const [result, setResult] = useState<ReasonResponse | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [evidences, setEvidences] = useState<AddedEvidence[]>([]);
+  const [currentCase, setCurrentCase] = useState<CurrentCase | null>(null);
+  const [questionResult, setQuestionResult] = useState<CaseQuestionResponse | null>(null);
+  const [caseLoading, setCaseLoading] = useState(false);
+  const [questionLoading, setQuestionLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const view = useMemo(() => {
-    if (!result) return null;
-    if (result.recommended_view === "timeline_reasoning") {
-      return <TimelineReasoning data={result} />;
-    }
-    if (result.recommended_view === "hypothesis_board") {
-      return <HypothesisBoard data={result} />;
-    }
-    return <ConflictCompare data={result} />;
-  }, [result]);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const data = await getCase();
+        setCurrentCase(data.case);
+      } catch {
+        // Ignore initial load failures.
+      }
+    })();
+  }, []);
 
-  const parsedEvidences = (result?.parsed_evidences ?? []) as ParsedEvidenceView[];
-  const evidenceItems: EvidenceItem[] = result?.evidence_items ?? [];
-  const entities: Entity[] = result?.entities ?? [];
-  const relations: Relation[] = result?.relations ?? [];
-  const events: Event[] = result?.events ?? [];
-  const claims: Claim[] = result?.claims ?? [];
-  const fallbackReason = result?.fallback_reason?.trim() ?? "";
-  const fallbackDetail = result?.llm_log?.error?.trim() ?? "";
-  const promptSystem = result?.llm_log?.prompt_system?.trim() ?? "";
-  const promptUser = result?.llm_log?.prompt_user?.trim() ?? "";
-  const rawContent = result?.llm_log?.raw_content?.trim() ?? "";
-  const isFallback = Boolean(result && !result.llm_used);
-  const isTextDraft = draftEvidence.type === "text";
+  const entities: Entity[] = currentCase?.entities ?? [];
+  const relations: Relation[] = currentCase?.relations ?? [];
+  const events: Event[] = currentCase?.events ?? [];
+  const claims: Claim[] = currentCase?.claims ?? [];
+  const evidenceItems: EvidenceItem[] = currentCase?.evidence_items ?? [];
+  const parsedEvidences: ParsedEvidence[] = currentCase?.parsed_evidences ?? [];
+
+  const questionViewData = useMemo<QuestionViewData | null>(() => {
+    if (!currentCase || !questionResult) return null;
+    return {
+      events: currentCase.events,
+      claims: currentCase.claims,
+      conflicts: questionResult.conflicts,
+      evidence_paths: questionResult.evidence_paths,
+      recommended_view: questionResult.recommended_view,
+    };
+  }, [currentCase, questionResult]);
+
+  const recommendedView = useMemo(() => {
+    if (!questionViewData) return null;
+    if (questionViewData.recommended_view === "timeline_reasoning") {
+      return <TimelineReasoning data={questionViewData} />;
+    }
+    if (questionViewData.recommended_view === "hypothesis_board") {
+      return <HypothesisBoard data={questionViewData} />;
+    }
+    return <ConflictCompare data={questionViewData} />;
+  }, [questionViewData]);
 
   function updateDraft<K extends keyof EvidenceInput>(key: K, value: EvidenceInput[K]) {
     setDraftEvidence((current) => ({ ...current, [key]: value }));
     if (key === "type") {
       setDraftFile(null);
     }
-  }
-
-  function onDraftFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    setDraftFile(event.target.files?.[0] ?? null);
   }
 
   function addEvidence() {
@@ -159,15 +195,15 @@ export default function App() {
     if (draftType === "text") {
       const content = draftEvidence.content?.trim() ?? "";
       if (!content) {
-        setError("text 类型必须填写证据内容。");
+        setError("文本证据必须填写内容。");
         return;
       }
-
       setEvidences((current) => [
         ...current,
         {
           id: `evidence-${Date.now()}`,
           kind: "text",
+          status: "pending",
           type: "text",
           name,
           content,
@@ -176,15 +212,15 @@ export default function App() {
       ]);
     } else {
       if (!draftFile) {
-        setError("当前证据类型需要选择一个文件。");
+        setError("当前证据类型需要选择文件。");
         return;
       }
-
       setEvidences((current) => [
         ...current,
         {
           id: `evidence-${Date.now()}`,
           kind: "file",
+          status: "pending",
           type: draftType,
           name,
           file: draftFile,
@@ -202,12 +238,63 @@ export default function App() {
     setEvidences((current) => current.filter((item) => item.id !== id));
   }
 
-  async function onSubmit(event: React.FormEvent) {
+  function buildDraftEvidenceForSubmit(): AddedEvidence | null {
+    const name = draftEvidence.name?.trim() ?? "";
+    const notes = draftEvidence.notes?.trim() ?? "";
+
+    if (draftEvidence.type === "text") {
+      const content = draftEvidence.content?.trim() ?? "";
+      if (!name && !content && !notes) return null;
+      if (!name || !content) return null;
+      return {
+        id: `draft-evidence-${Date.now()}`,
+        kind: "text",
+        status: "pending",
+        type: "text",
+        name,
+        content,
+        notes,
+      };
+    }
+
+    if (!name && !draftFile && !notes) return null;
+    if (!name || !draftFile) return null;
+    return {
+      id: `draft-evidence-${Date.now()}`,
+      kind: "file",
+      status: "pending",
+      type: draftEvidence.type,
+      name,
+      file: draftFile,
+      notes,
+    };
+  }
+
+  async function onSubmitCase(event: React.FormEvent) {
     event.preventDefault();
-    setLoading(true);
+    setCaseLoading(true);
     setError("");
 
-    const manualEvidences: EvidenceInput[] = evidences
+    const draftEvidenceForSubmit = buildDraftEvidenceForSubmit();
+    const hasIncompleteDraft = !draftEvidenceForSubmit && Boolean(
+      draftEvidence.name?.trim() || draftEvidence.content?.trim() || draftEvidence.notes?.trim() || draftFile
+    );
+    if (hasIncompleteDraft) {
+      setError("当前草稿证据尚未完整添加，请先点击“添加证据”或补全后再提交。");
+      setCaseLoading(false);
+      return;
+    }
+
+    const submissionEvidences = draftEvidenceForSubmit ? [...evidences, draftEvidenceForSubmit] : evidences;
+    if (!caseText.trim() && submissionEvidences.length === 0) {
+      setError("请至少填写案件介绍或添加一条证据。");
+      setCaseLoading(false);
+      return;
+    }
+
+    setEvidences(submissionEvidences.map((item) => ({ ...item, status: "submitted" as const })));
+
+    const manualEvidences: EvidenceInput[] = submissionEvidences
       .filter((item): item is Extract<AddedEvidence, { kind: "text" }> => item.kind === "text")
       .map((item) => ({
         id: item.id,
@@ -217,26 +304,48 @@ export default function App() {
         notes: item.notes,
       }));
 
-    const files = evidences
+    const files = submissionEvidences
       .filter((item): item is Extract<AddedEvidence, { kind: "file" }> => item.kind === "file")
       .map((item) => item.file);
 
     try {
-      const data = await postReason(
-        {
-          case_text: caseText,
-          question,
-          evidences: manualEvidences,
-        },
-        files
-      );
-      setResult(data);
+      const response = await createCase(caseText, manualEvidences, files);
+      setCurrentCase(response.case);
+      setQuestionResult(null);
+      setEvidences(submissionEvidences.map((item) => ({ ...item, status: "success" as const })));
+      if (draftEvidenceForSubmit) {
+        setDraftEvidence(DEFAULT_EVIDENCE);
+        setDraftFile(null);
+      }
+    } catch (err) {
+      setEvidences(submissionEvidences.map((item) => ({ ...item, status: "pending" as const })));
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setCaseLoading(false);
+    }
+  }
+
+  async function onSubmitQuestion(event: React.FormEvent) {
+    event.preventDefault();
+    setQuestionLoading(true);
+    setError("");
+
+    try {
+      const response = await askCaseQuestion(question);
+      setQuestionResult(response);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
-      setResult(null);
     } finally {
-      setLoading(false);
+      setQuestionLoading(false);
     }
+  }
+
+  async function onClearCase() {
+    setError("");
+    await deleteCase();
+    setCurrentCase(null);
+    setQuestionResult(null);
+    setEvidences([]);
   }
 
   return (
@@ -244,19 +353,15 @@ export default function App() {
       <h1>Reasoning Interface Generator</h1>
       <div className="layout">
         <section className="panel left">
-          <h2>Input</h2>
-          <form onSubmit={onSubmit}>
+          <h2>Case Input</h2>
+          <form onSubmit={onSubmitCase}>
             <label>
-              案件材料
+              案件介绍
               <textarea rows={10} value={caseText} onChange={(e) => setCaseText(e.target.value)} />
-            </label>
-            <label>
-              推理问题
-              <textarea rows={4} value={question} onChange={(e) => setQuestion(e.target.value)} />
             </label>
 
             <div className="evidence-editor">
-              <h3>添加证据</h3>
+              <h3>提交证据</h3>
               <label>
                 证据类型
                 <select value={draftEvidence.type} onChange={(e) => updateDraft("type", e.target.value as EvidenceInput["type"])}>
@@ -271,7 +376,7 @@ export default function App() {
                 证据名称
                 <input value={draftEvidence.name ?? ""} onChange={(e) => updateDraft("name", e.target.value)} />
               </label>
-              {isTextDraft ? (
+              {draftEvidence.type === "text" ? (
                 <label>
                   证据内容
                   <textarea rows={5} value={draftEvidence.content ?? ""} onChange={(e) => updateDraft("content", e.target.value)} />
@@ -279,11 +384,13 @@ export default function App() {
               ) : (
                 <label>
                   上传文件
-                  <input accept={getFileAccept(draftEvidence.type)} type="file" onChange={onDraftFileChange} />
+                  <input
+                    accept={getFileAccept(draftEvidence.type)}
+                    type="file"
+                    onChange={(e) => setDraftFile(e.target.files?.[0] ?? null)}
+                  />
                 </label>
               )}
-              {!isTextDraft && draftFile ? <p className="hint">已选择文件: {draftFile.name}</p> : null}
-              {!isTextDraft ? <p className="hint">文件会在提交推理时上传，并由后端做解析。</p> : null}
               <label>
                 备注
                 <textarea rows={2} value={draftEvidence.notes ?? ""} onChange={(e) => updateDraft("notes", e.target.value)} />
@@ -294,15 +401,26 @@ export default function App() {
             </div>
 
             <div className="evidence-list">
-              <h3>已添加证据</h3>
-              {evidences.length === 0 ? <p>当前没有证据。</p> : null}
+              <h3>当前案件证据</h3>
+              {evidences.length === 0 ? <p>当前没有案件证据。</p> : null}
               {evidences.map((item) => (
                 <article className="evidence-card" key={item.id}>
                   <div className="evidence-card-header">
                     <strong>{item.name}</strong>
-                    <button className="danger" type="button" onClick={() => removeEvidence(item.id)}>
-                      删除
-                    </button>
+                    <div className="evidence-actions">
+                      <span
+                        className={`status-badge status-${
+                          item.status === "success" ? "success" : item.status === "submitted" ? "partial" : "unknown"
+                        }`}
+                      >
+                        {evidenceStatusLabel(item.status)}
+                      </span>
+                      {item.status === "pending" ? (
+                        <button className="danger" type="button" onClick={() => removeEvidence(item.id)}>
+                          删除
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   <p>类型: {item.type}</p>
                   {item.kind === "text" ? <pre>{firstLine(item.content)}</pre> : <p>文件: {item.file.name}</p>}
@@ -310,28 +428,34 @@ export default function App() {
               ))}
             </div>
 
-            <button disabled={loading} type="submit">
-              {loading ? "分析中..." : "提交推理"}
+            <button disabled={caseLoading} type="submit">
+              {caseLoading ? "提交证据中..." : "提交证据"}
+            </button>
+            <button className="secondary" type="button" onClick={() => void onClearCase()}>
+              清空当前案件
             </button>
           </form>
           {error ? <p className="error">请求失败: {error}</p> : null}
         </section>
 
         <section className="panel right">
-          <h2>Output</h2>
-          {!result ? <p>提交后这里会显示结构化推理结果。</p> : null}
-          {result ? (
-            <>
-              {isFallback ? (
-                <div className="fallback-alert">
-                  <strong>当前结果来自 fallback，不是 LLM 的正式推理结果。</strong>
-                  <p>fallback_reason: {fallbackReason || "unknown"}</p>
-                  <p>error_detail: {fallbackDetail || "none"}</p>
-                </div>
-              ) : null}
+          <h2>Question & Output</h2>
+          <form onSubmit={onSubmitQuestion}>
+            <label>
+              用户问题
+              <textarea rows={4} value={question} onChange={(e) => setQuestion(e.target.value)} />
+            </label>
+            <button disabled={questionLoading || !currentCase} type="submit">
+              {questionLoading ? "提交问题中..." : "提交问题"}
+            </button>
+          </form>
 
+          {!currentCase ? <p>先在左侧提交案件介绍和证据。</p> : null}
+
+          {currentCase ? (
+            <>
               <p>
-                <strong>Summary:</strong> {result.summary}
+                <strong>Current Case:</strong> {currentCase.case_id}
               </p>
 
               <div className="evidence-list">
@@ -348,7 +472,6 @@ export default function App() {
                       ["页码/段落", item.page_or_paragraph],
                       ["时间", item.time],
                       ["说话人/生产者", item.producer_or_speaker],
-                      ["是否原始证据", item.is_original_evidence],
                       ["备注", item.notes],
                     ])}
                     <pre>{firstLine(item.original_content)}</pre>
@@ -381,20 +504,9 @@ export default function App() {
                   <article className="evidence-card" key={relation.id}>
                     <div className="evidence-card-header">
                       <strong>{relation.relation_type}</strong>
-                      <span
-                        className={`status-badge status-${
-                          relation.confidence_status === "high"
-                            ? "success"
-                            : relation.confidence_status === "medium"
-                              ? "partial"
-                              : "unknown"
-                        }`}
-                      >
-                        {relation.confidence_status}
-                      </span>
+                      <span className="status-badge status-success">{relation.confidence_status}</span>
                     </div>
                     {renderKeyValueRows([
-                      ["ID", relation.id],
                       ["主体", relation.subject_entity],
                       ["客体", relation.object_entity],
                       ["时间", relation.time],
@@ -431,20 +543,9 @@ export default function App() {
                   <article className="evidence-card" key={item.id}>
                     <div className="evidence-card-header">
                       <strong>{item.source || item.id}</strong>
-                      <span
-                        className={`status-badge status-${
-                          item.credibility_status === "high"
-                            ? "success"
-                            : item.credibility_status === "medium"
-                              ? "partial"
-                              : "unknown"
-                        }`}
-                      >
-                        {item.stance}
-                      </span>
+                      <span className="status-badge status-success">{item.stance}</span>
                     </div>
                     {renderKeyValueRows([
-                      ["ID", item.id],
                       ["可信状态", item.credibility_status],
                       ["指向对象", item.target_ids],
                     ])}
@@ -454,51 +555,22 @@ export default function App() {
                 ))}
               </div>
 
-              <div className="evidence-list">
-                <h3>LLM Log</h3>
-                {renderKeyValueRows([
-                  ["provider", result.llm_log?.provider ?? "-"],
-                  ["model", result.llm_log?.model ?? "-"],
-                  ["endpoint", result.llm_log?.endpoint ?? "-"],
-                  ["fallback_reason", result.llm_log?.fallback_reason ?? "-"],
-                  ["error", result.llm_log?.error ?? "-"],
-                ])}
-                {promptSystem ? (
-                  <>
-                    <p>system prompt</p>
-                    <pre>{promptSystem}</pre>
-                  </>
-                ) : null}
-                {promptUser ? (
-                  <>
-                    <p>user prompt</p>
-                    <pre>{promptUser}</pre>
-                  </>
-                ) : null}
-                {rawContent ? (
-                  <>
-                    <p>model raw content</p>
-                    <pre>{rawContent}</pre>
-                  </>
-                ) : null}
-              </div>
-
-              {view}
+              <PipelineLogView title="Extraction Log" log={currentCase.extraction_log} />
 
               <div className="evidence-list">
                 <h3>解析结果</h3>
                 {parsedEvidences.length === 0 ? <p>没有可展示的解析结果。</p> : null}
-                {parsedEvidences.map((item, idx) => (
-                  <article className="evidence-card" key={item.id ?? idx}>
+                {parsedEvidences.map((item) => (
+                  <article className="evidence-card" key={item.id}>
                     <div className="evidence-card-header">
-                      <strong>{item.name ?? "Unnamed evidence"}</strong>
+                      <strong>{item.name}</strong>
                       <span className={`status-badge status-${item.metadata?.parse_status ?? "unknown"}`}>
-                        {statusLabel(item.metadata?.parse_status)}
+                        {parseStatusLabel(item.metadata?.parse_status)}
                       </span>
                     </div>
                     {renderKeyValueRows([
-                      ["类型", item.type ?? "-"],
-                      ["解析工具", item.parser_tool ?? "-"],
+                      ["类型", item.type],
+                      ["解析工具", item.parser_tool],
                       ["文件名", item.metadata?.file_name ?? "-"],
                       ["说明", item.metadata?.parser_detail ?? item.metadata?.notes ?? "-"],
                     ])}
@@ -506,6 +578,18 @@ export default function App() {
                   </article>
                 ))}
               </div>
+
+              {questionResult ? (
+                <>
+                  <p>
+                    <strong>Summary:</strong> {questionResult.summary}
+                  </p>
+                  <PipelineLogView title="Question Reasoning Log" log={questionResult.reasoning_log} />
+                  {recommendedView}
+                </>
+              ) : (
+                <p>提交问题后，这里会显示 conflicts、evidence_paths 和推荐视图。</p>
+              )}
             </>
           ) : null}
         </section>
