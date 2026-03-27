@@ -1,236 +1,317 @@
-"""Pydantic schemas for request/response validation."""
+﻿from __future__ import annotations
 
+from datetime import datetime
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
-EvidenceType = Literal["text", "document", "image", "video", "audio"]
-EntityType = Literal["person", "location", "organization", "object", "account", "time"]
-StanceType = Literal["support", "oppose", "neutral"]
-StatusType = Literal["high", "medium", "low", "unknown"]
+class FileType(str, Enum):
+    pdf = "pdf"
+    docx = "docx"
+    image = "image"
+    txt = "txt"
+    markdown = "markdown"
+    other = "other"
 
 
-class EvidenceInput(BaseModel):
-    """Unified evidence payload accepted by the backend."""
-
-    id: str | None = None
-    type: EvidenceType
-    name: str = Field(..., min_length=1)
-    content: str = Field(default="")
-    file_name: str | None = None
-    mime_type: str | None = None
-    notes: str | None = None
+class FileParseStatus(str, Enum):
+    pending = "pending"
+    parsing = "parsing"
+    parsed = "parsed"
+    failed = "failed"
 
 
-class ParsedEvidence(BaseModel):
-    """Normalized evidence text produced by type-specific tools."""
+class EvidenceType(str, Enum):
+    text_span = "text_span"
+    image_region = "image_region"
+    screenshot = "screenshot"
+    table = "table"
+    extracted_statement = "extracted_statement"
+    other = "other"
 
-    id: str
-    type: EvidenceType
-    name: str
-    parser_tool: str
-    normalized_text: str
-    metadata: dict = Field(default_factory=dict)
+
+class CardType(str, Enum):
+    meta = "meta"
+    inference = "inference"
+
+
+class DisplayLevel(int, Enum):
+    level_1 = 1
+    level_2 = 2
+    level_3 = 3
+
+
+class CardStatus(str, Enum):
+    active = "active"
+    hidden = "hidden"
+    archived = "archived"
+
+
+class MetaType(str, Enum):
+    person = "person"
+    organization = "organization"
+    location = "location"
+    time = "time"
+    object = "object"
+    account = "account"
+    document = "document"
+    event = "event"
+    claim = "claim"
+    law = "law"
+    other = "other"
+
+
+class InferenceType(str, Enum):
+    hypothesis = "hypothesis"
+    conclusion = "conclusion"
+    conflict = "conflict"
+    missing_evidence = "missing_evidence"
+    reasoning_step = "reasoning_step"
+    evidence_chain = "evidence_chain"
+    risk = "risk"
+    other = "other"
+
+
+class InferenceDecision(str, Enum):
+    undecided = "undecided"
+    accepted = "accepted"
+    rejected = "rejected"
+    pending = "pending"
+
+
+class EdgeType(str, Enum):
+    relates_to = "relates_to"
+    supports = "supports"
+    opposes = "opposes"
+    derives = "derives"
+    mentions = "mentions"
+    conflicts_with = "conflicts_with"
+    missing_for = "missing_for"
+    cites = "cites"
+    belongs_to = "belongs_to"
+
+
+class ViewMode(str, Enum):
+    panorama = "panorama"
+    reasoning = "reasoning"
+    detail = "detail"
+
+
+class CaseFile(BaseModel):
+    file_id: str
+    filename: str
+    file_type: FileType
+    file_size: int | None = None
+    storage_path: str | None = None
+    uploaded_at: datetime
+    parse_status: FileParseStatus = FileParseStatus.pending
+
+    preview_text: str | None = None
+    page_count: int | None = None
+    error_message: str | None = None
+
+
+class EvidenceAnchor(BaseModel):
+    file_id: str
+    page: int | None = None
+    section: str | None = None
+    paragraph_index: int | None = None
+    char_start: int | None = None
+    char_end: int | None = None
+    bbox: list[float] | None = None
 
 
 class EvidenceItem(BaseModel):
-    """Original evidence unit used for downstream reasoning."""
+    evidence_id: str
+    evidence_type: EvidenceType = EvidenceType.text_span
 
+    label: str
+    content: str | None = None
+    summary: str | None = None
+
+    anchors: list[EvidenceAnchor] = Field(default_factory=list)
+    source_file_ids: list[str] = Field(default_factory=list)
+
+    created_at: datetime
+
+
+class CardPosition(BaseModel):
+    x: float = 0
+    y: float = 0
+
+
+class CardUIState(BaseModel):
+    selected: bool = False
+    highlighted: bool = False
+    pinned: bool = False
+    collapsed: bool = False
+
+
+class CanvasViewport(BaseModel):
+    zoom: float = 1.0
+    offset_x: float = 0
+    offset_y: float = 0
+
+
+class CardBase(BaseModel):
     id: str
-    type: EvidenceType
-    original_content: str = ""
-    source_file: str = ""
-    page_or_paragraph: str = ""
-    time: str = ""
-    producer_or_speaker: str = ""
-    is_original_evidence: bool = True
-    notes: str = ""
+    card_type: CardType
+
+    title: str
+    summary: str | None = None
+
+    display_level: DisplayLevel = DisplayLevel.level_1
+    status: CardStatus = CardStatus.active
+
+    position: CardPosition = Field(default_factory=CardPosition)
+    ui_state: CardUIState = Field(default_factory=CardUIState)
+
+    source_evidence_ids: list[str] = Field(default_factory=list)
+    source_file_ids: list[str] = Field(default_factory=list)
+
+    created_at: datetime
+    updated_at: datetime
 
 
-class Entity(BaseModel):
-    """Named entity extracted from evidence."""
-
-    id: str
-    name: str
-    type: EntityType
+class MetaDetail(BaseModel):
+    name: str | None = None
     aliases: list[str] = Field(default_factory=list)
+
+    description: str | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+    image_urls: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+class MetaCard(CardBase):
+    card_type: Literal[CardType.meta] = CardType.meta
+    meta_type: MetaType
+
+    detail: MetaDetail = Field(default_factory=MetaDetail)
+
+
+class InferenceDetail(BaseModel):
+    claim: str
+    reasoning_steps: list[str] = Field(default_factory=list)
+
+    supporting_card_ids: list[str] = Field(default_factory=list)
+    opposing_card_ids: list[str] = Field(default_factory=list)
+    missing_card_ids: list[str] = Field(default_factory=list)
+
+    confidence: float | None = None
+    legal_basis_ids: list[str] = Field(default_factory=list)
+
+    notes: str | None = None
+
+
+class InferenceCard(CardBase):
+    card_type: Literal[CardType.inference] = CardType.inference
+    inference_type: InferenceType
+
+    decision: InferenceDecision = InferenceDecision.undecided
+    detail: InferenceDetail
+
+
+class GraphEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    edge_type: EdgeType
+
+    label: str | None = None
+    weight: float | None = None
+
     source_evidence_ids: list[str] = Field(default_factory=list)
+    created_at: datetime
 
 
-class Relation(BaseModel):
-    """Typed relation between two entities."""
+class WorkspaceState(BaseModel):
+    current_view: ViewMode = ViewMode.panorama
 
-    id: str
-    subject_entity: str
-    object_entity: str
-    relation_type: str
-    time: str = ""
-    evidence_sources: list[str] = Field(default_factory=list)
-    confidence_status: StatusType = "unknown"
+    selected_card_ids: list[str] = Field(default_factory=list)
+    focused_card_id: str | None = None
 
+    expanded_card_ids: list[str] = Field(default_factory=list)
+    pinned_card_ids: list[str] = Field(default_factory=list)
 
-class Event(BaseModel):
-    """Structured event extracted from evidence."""
-
-    id: str
-    event_type: str
-    participant_entities: list[str] = Field(default_factory=list)
-    time: str = ""
-    location: str = ""
-    description: str = ""
-    source_evidence_ids: list[str] = Field(default_factory=list)
+    viewport: CanvasViewport = Field(default_factory=CanvasViewport)
 
 
-class Claim(BaseModel):
-    """Claim or allegation grounded in evidence."""
+class CaseData(BaseModel):
+    case_id: str
+    case_title: str = "未命名案件"
 
-    id: str
-    content: str
-    source: str = ""
-    target_ids: list[str] = Field(default_factory=list)
-    stance: StanceType = "neutral"
-    credibility_status: StatusType = "unknown"
-    quote: str = ""
+    created_at: datetime
+    updated_at: datetime
 
+    files: list[CaseFile] = Field(default_factory=list)
+    evidences: list[EvidenceItem] = Field(default_factory=list)
 
-class LLMLog(BaseModel):
-    """Diagnostic information about one model invocation."""
+    meta_cards: list[MetaCard] = Field(default_factory=list)
+    inference_cards: list[InferenceCard] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)
 
-    provider: str = "github_models"
-    model: str = ""
-    endpoint: str = ""
-    llm_used: bool = False
-    fallback_reason: str = ""
-    prompt_system: str = ""
-    prompt_user: str = ""
-    raw_response: dict = Field(default_factory=dict)
-    raw_content: str = ""
-    usage: dict = Field(default_factory=dict)
-    limits: dict = Field(default_factory=dict)
-    error: str = ""
+    workspace_state: WorkspaceState = Field(default_factory=WorkspaceState)
 
 
-class StageLog(BaseModel):
-    """Diagnostic information for one pipeline stage."""
-
-    stage_name: str
-    llm_used: bool = False
-    fallback_used: bool = False
-    fallback_reason: str = ""
-    prompt_system: str = ""
-    prompt_user: str = ""
-    raw_response: dict[str, Any] = Field(default_factory=dict)
-    raw_content: str = ""
-    usage: dict[str, Any] = Field(default_factory=dict)
-    limits: dict[str, Any] = Field(default_factory=dict)
-    error: str = ""
+class GetCaseResponse(BaseModel):
+    case: CaseData | None = None
 
 
-class PipelineLog(BaseModel):
-    """Aggregated pipeline diagnostics across multiple stages."""
-
-    provider: str = "github_models"
-    model: str = ""
-    endpoint: str = ""
-    pipeline_llm_used: bool = False
-    fallback_reason: str = ""
-    stages: list[StageLog] = Field(default_factory=list)
+class UpsertCaseResponse(BaseModel):
+    success: bool
+    case: CaseData
+    message: str | None = None
 
 
-class ReasonRequest(BaseModel):
-    """Input payload for reasoning endpoint."""
-
-    case_text: str = Field(..., min_length=1)
-    question: str = Field(..., min_length=1)
-    evidences: list[EvidenceInput] = Field(default_factory=list)
-
-
-class CaseCreateRequest(BaseModel):
-    """Payload used to create or replace the current case."""
-
-    case_text: str = ""
-    evidences: list[EvidenceInput] = Field(default_factory=list)
+class UpdateCardRequest(BaseModel):
+    title: str | None = None
+    summary: str | None = None
+    display_level: DisplayLevel | None = None
+    position: CardPosition | None = None
+    ui_state: CardUIState | None = None
+    detail: dict[str, Any] | None = None
 
 
-class QuestionReasonRequest(BaseModel):
-    """Payload used to ask a question against the current case."""
-
-    question: str = Field(..., min_length=1)
-
-
-class ExtractionStageResponse(BaseModel):
-    """Stage 1 output: extracted case structure from evidence."""
-
-    entities: list[Entity] = Field(default_factory=list)
-    relations: list[Relation] = Field(default_factory=list)
-    events: list[Event] = Field(default_factory=list)
-    claims: list[Claim] = Field(default_factory=list)
-    stage_log: StageLog = Field(default_factory=lambda: StageLog(stage_name="extraction"))
+class UpdateWorkspaceRequest(BaseModel):
+    current_view: ViewMode | None = None
+    selected_card_ids: list[str] | None = None
+    focused_card_id: str | None = None
+    expanded_card_ids: list[str] | None = None
+    pinned_card_ids: list[str] | None = None
+    viewport: CanvasViewport | None = None
 
 
-class QuestionReasoningStageResponse(BaseModel):
-    """Stage 2+3 output: reasoning graph and interface recommendation for a question."""
 
-    question: str = ""
-    conflicts: list[dict[str, Any]] = Field(default_factory=list)
-    evidence_paths: list[dict[str, Any]] = Field(default_factory=list)
-    recommended_view: str = "conflict_compare"
-    summary: str = ""
-    stage_log: StageLog = Field(default_factory=lambda: StageLog(stage_name="question_reasoning"))
+class UpdateCaseRequest(BaseModel):
+    case_title: str
 
-
-class CurrentCase(BaseModel):
-    """The single current case stored by the backend."""
-
-    case_id: str = ""
-    case_text: str = ""
-    parsed_evidences: list[ParsedEvidence] = Field(default_factory=list)
-    evidence_items: list[EvidenceItem] = Field(default_factory=list)
-    entities: list[Entity] = Field(default_factory=list)
-    relations: list[Relation] = Field(default_factory=list)
-    events: list[Event] = Field(default_factory=list)
-    claims: list[Claim] = Field(default_factory=list)
-    extraction_log: PipelineLog = Field(default_factory=PipelineLog)
+class GenerateInferenceRequest(BaseModel):
+    case_id: str
+    selected_card_ids: list[str]
+    mode: Literal["hypothesis", "conclusion", "conflict_check", "missing_evidence"] = "hypothesis"
+    user_prompt: str | None = None
 
 
-class CaseCreateResponse(BaseModel):
-    """Response returned after creating or replacing the current case."""
-
-    case: CurrentCase = Field(default_factory=CurrentCase)
-
-
-class CaseQuestionResponse(BaseModel):
-    """Response returned after asking a question against the current case."""
-
-    case_id: str = ""
-    question: str = ""
-    conflicts: list[dict[str, Any]] = Field(default_factory=list)
-    evidence_paths: list[dict[str, Any]] = Field(default_factory=list)
-    recommended_view: str = "conflict_compare"
-    summary: str = ""
-    reasoning_log: PipelineLog = Field(default_factory=PipelineLog)
+class GenerateInferenceResponse(BaseModel):
+    success: bool
+    new_inference_cards: list[InferenceCard] = Field(default_factory=list)
+    new_edges: list[GraphEdge] = Field(default_factory=list)
+    updated_workspace_state: WorkspaceState | None = None
+    message: str | None = None
 
 
-class CurrentCaseEnvelope(BaseModel):
-    """Wrapper used by GET /api/case."""
+class CaseListItem(BaseModel):
+    case_id: str
+    case_title: str
+    updated_at: datetime
+    is_current: bool = False
 
-    case: CurrentCase | None = None
 
+class ListCasesResponse(BaseModel):
+    cases: list[CaseListItem] = Field(default_factory=list)
+    current_case_id: str | None = None
 
-class ReasonResponse(BaseModel):
-    """Structured reasoning output consumed by frontend."""
-
-    llm_used: bool = False
-    fallback_reason: str = ""
-    llm_log: LLMLog = Field(default_factory=LLMLog)
-    parsed_evidences: list[ParsedEvidence] = Field(default_factory=list)
-    evidence_items: list[EvidenceItem] = Field(default_factory=list)
-    entities: list[Entity] = Field(default_factory=list)
-    relations: list[Relation] = Field(default_factory=list)
-    events: list[Event] = Field(default_factory=list)
-    claims: list[Claim] = Field(default_factory=list)
-    conflicts: list[dict] = Field(default_factory=list)
-    evidence_paths: list[dict] = Field(default_factory=list)
-    recommended_view: str = "conflict_compare"
-    summary: str = ""

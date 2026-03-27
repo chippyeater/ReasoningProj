@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>REASONING OS | 超级智能推理协作系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-dark: #0a0a0c;
+            --panel-bg: rgba(20, 20, 25, 0.85);
+            --accent-cyan: #00e5ff;
+            --accent-orange: #ff5722;
+            --accent-gold: #ffc107;
+            --accent-blue: #2979ff;
+            --accent-purple: #a855f7;
+            --accent-green: #10b981;
+            --border-glow: rgba(0, 229, 255, 0.3);
+        }
+
+        body { background-color: var(--bg-dark); color: #d1d5db; font-family: 'Inter', system-ui, sans-serif; overflow: hidden; }
+        
+        /* 1. 全局网格背景 (Image 1/5) */
+        .canvas-container {
+            background-image: linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), 
+                              linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+            perspective: 1000px;
+        }
+
+        /* 2. 实体卡片 (Image 4/5 风格) */
+        .entity-card {
+            width: 280px; background: #15151a; border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: absolute; z-index: 10;
+        }
+        /* 类型区分: 人(蓝/圆), 物(绿/方), 组织(紫/六边) */
+        .entity-card.person { border-left: 4px solid var(--accent-blue); }
+        .entity-card.object { border-left: 4px solid var(--accent-green); border-radius: 4px; }
+        .entity-card.org { border-left: 4px solid var(--accent-purple); clip-path: polygon(0% 0%, 100% 0%, 100% 90%, 90% 100%, 0% 100%); }
+
+        .entity-card:hover { border-color: var(--accent-cyan); transform: scale(1.02) translateY(-5px); box-shadow: 0 15px 40px rgba(0,0,0,0.6), 0 0 15px var(--border-glow); }
+        .entity-card.focused { opacity: 1; z-index: 50; border-color: var(--accent-cyan); box-shadow: 0 0 30px var(--border-glow); }
+        .dimmed { opacity: 0.2; filter: blur(1px) grayscale(0.8); }
+
+        /* 3. 逻辑连线与锚点 (Hub) */
+        svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+        .logic-edge { stroke: rgba(255,255,255,0.1); stroke-dasharray: 4; fill: none; transition: 0.5s; }
+        .logic-edge.active { stroke: var(--accent-cyan); stroke-width: 2; stroke-dasharray: 0; filter: drop-shadow(0 0 5px var(--accent-cyan)); }
+        
+        .rel-hub {
+            position: absolute; width: 24px; height: 24px; background: #1a1a20; border: 2px solid var(--accent-gold);
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; z-index: 20; transition: 0.3s;
+        }
+        .rel-hub:hover { transform: scale(1.3); background: var(--accent-gold); }
+
+        /* 4. 冲突对比滑动器 (Slider/Wipe) */
+        .comparison-view {
+            width: 100%; height: 200px; position: relative; overflow: hidden; border-radius: 8px;
+        }
+        .compare-after { position: absolute; top: 0; left: 0; width: 50%; height: 100%; overflow: hidden; border-right: 2px solid #fff; z-index: 2; }
+
+        /* 5. 假设堆叠 (Version Stacking) */
+        .hypo-stack { position: relative; height: 120px; }
+        .hypo-ghost { position: absolute; top: 10px; left: 10px; width: 100%; opacity: 0.3; transform: scale(0.95); pointer-events: none; }
+        .hypo-active { border: 1px solid var(--accent-gold); position: relative; z-index: 2; }
+        .hypo-verified { border-color: var(--accent-green); box-shadow: 0 0 15px var(--accent-green); animation: breathing 2s infinite; }
+        @keyframes breathing { 0% { box-shadow: 0 0 5px var(--accent-green); } 50% { box-shadow: 0 0 20px var(--accent-green); } 100% { box-shadow: 0 0 5px var(--accent-green); } }
+
+        /* 灵动岛 (Dynamic Island) */
+        .dynamic-island {
+            width: 520px; background: #000; border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 30px; padding: 12px 24px; box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+        }
+    </style>
+</head>
+<body class="h-screen flex">
+
+    <!-- 左侧：多模态证据库 (Sidebar) -->
+    <aside class="w-80 border-r border-white/5 flex flex-col bg-black/40 backdrop-blur-xl z-30">
+        <div class="p-6 border-b border-white/5 flex justify-between items-center">
+            <h2 class="text-xs font-black tracking-[0.2em] text-gray-500 uppercase">Evidence Multi-Modal</h2>
+            <i class="fas fa-plus-circle text-gray-500 hover:text-white cursor-pointer"></i>
+        </div>
+        
+        <div class="flex-1 overflow-y-auto p-4 space-y-3" id="evidence-list">
+            <!-- 文档 -->
+            <div class="p-3 bg-white/5 rounded-lg border-l-2 border-red-500 hover:bg-white/10 cursor-pointer group transition" onclick="addToCanvas('person', '张三', 100, 150)">
+                <div class="flex items-center gap-3">
+                    <i class="far fa-file-pdf text-red-500"></i>
+                    <span class="text-xs text-gray-300">嫌疑人背景调查.pdf</span>
+                </div>
+            </div>
+            <!-- 图片 -->
+            <div class="p-3 bg-white/5 rounded-lg border-l-2 border-cyan-500 hover:bg-white/10 cursor-pointer group transition">
+                <div class="flex items-center gap-3">
+                    <i class="far fa-image text-cyan-500"></i>
+                    <span class="text-xs text-gray-300">现场足迹对比.jpg</span>
+                </div>
+            </div>
+            <!-- 语音 -->
+            <div class="p-3 bg-white/5 rounded-lg border-l-2 border-green-500 hover:bg-white/10 cursor-pointer group transition">
+                <div class="flex items-center gap-3">
+                    <i class="far fa-file-audio text-green-500"></i>
+                    <span class="text-xs text-gray-300">邻居证词录音_2315.mp3</span>
+                </div>
+            </div>
+            <!-- 视频 -->
+            <div class="p-3 bg-white/5 rounded-lg border-l-2 border-purple-500 hover:bg-white/10 cursor-pointer group transition">
+                <div class="flex items-center gap-3">
+                    <i class="far fa-file-video text-purple-500"></i>
+                    <span class="text-xs text-gray-300">后门监控录像.mp4</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-6 border-t border-white/5">
+            <div class="h-32 border-2 border-dashed border-white/10 rounded-xl flex flex-col items-center justify-center text-[10px] text-gray-500 hover:border-cyan-500 transition cursor-pointer">
+                <i class="fas fa-cloud-upload-alt text-2xl mb-2"></i>
+                <span>DROP EVIDENCE HERE</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- 主画布区域 -->
+    <main class="flex-1 relative flex flex-col">
+        <!-- 顶部视图切换 (Image 2) -->
+        <header class="h-16 flex items-center px-8 justify-between border-b border-white/5 z-30 bg-black/20">
+            <div class="flex gap-10 text-[10px] font-bold tracking-widest uppercase">
+                <button onclick="switchView('er')" class="view-btn text-cyan-400 border-b-2 border-cyan-400 py-5">Entity-Rel Network</button>
+                <button onclick="switchView('timeline')" class="view-btn text-gray-500 py-5 hover:text-white">Timeline Chain</button>
+                <button onclick="switchView('conflict')" class="view-btn text-gray-500 py-5 hover:text-white">Conflict Analysis</button>
+                <button onclick="switchView('hypo')" class="view-btn text-gray-500 py-5 hover:text-white">Hypothesis Tree</button>
+            </div>
+            <div class="flex items-center gap-4">
+                <button class="bg-cyan-600 hover:bg-cyan-500 text-black text-[10px] font-black px-4 py-2 rounded-full transition">GENERATE REASONING</button>
+            </div>
+        </header>
+
+        <!-- 画布 (Canvas) -->
+        <div id="main-canvas" class="flex-1 relative canvas-container overflow-hidden">
+            <svg id="link-svg"></svg>
+            <div id="entities-layer" class="w-full h-full relative">
+                <!-- 动态生成的卡片将放在这里 -->
+            </div>
+
+            <!-- 右侧详情抽屉 (LOD Detail) -->
+            <div id="detail-drawer" class="absolute right-0 top-0 bottom-0 w-80 bg-black/60 backdrop-blur-3xl border-l border-white/10 translate-x-full transition-transform duration-500 z-40 p-6">
+                <div class="flex justify-between items-center mb-8">
+                    <h3 class="text-xs font-bold text-gray-500">LOD DETAILS</h3>
+                    <button onclick="closeDetail()" class="text-white">×</button>
+                </div>
+                <div id="detail-content" class="space-y-6 text-xs">
+                    <!-- 内容动态注入 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 底部灵动岛 (AI Agent) -->
+        <div class="absolute bottom-10 left-1/2 -translate-x-1/2 z-50">
+            <div class="dynamic-island flex items-center gap-4">
+                <div class="relative">
+                    <div class="w-10 h-10 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-full flex items-center justify-center animate-pulse">
+                        <i class="fas fa-robot text-white text-sm"></i>
+                    </div>
+                </div>
+                <div class="flex-1">
+                    <p id="ai-suggestion" class="text-[10px] text-cyan-400 font-bold tracking-widest mb-1 uppercase">AI Agent Scanning...</p>
+                    <input type="text" placeholder="Ask AI to find contradictions or establish links..." class="bg-transparent border-none outline-none text-sm w-full text-white placeholder-gray-700">
+                </div>
+                <div class="flex gap-3 text-gray-500">
+                    <i class="fas fa-microphone cursor-pointer hover:text-white"></i>
+                    <i class="fas fa-paper-plane cursor-pointer hover:text-cyan-400"></i>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const canvas = document.getElementById('entities-layer');
+        const svg = document.getElementById('link-svg');
+        const detailDrawer = document.getElementById('detail-drawer');
+        const aiStatus = document.getElementById('ai-suggestion');
+
+        let nodes = [
+            { id: 'n1', type: 'person', label: '张三 (Suspect)', x: 150, y: 150, detail: '财务状况极差，曾因诈骗入狱。案发当晚出现在别墅附近。' },
+            { id: 'n2', type: 'person', label: '李四 (Victim)', x: 600, y: 300, detail: '知名富商，阳台坠楼身亡。指甲内发现蓝色纤维。' },
+            { id: 'n3', type: 'object', label: '保险单', x: 400, y: 100, detail: '价值500万，受益人为张三。签署日期为案发前一周。' }
+        ];
+
+        function init() {
+            renderER();
+            updateAI("已识别核心实体。检测到张三与保险单存在异常关联，建议建立因果链。");
+        }
+
+        // --- 视图 1: 实体关系网络 ---
+        function renderER() {
+            canvas.innerHTML = '';
+            svg.innerHTML = '';
+            nodes.forEach(node => {
+                const card = document.createElement('div');
+                card.className = `entity-card ${node.type}`;
+                card.style.left = node.x + 'px';
+                card.style.top = node.y + 'px';
+                card.innerHTML = `
+                    <div class="flex items-center gap-2 p-3 bg-white/5 border-b border-white/5">
+                        <div class="tool-btn w-6 h-6 rounded-full bg-black/50 flex items-center justify-center text-[10px] text-gray-400"><i class="fas fa-link"></i></div>
+                        <div class="tool-btn w-6 h-6 rounded-full bg-black/50 flex items-center justify-center text-[10px] text-gray-400"><i class="fas fa-question"></i></div>
+                        <div class="tool-btn w-6 h-6 rounded-full bg-black/50 flex items-center justify-center text-[10px] text-gray-400"><i class="fas fa-search"></i></div>
+                    </div>
+                    <div class="p-4" onclick="showDetail('${node.id}')">
+                        <div class="text-[9px] text-cyan-500 font-bold mb-1 uppercase">${node.type}</div>
+                        <div class="text-sm font-bold text-white mb-2">${node.label}</div>
+                        <div class="text-[10px] text-gray-500 leading-relaxed truncate">${node.detail}</div>
+                        <div class="mt-4 flex justify-between items-center">
+                            <div class="h-1 flex-1 bg-gray-800 rounded-full overflow-hidden mr-3">
+                                <div class="bg-cyan-500 h-full" style="width: 85%"></div>
+                            </div>
+                            <span class="text-[9px] font-bold text-cyan-400">85%</span>
+                        </div>
+                    </div>
+                `;
+                canvas.appendChild(card);
+            });
+
+            // 绘制逻辑锚点 (Hub)
+            drawEdge(nodes[0], nodes[1], '债务/动机', 0.9);
+            drawEdge(nodes[0], nodes[2], '受益关系', 0.95);
+        }
+
+        function drawEdge(n1, n2, label, confidence) {
+            const x1 = n1.x + 140, y1 = n1.y + 60;
+            const x2 = n2.x + 140, y2 = n2.y + 60;
+            
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.setAttribute("x1", x1); line.setAttribute("y1", y1);
+            line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+            line.setAttribute("class", "logic-edge active");
+            line.setAttribute("stroke-width", confidence * 4);
+            svg.appendChild(line);
+
+            // 逻辑锚点 Hub
+            const midX = (x1+x2)/2, midY = (y1+y2)/2;
+            const hub = document.createElement('div');
+            hub.className = 'rel-hub';
+            hub.style.left = midX + 'px';
+            hub.style.top = midY + 'px';
+            hub.innerHTML = `<i class="fas fa-bolt text-[10px] text-white"></i>`;
+            hub.onclick = () => alert('点击了逻辑锚点：展开证据小卡片... [银行流水#2291, 通话记录]');
+            canvas.appendChild(hub);
+        }
+
+        // --- 视图 2: 时间-事件链 (Focus Mode) ---
+        function renderTimeline() {
+            canvas.innerHTML = '<div class="absolute w-full h-[2px] bg-white/5 top-1/2"></div>';
+            svg.innerHTML = '';
+            const events = [
+                { time: '22:00', label: '张三离家', rel: 'n1', x: 100 },
+                { time: '23:00', label: '李四最后通话', rel: 'n2', x: 300 },
+                { time: '23:15', label: '坠楼报警', rel: 'n2', x: 500 },
+                { time: '23:45', label: '张三出现在后门', rel: 'n1', x: 700 }
+            ];
+            events.forEach(ev => {
+                const node = document.createElement('div');
+                node.className = 'entity-card person absolute p-3 w-40';
+                node.style.left = ev.x + 'px';
+                node.style.top = '40%';
+                node.innerHTML = `<span class="text-cyan-400 font-mono text-[10px]">${ev.time}</span><br><span class="text-xs text-white">${ev.label}</span>`;
+                node.onmouseover = () => {
+                    document.querySelectorAll('.entity-card').forEach(c => c.classList.add('dimmed'));
+                    node.classList.remove('dimmed');
+                    // 绘制发光导轨 (Thread) - 此处简化逻辑
+                };
+                node.onmouseout = () => document.querySelectorAll('.entity-card').forEach(c => c.classList.remove('dimmed'));
+                canvas.appendChild(node);
+            });
+        }
+
+        // --- 视图 3: 冲突对比 ---
+        function renderConflict() {
+            canvas.innerHTML = `
+                <div class="absolute inset-20 flex flex-col gap-10">
+                    <div class="glass-panel p-6 border border-red-500/30 rounded-2xl">
+                        <h4 class="text-red-500 text-xs font-bold mb-4">文本冲突：证词对比</h4>
+                        <div class="flex gap-10 text-xs">
+                            <div class="flex-1 p-4 bg-white/5 rounded">证人A: "我看见张三在 <span class="bg-red-500/50">23:00</span> 离开了别墅。"</div>
+                            <div class="flex-1 p-4 bg-white/5 rounded">监控录像: "画面显示张三在 <span class="bg-red-500/50">23:00</span> 仍在后厅走廊。"</div>
+                        </div>
+                    </div>
+                    <div class="glass-panel p-6 border border-blue-500/30 rounded-2xl">
+                        <h4 class="text-blue-500 text-xs font-bold mb-4">图像冲突：重叠擦拭对比</h4>
+                        <div class="comparison-view" id="img-compare">
+                            <img src="https://images.unsplash.com/photo-1541963463532-d68292c34b19?w=800" class="w-full h-full object-cover">
+                            <div class="compare-after" id="slider">
+                                <img src="https://images.unsplash.com/photo-1541963463532-d68292c34b19?w=800" class="w-[800px] h-full object-cover grayscale brightness-150">
+                            </div>
+                        </div>
+                        <input type="range" class="w-full mt-4 accent-cyan-400" oninput="document.getElementById('slider').style.width = this.value + '%'">
+                    </div>
+                </div>
+            `;
+            svg.innerHTML = '';
+        }
+
+        // --- 视图 4: 假设树 ---
+        function renderHypo() {
+            canvas.innerHTML = `
+                <div class="absolute inset-20 flex flex-col items-center">
+                    <div class="hypo-stack w-80">
+                        <div class="entity-card hypo-ghost p-4"><p class="text-[10px]">V1: 李四系意外失足坠楼</p></div>
+                        <div class="entity-card hypo-active hypo-verified p-4">
+                            <div class="flex justify-between mb-3"><span class="text-[9px] text-green-400">VERIFIED</span><span class="text-green-400">92%</span></div>
+                            <p class="text-xs text-white">V2: 张三为了保险金故意推搡李四导致坠楼</p>
+                            <div class="mt-4 h-1 bg-gray-800 rounded-full overflow-hidden"><div class="bg-green-500 h-full w-[92%]"></div></div>
+                        </div>
+                    </div>
+                    <div class="mt-20"><i class="fas fa-arrow-down text-gray-700 text-2xl animate-bounce"></i></div>
+                    <div class="mt-10 p-4 border border-dashed border-white/10 rounded-lg text-xs text-gray-600 italic">正在由证据 #04 (蓝色纤维) 演化新的子假设...</div>
+                </div>
+            `;
+            svg.innerHTML = '';
+        }
+
+        // 通用功能
+        function switchView(view) {
+            document.querySelectorAll('.view-btn').forEach(b => b.className = 'view-btn text-gray-500 py-5 hover:text-white');
+            event.target.className = 'view-btn text-cyan-400 border-b-2 border-cyan-400 py-5';
+            if (view === 'er') renderER();
+            if (view === 'timeline') renderTimeline();
+            if (view === 'conflict') renderConflict();
+            if (view === 'hypo') renderHypo();
+            updateAI(`已切换至 [${view.toUpperCase()}] 视图，正在重新映射推理结构...`);
+        }
+
+        function showDetail(id) {
+            const node = nodes.find(n => n.id === id);
+            detailDrawer.classList.remove('translate-x-full');
+            document.getElementById('detail-content').innerHTML = `
+                <div class="p-4 bg-white/5 border-l-4 border-cyan-500 rounded">
+                    <p class="font-bold text-white mb-2">${node.label}</p>
+                    <p class="text-gray-400 leading-relaxed">${node.detail}</p>
+                </div>
+                <div class="space-y-4">
+                    <p class="text-[10px] text-gray-500">法律条文支撑</p>
+                    <div class="p-3 border border-yellow-500/30 bg-yellow-500/10 rounded text-yellow-400">
+                        《刑法》第232条：故意杀人。
+                    </div>
+                </div>
+                <div class="space-y-4">
+                    <p class="text-[10px] text-gray-500">关联元数据</p>
+                    <div class="flex flex-wrap gap-2">
+                        <span class="px-2 py-1 bg-white/10 rounded-full">指纹吻合</span>
+                        <span class="px-2 py-1 bg-white/10 rounded-full">债务逾期</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function closeDetail() { detailDrawer.classList.add('translate-x-full'); }
+
+        function updateAI(text) {
+            aiStatus.innerText = "Agent Reasoning...";
+            setTimeout(() => {
+                aiStatus.innerText = text;
+            }, 600);
+        }
+
+        init();
+    </script>
+</body>
+</html>

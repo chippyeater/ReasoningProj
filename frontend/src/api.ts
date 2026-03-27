@@ -1,140 +1,205 @@
-export type EvidenceInput = {
-  id?: string;
-  type: "text" | "document" | "image" | "video" | "audio";
-  name: string;
-  content?: string;
-  file_name?: string;
-  mime_type?: string;
-  notes?: string;
+﻿const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+
+export type FileType = "pdf" | "docx" | "image" | "txt" | "markdown" | "other";
+export type FileParseStatus = "pending" | "parsing" | "parsed" | "failed";
+export type EvidenceType = "text_span" | "image_region" | "screenshot" | "table" | "extracted_statement" | "other";
+export type CardType = "meta" | "inference";
+export type MetaType =
+  | "person"
+  | "organization"
+  | "location"
+  | "time"
+  | "object"
+  | "account"
+  | "document"
+  | "event"
+  | "claim"
+  | "law"
+  | "other";
+export type InferenceType =
+  | "hypothesis"
+  | "conclusion"
+  | "conflict"
+  | "missing_evidence"
+  | "reasoning_step"
+  | "evidence_chain"
+  | "risk"
+  | "other";
+export type EdgeType =
+  | "relates_to"
+  | "supports"
+  | "opposes"
+  | "derives"
+  | "mentions"
+  | "conflicts_with"
+  | "missing_for"
+  | "cites"
+  | "belongs_to";
+export type ViewMode = "panorama" | "reasoning" | "detail";
+
+export type CaseFile = {
+  file_id: string;
+  filename: string;
+  file_type: FileType;
+  file_size?: number | null;
+  storage_path?: string | null;
+  uploaded_at: string;
+  parse_status: FileParseStatus;
+  preview_text?: string | null;
+  page_count?: number | null;
+  error_message?: string | null;
 };
 
-export type ParsedEvidence = {
-  id: string;
-  type: "text" | "document" | "image" | "video" | "audio";
-  name: string;
-  parser_tool: string;
-  normalized_text: string;
-  metadata?: {
-    parse_status?: string;
-    parser_detail?: string;
-    file_name?: string | null;
-    mime_type?: string | null;
-    notes?: string;
-  };
+export type EvidenceAnchor = {
+  file_id: string;
+  page?: number | null;
+  section?: string | null;
+  paragraph_index?: number | null;
+  char_start?: number | null;
+  char_end?: number | null;
+  bbox?: number[] | null;
 };
 
 export type EvidenceItem = {
-  id: string;
-  type: "text" | "document" | "image" | "video" | "audio";
-  original_content: string;
-  source_file: string;
-  page_or_paragraph: string;
-  time: string;
-  producer_or_speaker: string;
-  is_original_evidence: boolean;
-  notes: string;
+  evidence_id: string;
+  evidence_type: EvidenceType;
+  label: string;
+  content?: string | null;
+  summary?: string | null;
+  anchors: EvidenceAnchor[];
+  source_file_ids: string[];
+  created_at: string;
 };
 
-export type Entity = {
+export type CardPosition = { x: number; y: number };
+
+export type CardUIState = {
+  selected: boolean;
+  highlighted: boolean;
+  pinned: boolean;
+  collapsed: boolean;
+};
+
+export type MetaCard = {
   id: string;
-  name: string;
-  type: "person" | "location" | "organization" | "object" | "account" | "time";
-  aliases: string[];
+  card_type: "meta";
+  title: string;
+  summary?: string | null;
+  display_level: 1 | 2 | 3;
+  status: "active" | "hidden" | "archived";
+  position: CardPosition;
+  ui_state: CardUIState;
   source_evidence_ids: string[];
+  source_file_ids: string[];
+  created_at: string;
+  updated_at: string;
+  meta_type: MetaType;
+  detail: {
+    name?: string | null;
+    aliases: string[];
+    description?: string | null;
+    attributes: Record<string, unknown>;
+    image_urls: string[];
+    tags: string[];
+  };
 };
 
-export type Relation = {
+export type InferenceCard = {
   id: string;
-  subject_entity: string;
-  object_entity: string;
-  relation_type: string;
-  time: string;
-  evidence_sources: string[];
-  confidence_status: "high" | "medium" | "low" | "unknown";
-};
-
-export type Event = {
-  id: string;
-  event_type: string;
-  participant_entities: string[];
-  time: string;
-  location: string;
-  description: string;
+  card_type: "inference";
+  title: string;
+  summary?: string | null;
+  display_level: 1 | 2 | 3;
+  status: "active" | "hidden" | "archived";
+  position: CardPosition;
+  ui_state: CardUIState;
   source_evidence_ids: string[];
+  source_file_ids: string[];
+  created_at: string;
+  updated_at: string;
+  inference_type: InferenceType;
+  decision: "undecided" | "accepted" | "rejected" | "pending";
+  detail: {
+    claim: string;
+    reasoning_steps: string[];
+    supporting_card_ids: string[];
+    opposing_card_ids: string[];
+    missing_card_ids: string[];
+    confidence?: number | null;
+    legal_basis_ids: string[];
+    notes?: string | null;
+  };
 };
 
-export type Claim = {
+export type GraphEdge = {
   id: string;
-  content: string;
   source: string;
-  target_ids: string[];
-  stance: "support" | "oppose" | "neutral";
-  credibility_status: "high" | "medium" | "low" | "unknown";
-  quote: string;
+  target: string;
+  edge_type: EdgeType;
+  label?: string | null;
+  weight?: number | null;
+  source_evidence_ids: string[];
+  created_at: string;
 };
 
-export type StageLog = {
-  stage_name: string;
-  llm_used: boolean;
-  fallback_used: boolean;
-  fallback_reason: string;
-  prompt_system: string;
-  prompt_user: string;
-  raw_response: Record<string, unknown>;
-  raw_content: string;
-  usage: Record<string, unknown>;
-  limits: Record<string, unknown>;
-  error: string;
+export type WorkspaceState = {
+  current_view: ViewMode;
+  selected_card_ids: string[];
+  focused_card_id?: string | null;
+  expanded_card_ids: string[];
+  pinned_card_ids: string[];
+  viewport: {
+    zoom: number;
+    offset_x: number;
+    offset_y: number;
+  };
 };
 
-export type PipelineLog = {
-  provider: string;
-  model: string;
-  endpoint: string;
-  pipeline_llm_used: boolean;
-  fallback_reason: string;
-  stages: StageLog[];
-};
-
-export type CurrentCase = {
+export type CaseData = {
   case_id: string;
-  case_text: string;
-  parsed_evidences: ParsedEvidence[];
-  evidence_items: EvidenceItem[];
-  entities: Entity[];
-  relations: Relation[];
-  events: Event[];
-  claims: Claim[];
-  extraction_log: PipelineLog;
+  case_title: string;
+  created_at: string;
+  updated_at: string;
+  files: CaseFile[];
+  evidences: EvidenceItem[];
+  meta_cards: MetaCard[];
+  inference_cards: InferenceCard[];
+  edges: GraphEdge[];
+  workspace_state: WorkspaceState;
 };
 
-export type CaseCreateResponse = {
-  case: CurrentCase;
+export type CaseEnvelope = {
+  case: CaseData | null;
 };
 
-export type CurrentCaseEnvelope = {
-  case: CurrentCase | null;
-};
-
-export type CaseQuestionResponse = {
+export type CaseSummary = {
   case_id: string;
-  question: string;
-  conflicts: Array<Record<string, unknown>>;
-  evidence_paths: Array<Record<string, unknown>>;
-  recommended_view: "conflict_compare" | "timeline_reasoning" | "hypothesis_board";
-  summary: string;
-  reasoning_log: PipelineLog;
+  title: string;
+  updated_at: number;
+  is_current: boolean;
+};
+
+export type CaseListResponse = {
+  cases: CaseSummary[];
+};
+
+export type GenerateInferenceMode = "hypothesis" | "conclusion" | "conflict_check" | "missing_evidence";
+
+export type GenerateInferenceResponse = {
+  success: boolean;
+  new_inference_cards: InferenceCard[];
+  new_edges: GraphEdge[];
+  updated_workspace_state?: WorkspaceState | null;
+  message?: string | null;
 };
 
 export type QuestionViewData = {
-  events: Event[];
-  claims: Claim[];
+  events: Array<Record<string, unknown>>;
+  claims: Array<Record<string, unknown>>;
   conflicts: Array<Record<string, unknown>>;
   evidence_paths: Array<Record<string, unknown>>;
   recommended_view: "conflict_compare" | "timeline_reasoning" | "hypothesis_board";
 };
-
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -144,44 +209,118 @@ async function readJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function createCase(caseText: string, evidences: EvidenceInput[], files: File[]): Promise<CaseCreateResponse> {
+export async function createCase(
+  caseTitle: string,
+  files: File[],
+  signal?: AbortSignal
+): Promise<{ case: CaseData }> {
+  const title = caseTitle.trim() || "未命名案件";
   const response =
     files.length > 0
-      ? await fetch(`${API_BASE}/api/case`, {
+      ? await fetch(`${API_BASE}/api/cases`, {
           method: "POST",
+          signal,
           body: (() => {
             const formData = new FormData();
-            formData.append("case_text", caseText);
-            formData.append("manual_evidences", JSON.stringify(evidences));
-            files.forEach((file) => {
-              formData.append("files", file);
-            });
+            formData.append("case_title", title);
+            files.forEach((file) => formData.append("files", file));
             return formData;
           })(),
         })
-      : await fetch(`${API_BASE}/api/case`, {
+      : await fetch(`${API_BASE}/api/cases`, {
           method: "POST",
+          signal,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ case_text: caseText, evidences }),
+          body: JSON.stringify({ case_title: title }),
         });
 
-  return readJson<CaseCreateResponse>(response);
+  return readJson<{ case: CaseData }>(response);
 }
 
-export async function getCase(): Promise<CurrentCaseEnvelope> {
-  return readJson<CurrentCaseEnvelope>(await fetch(`${API_BASE}/api/case`));
+export async function getCase(): Promise<CaseEnvelope> {
+  return readJson<CaseEnvelope>(await fetch(`${API_BASE}/api/case`));
+}
+
+export async function listCases(): Promise<CaseListResponse> {
+  const data = await readJson<{
+    cases: Array<{ case_id: string; case_title: string; updated_at: string; is_current: boolean }>;
+  }>(await fetch(`${API_BASE}/api/cases`));
+
+  return {
+    cases: data.cases.map((item) => ({
+      case_id: item.case_id,
+      title: item.case_title,
+      updated_at: Date.parse(item.updated_at) || 0,
+      is_current: item.is_current,
+    })),
+  };
+}
+
+export async function selectCase(caseId: string): Promise<CaseEnvelope> {
+  return readJson<CaseEnvelope>(
+    await fetch(`${API_BASE}/api/cases/${caseId}/select`, {
+      method: "POST",
+    })
+  );
+}
+
+export async function renameCase(caseId: string, caseTitle: string): Promise<CaseEnvelope> {
+  return readJson<CaseEnvelope>(
+    await fetch(`${API_BASE}/api/cases/${caseId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ case_title: caseTitle }),
+    })
+  );
 }
 
 export async function deleteCase(): Promise<void> {
   await readJson(await fetch(`${API_BASE}/api/case`, { method: "DELETE" }));
 }
 
-export async function askCaseQuestion(question: string): Promise<CaseQuestionResponse> {
-  return readJson<CaseQuestionResponse>(
-    await fetch(`${API_BASE}/api/case/question`, {
+export async function generateInference(
+  caseId: string,
+  userPrompt: string,
+  mode: GenerateInferenceMode = "hypothesis",
+  selectedCardIds: string[] = []
+): Promise<GenerateInferenceResponse> {
+  return readJson<GenerateInferenceResponse>(
+    await fetch(`${API_BASE}/api/inference/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({
+        case_id: caseId,
+        selected_card_ids: selectedCardIds,
+        mode,
+        user_prompt: userPrompt,
+      }),
+    })
+  );
+}
+
+export async function updateWorkspaceState(
+  caseId: string,
+  viewport: { zoom: number; offset_x: number; offset_y: number }
+): Promise<{ case: CaseData }> {
+  return readJson<{ case: CaseData }>(
+    await fetch(`${API_BASE}/api/cases/${caseId}/workspace`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ viewport }),
+    })
+  );
+}
+
+export async function updateCardPosition(
+  caseId: string,
+  cardId: string,
+  position: { x: number; y: number }
+): Promise<{ case: CaseData }> {
+  return readJson<{ case: CaseData }>(
+    await fetch(`${API_BASE}/api/cases/${caseId}/cards/${cardId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ position }),
     })
   );
 }

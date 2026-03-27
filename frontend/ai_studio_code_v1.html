@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 协作生成式推理系统</title>
+    <style>
+        :root {
+            --bg-dark: #121212;
+            --bg-panel: #1e1e1e;
+            --bg-card: linear-gradient(180deg, #1a2a24 0%, #151d19 100%);
+            --border-color: #333;
+            --text-main: #e0e0e0;
+            --text-sub: #888;
+            --color-person: #00bcd4;
+            --color-object: #4caf50;
+            --color-org: #9c27b0;
+            --color-legal: #ffd700;
+            --color-ai: #2196f3;
+            --line-color: rgba(255, 255, 255, 0.4);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+        body { background-color: var(--bg-dark); color: var(--text-main); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* Top Bar */
+        .top-bar { height: 50px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; padding: 0 20px; background-color: var(--bg-panel); z-index: 100; }
+        .tabs { display: flex; gap: 20px; margin-left: 50px; }
+        .tab { color: var(--text-sub); cursor: pointer; padding: 5px 10px; border-bottom: 2px solid transparent; transition: 0.3s; }
+        .tab.active { color: white; border-bottom-color: var(--color-person); }
+
+        /* Main Container */
+        .main-container { display: flex; flex: 1; height: calc(100vh - 100px); }
+
+        /* Sidebar */
+        .sidebar { width: 250px; background-color: var(--bg-panel); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; z-index: 100; }
+        .sidebar-header { padding: 15px; border-bottom: 1px solid var(--border-color); font-weight: bold; }
+        .file-tree { padding: 10px; overflow-y: auto; flex: 1; }
+        .file-item { padding: 8px 12px; margin-bottom: 5px; background: #2a2a2a; border-radius: 4px; cursor: grab; font-size: 13px; display: flex; align-items: center; gap: 8px; border: 1px solid transparent; }
+        .file-item:hover { border-color: var(--text-sub); }
+        .file-item.doc::before { content: '📄'; }
+        .file-item.img::before { content: '🖼️'; }
+        .file-item.video::before { content: '🎥'; }
+        .file-item.audio::before { content: '🎵'; }
+
+        /* Canvas */
+        .canvas-wrapper { flex: 1; position: relative; overflow: hidden; cursor: grab; background: radial-gradient(circle at 50% 50%, #1a1a1a 0%, #0a0a0a 100%); }
+        .canvas-wrapper:active { cursor: grabbing; }
+        
+        /* Grid Background */
+        .grid-bg { position: absolute; top: -5000px; left: -5000px; width: 10000px; height: 10000px; background-image: linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px); background-size: 50px 50px; pointer-events: none; z-index: 0; }
+
+        .canvas-content { position: absolute; transform-origin: 0 0; width: 0; height: 0; }
+        
+        /* SVG Lines Layer */
+        #svg-layer { position: absolute; top: -5000px; left: -5000px; width: 10000px; height: 10000px; pointer-events: none; z-index: 1; overflow: visible;}
+        .link-path { fill: none; stroke-linecap: round; transition: stroke 0.3s; }
+        .link-hub { pointer-events: auto; cursor: pointer; fill: #333; stroke: var(--text-sub); stroke-width: 2; transition: 0.2s; }
+        .link-hub:hover { fill: var(--color-ai); stroke: white; transform: scale(1.5); }
+
+        /* Nodes */
+        .node { position: absolute; z-index: 10; cursor: grab; display: flex; flex-direction: column; transition: transform 0.1s; }
+        .node:active { cursor: grabbing; z-index: 100; }
+        
+        /* Card Style (Referencing Img 4) */
+        .card { background: var(--bg-card); border: 1px solid #3a4a40; border-radius: 12px; padding: 16px; width: 280px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); position: relative; }
+        .card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+        
+        /* Shape & Color Encodings */
+        .entity-icon { width: 32px; height: 32px; display: flex; justify-content: center; align-items: center; font-weight: bold; color: white; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+        .type-person .entity-icon { border-radius: 50%; background: #005f73; border: 2px solid var(--color-person); }
+        .type-object .entity-icon { border-radius: 6px; background: #2d6a4f; border: 2px solid var(--color-object); }
+        .type-org .entity-icon { clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%); background: #5a189a; border: 2px solid var(--color-org); }
+        
+        /* Legal Node (Gold Frame) */
+        .node-legal .card { border: 2px solid var(--color-legal); box-shadow: 0 0 15px rgba(255, 215, 0, 0.3); }
+        
+        /* Hypothesis Verified State (Breathing Gold) */
+        @keyframes breathGold { 0% { box-shadow: 0 0 5px rgba(255,215,0,0.2); border-color: #887000; } 50% { box-shadow: 0 0 20px rgba(255,215,0,0.6); border-color: var(--color-legal); } 100% { box-shadow: 0 0 5px rgba(255,215,0,0.2); border-color: #887000; } }
+        .node-verified .card { animation: breathGold 3s infinite; }
+
+        .card-title { font-size: 20px; font-weight: 600; color: white; }
+        .card-meta { font-size: 12px; color: var(--text-sub); line-height: 1.4; margin-bottom: 10px; }
+        .card-meta span { color: #aaa; }
+        .card-content { background: #000; border-radius: 6px; height: 120px; overflow: hidden; display: flex; justify-content: center; align-items: center; position: relative; }
+        .card-content img { width: 100%; height: 100%; object-fit: cover; opacity: 0.8; }
+        
+        /* Hover Action Bar */
+        .action-bar { position: absolute; top: -40px; left: 10px; display: flex; gap: 8px; opacity: 0; transition: 0.2s; pointer-events: none; }
+        .card:hover .action-bar { opacity: 1; pointer-events: auto; }
+        .action-btn { width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: white; display: flex; justify-content: center; align-items: center; cursor: pointer; backdrop-filter: blur(4px); }
+        .action-btn:hover { background: rgba(255,255,255,0.3); }
+
+        /* Confidence Bar */
+        .progress-bar { width: 100%; height: 6px; background: #222; border-radius: 3px; margin-top: 12px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #ff9800, #4caf50); width: 0%; transition: width 1s ease-in-out; }
+
+        /* LOD (Level of Detail) CSS Logic */
+        body.zoom-out .card-content, body.zoom-out .card-meta, body.zoom-out .progress-bar { display: none; }
+        body.zoom-out .card { width: auto; padding: 8px 15px; border-radius: 30px; }
+        body.zoom-out .card-title { font-size: 14px; }
+        body.zoom-out .card-header { margin-bottom: 0; }
+
+        /* Conflict Slider View */
+        .conflict-slider { position: relative; width: 100%; height: 100%; }
+        .conflict-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        .img-overlay { clip-path: inset(0 50% 0 0); }
+        .slider-control { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: calc(100% + 20px); z-index: 10; opacity: 0; cursor: ew-resize; }
+        .conflict-slider:hover .slider-control { opacity: 1; }
+        .slider-line { position: absolute; top: 0; left: 50%; width: 2px; height: 100%; background: white; z-index: 5; box-shadow: 0 0 5px black; pointer-events: none;}
+
+        /* Hypothesis Stack (Ghost effect) */
+        .ghost-card { position: absolute; top: 15px; left: 15px; background: rgba(30,30,30,0.5); border: 1px dashed #555; filter: blur(1px); z-index: -1; transform: scale(0.95); opacity: 0.6; }
+        
+        /* Timeline specific */
+        .timeline-area { position: absolute; bottom: 20px; left: 50px; width: 1200px; height: 100px; border-top: 2px solid #444; display: flex; align-items: center; gap: 50px; padding-top: 20px; }
+        .timeline-node { width: 15px; height: 15px; border-radius: 50%; background: var(--text-sub); position: relative; cursor: pointer; transition: 0.3s; }
+        .timeline-node::before { content: attr(data-time); position: absolute; top: -30px; left: -20px; width: 60px; text-align: center; font-size: 12px; color: var(--text-sub); }
+        .timeline-node .t-label { position: absolute; top: 20px; left: -40px; width: 100px; text-align: center; font-size: 12px; color: white; opacity: 0; pointer-events: none; transition: 0.3s; background: rgba(0,0,0,0.8); padding: 4px; border-radius: 4px;}
+        .timeline-node:hover { transform: scale(1.5); background: var(--color-person); box-shadow: 0 0 10px var(--color-person); }
+        .timeline-node:hover .t-label { opacity: 1; }
+        /* Focus Mode Logic */
+        .canvas-content.focus-mode .timeline-node:not(.focused) { opacity: 0.2; filter: grayscale(1); }
+        .canvas-content.focus-mode .node:not(.focused) { opacity: 0.2; transition: 0.5s; }
+
+        /* Bottom AI Dialog */
+        .bottom-bar { height: 50px; background-color: var(--bg-panel); border-top: 1px solid var(--border-color); display: flex; align-items: center; justify-content: center; z-index: 100; }
+        .ai-input { width: 600px; height: 34px; border-radius: 17px; background: #2a2a2a; border: 1px solid #444; padding: 0 20px; color: white; outline: none; }
+        .ai-input:focus { border-color: var(--color-ai); box-shadow: 0 0 8px rgba(33, 150, 243, 0.3); }
+
+    </style>
+</head>
+<body>
+
+    <div class="top-bar">
+        <div style="font-size: 18px; font-weight: bold; letter-spacing: 2px;">灵动岛推理框架</div>
+        <div class="tabs">
+            <div class="tab active">全景混合视图</div>
+            <div class="tab">实体关系网络</div>
+            <div class="tab">时空聚焦点</div>
+            <div class="tab">冲突与假设</div>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                文件上传区 / 案件库
+            </div>
+            <div class="file-tree" id="file-tree">
+                <!-- Draggable items -->
+                <div class="file-item doc" draggable="true" data-type="doc" data-name="《报案笔录_王管家》">《报案笔录_王管家》.pdf</div>
+                <div class="file-item video" draggable="true" data-type="video" data-name="大厅监控_01:23.mp4">大厅监控_01:23.mp4</div>
+                <div class="file-item audio" draggable="true" data-type="audio" data-name="加密通话录音_Elena">加密通话录音_Elena.wav</div>
+                <div class="file-item img" draggable="true" data-type="img" data-name="现场足迹比对">现场足迹比对.png</div>
+                <div class="file-item doc" draggable="true" data-type="doc" data-name="海外账户流水">海外账户流水.xlsx</div>
+            </div>
+        </div>
+
+        <!-- Main Canvas -->
+        <div class="canvas-wrapper" id="canvas-wrapper">
+            <div class="canvas-content" id="canvas-content">
+                <!-- Grid -->
+                <div class="grid-bg"></div>
+                
+                <!-- SVG Layer for Links -->
+                <svg id="svg-layer">
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="rgba(255,255,255,0.4)" />
+                        </marker>
+                        <!-- Dash animation for evolution lines -->
+                        <style>
+                            @keyframes dash { to { stroke-dashoffset: -20; } }
+                            .evolution-line { stroke-dasharray: 5,5; animation: dash 1s linear infinite; stroke: #ff9800; }
+                        </style>
+                    </defs>
+                    <g id="links-container"></g>
+                </svg>
+
+                <!-- Nodes Container -->
+                <div id="nodes-container">
+                    <!-- HTML Nodes will be generated here by JS -->
+                </div>
+                
+                <!-- Timeline Area (Placed inside canvas so it pans/zooms) -->
+                <div class="timeline-area" id="timeline-container" style="top: 800px; left: 200px;">
+                    <div style="position: absolute; left: -80px; top: -10px; color: var(--text-sub);">时间-事件链</div>
+                    <!-- Generated by JS -->
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <div class="bottom-bar">
+        <input type="text" class="ai-input" placeholder="AI灵动岛：对该实体提问，例如 '他在案发期间去了哪里？' 或描述逻辑让系统生成视图...">
+    </div>
+
+    <script>
+        // --- 1. Mock Data: "The Midnight Sapphire Heist" ---
+        const nodesData = [
+            // Core Entities (ER Network - Left side)
+            { id: 'n1', type: 'person', title: 'Victor Vance', meta: '死者 / 蓝宝石原主', x: 200, y: 200, img: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80', focusGroup: 'group1' },
+            { id: 'n2', type: 'person', title: 'Elena Rostova', meta: '嫌疑人 / 艺术品中间商', x: 600, y: 150, img: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80', focusGroup: 'group1' },
+            { id: 'n3', type: 'object', title: 'Midnight Sapphire', meta: '核心失窃物 / 估值1.2亿', x: 400, y: 400, img: 'https://images.unsplash.com/photo-1596726207869-7013db23b9d4?auto=format&fit=crop&w=200&q=80', focusGroup: 'group1' },
+            { id: 'n4', type: 'org', title: 'Blackwood Syndicate', meta: '国际走私集团', x: 800, y: 350, img: 'https://images.unsplash.com/photo-1555428669-e58f0e5728a4?auto=format&fit=crop&w=200&q=80' },
+            { id: 'n_legal', type: 'legal', title: '《刑法》第264条', meta: '盗窃罪 / 结合命案属特别严重', x: 400, y: 50, img: '', isLegal: true },
+
+            // Conflict View (Right Top)
+            { id: 'n_conflict', type: 'conflict', title: '证词 vs 监控 (冲突点)', meta: 'Elena声称案发时穿白大衣离开，但监控显示黑色', x: 1000, y: 150, img1: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=300&q=80', img2: 'https://images.unsplash.com/photo-1485231183945-fdc94df68ec8?auto=format&fit=crop&w=300&q=80' },
+
+            // Hypothesis Tree (Right Bottom)
+            { id: 'n_hypo1', type: 'hypothesis', title: '假设 A: 见财起意', meta: '初始假设：入室盗窃转抢劫杀人。已被新证据推翻。', x: 1000, y: 550, isGhost: true, confidence: 20 },
+            { id: 'n_hypo2', type: 'hypothesis', title: '假设 B: 预谋买凶', meta: '当前假设：Elena雇佣Blackwood集团夺取宝石。', x: 1050, y: 600, isVerified: true, confidence: 85, focusGroup: 'group1' }
+        ];
+
+        const linksData = [
+            // source, target, strength(thickness), confidence(opacity), hasHub
+            { source: 'n1', target: 'n3', strength: 2, confidence: 0.8, hubText: '所有权证明' },
+            { source: 'n2', target: 'n1', strength: 4, confidence: 0.9, hubText: '案发前通话14次' },
+            { source: 'n2', target: 'n4', strength: 1, confidence: 0.4, hubText: '暗网资金流向疑似' },
+            { source: 'n3', target: 'n4', strength: 3, confidence: 0.6, hubText: '黑市悬赏记录' },
+            { source: 'n_legal', target: 'n3', strength: 2, confidence: 1.0, hubText: '法条约束' },
+            { source: 'n2', target: 'n_conflict', strength: 2, confidence: 0.8, hubText: '口供矛盾' },
+            { source: 'n_hypo1', target: 'n_hypo2', strength: 2, confidence: 1, isEvolution: true, hubText: '监控修正' }
+        ];
+
+        const timelineData = [
+            { id: 't1', time: '22:00', label: 'Victor 回到宅邸', focusGroup: 'group1' },
+            { id: 't2', time: '23:15', label: '安保系统被离线', focusGroup: 'none' },
+            { id: 't3', time: '23:40', label: 'Elena 车辆进入区域', focusGroup: 'group1' },
+            { id: 't4', time: '00:15', label: '案发时间点估算', focusGroup: 'group1' },
+            { id: 't5', time: '01:23', label: '不明人员携箱离开', focusGroup: 'none' }
+        ];
+
+        // --- 2. Canvas Engine (Pan & Zoom) ---
+        const wrapper = document.getElementById('canvas-wrapper');
+        const content = document.getElementById('canvas-content');
+        
+        let transform = { x: 0, y: 0, scale: 1 };
+        // Center initial view slightly
+        transform.x = window.innerWidth / 2 - 600; 
+        transform.y = 50;
+
+        let isDraggingCanvas = false;
+        let startX, startY;
+
+        function updateTransform() {
+            content.style.transform = `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`;
+            // LOD trigger
+            if (transform.scale < 0.6) {
+                document.body.classList.add('zoom-out');
+            } else {
+                document.body.classList.remove('zoom-out');
+            }
+            updateLines(); // Ensure lines align with nodes
+        }
+
+        wrapper.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.node') || e.target.closest('.timeline-node') || e.target.closest('.link-hub')) return; // Ignore if clicking nodes
+            isDraggingCanvas = true;
+            startX = e.clientX - transform.x;
+            startY = e.clientY - transform.y;
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDraggingCanvas) return;
+            transform.x = e.clientX - startX;
+            transform.y = e.clientY - startY;
+            updateTransform();
+        });
+
+        window.addEventListener('mouseup', () => { isDraggingCanvas = false; });
+
+        wrapper.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomSensitivity = 0.001;
+            const delta = -e.deltaY * zoomSensitivity;
+            let newScale = transform.scale * Math.exp(delta);
+            newScale = Math.max(0.1, Math.min(newScale, 3)); // Restrict scale
+
+            // Zoom pointing to mouse coordinates
+            const rect = wrapper.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            transform.x = mouseX - (mouseX - transform.x) * (newScale / transform.scale);
+            transform.y = mouseY - (mouseY - transform.y) * (newScale / transform.scale);
+            transform.scale = newScale;
+
+            updateTransform();
+        }, { passive: false });
+
+
+        // --- 3. Render Nodes ---
+        const nodesContainer = document.getElementById('nodes-container');
+        
+        function getIcon(type) {
+            if(type === 'person') return '👤';
+            if(type === 'object') return '💎';
+            if(type === 'org') return '🏛️';
+            if(type === 'legal') return '⚖️';
+            if(type === 'conflict') return '⚠️';
+            if(type === 'hypothesis') return '🧠';
+            return '📄';
+        }
+
+        function createNodeHTML(data) {
+            const div = document.createElement('div');
+            div.className = `node type-${data.type} ${data.isLegal ? 'node-legal' : ''} ${data.isVerified ? 'node-verified' : ''} ${data.isGhost ? 'ghost-card' : ''}`;
+            div.id = data.id;
+            div.style.left = data.x + 'px';
+            div.style.top = data.y + 'px';
+            if (data.focusGroup) div.dataset.group = data.focusGroup;
+
+            let contentHTML = '';
+
+            // Handle Specific View Types
+            if (data.type === 'conflict') {
+                contentHTML = `
+                    <div class="card-content" style="height: 180px;">
+                        <div class="conflict-slider">
+                            <img src="${data.img1}" class="conflict-img" alt="Before">
+                            <img src="${data.img2}" class="conflict-img img-overlay" id="overlay-${data.id}" alt="After">
+                            <input type="range" min="0" max="100" value="50" class="slider-control" oninput="document.getElementById('overlay-${data.id}').style.clipPath = 'inset(0 ' + (100-this.value) + '% 0 0)'; document.getElementById('line-${data.id}').style.left = this.value + '%';">
+                            <div class="slider-line" id="line-${data.id}" style="left: 50%;"></div>
+                        </div>
+                    </div>
+                `;
+            } else if (data.img) {
+                contentHTML = `
+                    <div class="card-content">
+                        <img src="${data.img}" alt="thumbnail">
+                    </div>
+                `;
+            } else if (data.type === 'doc' || data.type === 'audio' || data.type === 'video') {
+                contentHTML = `<div class="card-content" style="background:#222; color:#888; font-size:40px;">${getIcon(data.type)}</div>`;
+            }
+
+            let progressHTML = '';
+            if (data.type === 'hypothesis' && !data.isGhost) {
+                progressHTML = `
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${data.confidence}%"></div>
+                    </div>
+                    <div style="text-align:right; font-size:10px; color:#aaa; margin-top:4px;">可信度: ${data.confidence}%</div>
+                `;
+            }
+
+            div.innerHTML = `
+                ${data.isGhost ? '' : `
+                <div class="action-bar">
+                    <div class="action-btn" title="建立连接">🔗</div>
+                    <div class="action-btn" title="向AI提问">❓</div>
+                    <div class="action-btn" title="检索关联">🔍</div>
+                </div>`}
+                <div class="card ${data.isGhost ? 'ghost' : ''}">
+                    <div class="card-header">
+                        <div class="entity-icon">${getIcon(data.type)}</div>
+                        <div class="card-title">${data.title}</div>
+                    </div>
+                    <div class="card-meta">${data.meta}</div>
+                    ${contentHTML}
+                    ${progressHTML}
+                </div>
+            `;
+
+            // Node Drag Logic
+            let isDraggingNode = false;
+            let nStartX, nStartY, initX, initY;
+            
+            div.addEventListener('mousedown', (e) => {
+                if(e.target.tagName === 'INPUT') return; // let slider work
+                e.stopPropagation(); // prevent canvas drag
+                isDraggingNode = true;
+                nStartX = e.clientX;
+                nStartY = e.clientY;
+                initX = parseInt(div.style.left || 0);
+                initY = parseInt(div.style.top || 0);
+                div.style.zIndex = 1000;
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!isDraggingNode) return;
+                const dx = (e.clientX - nStartX) / transform.scale;
+                const dy = (e.clientY - nStartY) / transform.scale;
+                div.style.left = (initX + dx) + 'px';
+                div.style.top = (initY + dy) + 'px';
+                updateLines(); // Live update lines
+            });
+
+            window.addEventListener('mouseup', () => { 
+                if(isDraggingNode) {
+                    isDraggingNode = false;
+                    div.style.zIndex = 10;
+                }
+            });
+
+            // Focus Mode Logic (Timeline/ER interaction)
+            div.addEventListener('mouseenter', () => activateFocus(data.focusGroup));
+            div.addEventListener('mouseleave', deactivateFocus);
+
+            nodesContainer.appendChild(div);
+        }
+
+        nodesData.forEach(createNodeHTML);
+
+        // --- 4. Render Lines (SVG Layer) ---
+        const svgContainer = document.getElementById('links-container');
+        
+        // Compensate for the offset of absolute positioning of nodes inside the huge SVG
+        const svgOffset = 5000; 
+
+        function updateLines() {
+            svgContainer.innerHTML = '';
+            linksData.forEach((link, index) => {
+                const sourceNode = document.getElementById(link.source);
+                const targetNode = document.getElementById(link.target);
+                
+                if (!sourceNode || !targetNode) return;
+
+                // Simple center calculation
+                const sRect = sourceNode.getBoundingClientRect();
+                const tRect = targetNode.getBoundingClientRect();
+                const cRect = content.getBoundingClientRect();
+
+                // Calculate local coordinates inside the scaled content div
+                const sx = (sRect.left - cRect.left) / transform.scale + sourceNode.offsetWidth/2;
+                const sy = (sRect.top - cRect.top) / transform.scale + sourceNode.offsetHeight/2;
+                const tx = (tRect.left - cRect.left) / transform.scale + targetNode.offsetWidth/2;
+                const ty = (tRect.top - cRect.top) / transform.scale + targetNode.offsetHeight/2;
+
+                const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                
+                // Draw curve (Bezier)
+                const dx = tx - sx;
+                const dy = ty - sy;
+                const dr = Math.sqrt(dx * dx + dy * dy) * 1.5; // Curve radius
+                
+                // If evolution line, straight dashed arrow. Otherwise curved.
+                if (link.isEvolution) {
+                    path.setAttribute("d", `M ${sx + svgOffset},${sy + svgOffset} L ${tx + svgOffset},${ty + svgOffset}`);
+                    path.setAttribute("marker-end", "url(#arrowhead)");
+                    path.setAttribute("class", "link-path evolution-line");
+                } else {
+                    path.setAttribute("d", `M ${sx + svgOffset},${sy + svgOffset} A ${dr},${dr} 0 0,1 ${tx + svgOffset},${ty + svgOffset}`);
+                    path.setAttribute("class", "link-path");
+                    path.style.stroke = "var(--line-color)";
+                    path.style.strokeWidth = link.strength;
+                    path.style.opacity = link.confidence;
+                }
+                
+                svgContainer.appendChild(path);
+
+                // Add Hub (Logic Anchor)
+                if (link.hubText && !link.isEvolution) {
+                    // Approximate midpoint of arc for visual placement
+                    const midX = sx + dx/2 + svgOffset + (dy*0.2); // slight offset for arc
+                    const midY = sy + dy/2 + svgOffset - (dx*0.2);
+
+                    const hub = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                    hub.setAttribute("cx", sx + dx/2 + svgOffset); // simplified to straight midpoint for alignment
+                    hub.setAttribute("cy", sy + dy/2 + svgOffset);
+                    hub.setAttribute("r", 6);
+                    hub.setAttribute("class", "link-hub");
+                    
+                    // Simple tooltip on click
+                    hub.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        alert(`【逻辑锚点 / 支撑证据】\n关联原因：${link.hubText}\n系统已计算成立可能性。`);
+                    });
+
+                    svgContainer.appendChild(hub);
+                }
+            });
+        }
+
+        // --- 5. Render Timeline ---
+        const timelineContainer = document.getElementById('timeline-container');
+        timelineData.forEach((item, i) => {
+            const tNode = document.createElement('div');
+            tNode.className = 'timeline-node';
+            tNode.dataset.time = item.time;
+            if(item.focusGroup) tNode.dataset.group = item.focusGroup;
+            tNode.innerHTML = `<div class="t-label">${item.label}</div>`;
+            
+            // Focus trigger
+            tNode.addEventListener('mouseenter', () => activateFocus(item.focusGroup));
+            tNode.addEventListener('mouseleave', deactivateFocus);
+            
+            timelineContainer.appendChild(tNode);
+            
+            if (i < timelineData.length - 1) {
+                const line = document.createElement('div');
+                line.style.width = '100px';
+                line.style.height = '2px';
+                line.style.background = '#444';
+                timelineContainer.appendChild(line);
+            }
+        });
+
+        // Focus Mode Logic (Highlighting Entity Lifetime)
+        function activateFocus(groupName) {
+            if (!groupName || groupName === 'none') return;
+            content.classList.add('focus-mode');
+            
+            document.querySelectorAll('.node').forEach(el => {
+                if (el.dataset.group === groupName) el.classList.add('focused');
+            });
+            document.querySelectorAll('.timeline-node').forEach(el => {
+                if (el.dataset.group === groupName) el.classList.add('focused');
+            });
+        }
+
+        function deactivateFocus() {
+            content.classList.remove('focus-mode');
+            document.querySelectorAll('.focused').forEach(el => el.classList.remove('focused'));
+        }
+
+        // --- 6. Drag and Drop from Sidebar ---
+        const fileItems = document.querySelectorAll('.file-item');
+        let draggedFile = null;
+
+        fileItems.forEach(item => {
+            item.addEventListener('dragstart', (e) => {
+                draggedFile = {
+                    type: item.dataset.type,
+                    title: item.dataset.name,
+                    meta: '拖拽生成的新证据',
+                    img: '' // default no img
+                };
+            });
+        });
+
+        wrapper.addEventListener('dragover', (e) => {
+            e.preventDefault(); // Allow drop
+        });
+
+        wrapper.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (!draggedFile) return;
+
+            // Calculate exact position on canvas regardless of scale/pan
+            const rect = wrapper.getBoundingClientRect();
+            const dropX = (e.clientX - rect.left - transform.x) / transform.scale - 140; // 140 is approx half card width
+            const dropY = (e.clientY - rect.top - transform.y) / transform.scale - 100;
+
+            const newNodeId = 'n_new_' + Date.now();
+            
+            const newNodeData = {
+                id: newNodeId,
+                type: draggedFile.type, // maps to object/doc styles
+                title: draggedFile.title,
+                meta: draggedFile.meta,
+                x: dropX,
+                y: dropY,
+            };
+
+            nodesData.push(newNodeData);
+            createNodeHTML(newNodeData);
+
+            // Auto-connect to Elena Rostova (n2) just to demonstrate interaction flow
+            linksData.push({
+                source: newNodeId,
+                target: 'n2',
+                strength: 2,
+                confidence: 0.7,
+                hubText: 'AI自动关联: 主体匹配'
+            });
+
+            updateLines();
+            draggedFile = null;
+        });
+
+        // Initialize setup
+        updateTransform();
+        setTimeout(updateLines, 100); // Wait for DOM layout
+        
+        // Window resize handler
+        window.addEventListener('resize', updateLines);
+
+    </script>
+</body>
+</html>
