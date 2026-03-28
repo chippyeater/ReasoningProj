@@ -33,3 +33,6 @@
 {"run_id": "run-f6e8511f62", "action": "node_select", "targets": ["meta-info_8"], "params": {}, "context": {"selected_case_id": "case-3da2a5c3"}, "status": "success", "timestamp": "2026-03-28T06:32:31.184909"}
 {"run_id": "run-87d3e126dd", "action": "node_select", "targets": ["meta-info_7"], "params": {}, "context": {"selected_case_id": "case-3da2a5c3"}, "status": "success", "timestamp": "2026-03-28T06:35:04.653146"}
 {"run_id": "run-fd5dea3e6e", "action": "node_select", "targets": ["meta-info_4"], "params": {}, "context": {"selected_case_id": "case-3da2a5c3"}, "status": "success", "timestamp": "2026-03-28T06:38:46.495961"}
+{"run_id": "run-59f709b435", "action": "node_select", "targets": [], "params": {"multi_select": false}, "context": {"selected_case_id": "case-3da2a5c3"}, "status": "success", "timestamp": "2026-03-28T07:09:17.883853"}
+{"run_id": "run-91613f3bc0", "action": "canvas_viewport_update", "targets": [], "params": {"zoom": 1.0058624897894166, "offset_x": -255.57218239823578, "offset_y": -5.281571716868825}, "context": {"selected_case_id": "case-3da2a5c3"}, "status": "success", "timestamp": "2026-03-28T07:09:24.546889"}
+{"run_id": "run-5788e73dc7", "action": "node_select", "targets": [], "params": {"multi_select": false}, "context": {"selected_case_id": "case-3da2a5c3"}, "status": "success", "timestamp": "2026-03-28T07:09:26.434193"}

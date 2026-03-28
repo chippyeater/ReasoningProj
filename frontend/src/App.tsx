@@ -185,6 +185,7 @@ export default function App() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStage, setUploadStage] = useState<"idle" | "uploading">("idle");
   const [uploadDisplayText, setUploadDisplayText] = useState("");
@@ -215,6 +216,12 @@ export default function App() {
   const nodeDragRef = useRef<{ id: string; startMouseX: number; startMouseY: number; startX: number; startY: number } | null>(null);
   const islandDragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
   const transformRef = useRef(transform);
+  const pendingDragRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  const dragRafRef = useRef<number | null>(null);
+  const pendingPanRef = useRef<{ x: number; y: number } | null>(null);
+  const panRafRef = useRef<number | null>(null);
+  const dragOverlayRef = useRef<HTMLDivElement | null>(null);
+  const dragPreviewPointRef = useRef<Point | null>(null);
 
   useEffect(() => {
     transformRef.current = transform;
@@ -384,10 +391,19 @@ export default function App() {
         const scale = transformRef.current.scale;
         const dx = (event.clientX - draggingNode.startMouseX) / scale;
         const dy = (event.clientY - draggingNode.startMouseY) / scale;
-        setNodePositions((previous) => ({
-          ...previous,
-          [draggingNode.id]: { x: draggingNode.startX + dx, y: draggingNode.startY + dy },
-        }));
+        pendingDragRef.current = { id: draggingNode.id, x: draggingNode.startX + dx, y: draggingNode.startY + dy };
+
+        if (dragRafRef.current === null) {
+          dragRafRef.current = window.requestAnimationFrame(() => {
+            dragRafRef.current = null;
+            const pending = pendingDragRef.current;
+            if (!pending) return;
+            dragPreviewPointRef.current = { x: pending.x, y: pending.y };
+            if (dragOverlayRef.current) {
+              dragOverlayRef.current.style.transform = `translate3d(${pending.x}px, ${pending.y}px, 0)`;
+            }
+          });
+        }
         return;
       }
 
@@ -408,7 +424,16 @@ export default function App() {
       if (!pan.active) return;
       const dx = event.clientX - pan.startMouseX;
       const dy = event.clientY - pan.startMouseY;
-      setTransform((current) => ({ ...current, x: pan.startX + dx, y: pan.startY + dy }));
+      pendingPanRef.current = { x: pan.startX + dx, y: pan.startY + dy };
+
+      if (panRafRef.current === null) {
+        panRafRef.current = window.requestAnimationFrame(() => {
+          panRafRef.current = null;
+          const pending = pendingPanRef.current;
+          if (!pending) return;
+          setTransform((current) => ({ ...current, x: pending.x, y: pending.y }));
+        });
+      }
     };
 
     const handleUp = () => {
@@ -436,12 +461,33 @@ export default function App() {
       panStateRef.current.active = false;
       nodeDragRef.current = null;
 
+      if (dragRafRef.current !== null) {
+        window.cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
+      }
+      if (panRafRef.current !== null) {
+        window.cancelAnimationFrame(panRafRef.current);
+        panRafRef.current = null;
+      }
+
       if (draggedNode) {
-        const point = nodePositions[draggedNode.id];
-        if (point) {
-          void persistCardPosition(draggedNode.id, point);
+        const pending = pendingDragRef.current;
+        const finalPoint = pending
+          ? { x: pending.x, y: pending.y }
+          : dragPreviewPointRef.current ?? nodePositions[draggedNode.id];
+
+        if (finalPoint) {
+          setNodePositions((previous) => ({
+            ...previous,
+            [draggedNode.id]: finalPoint,
+          }));
+          void persistCardPosition(draggedNode.id, finalPoint);
         }
       }
+
+      setDraggingNodeId(null);
+      pendingDragRef.current = null;
+      dragPreviewPointRef.current = null;
 
       if (wasPanning) {
         void persistWorkspace(transformRef.current);
@@ -453,6 +499,14 @@ export default function App() {
     return () => {
       window.removeEventListener("mousemove", handleMove);
       window.removeEventListener("mouseup", handleUp);
+      if (dragRafRef.current !== null) {
+        window.cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
+      }
+      if (panRafRef.current !== null) {
+        window.cancelAnimationFrame(panRafRef.current);
+        panRafRef.current = null;
+      }
     };
   }, [nodePositions, currentCase]);
 
@@ -578,6 +632,7 @@ export default function App() {
     await deleteCase();
     setCurrentCase(null);
     setSelectedNodeIds([]);
+    setDraggingNodeId(null);
     setEvidences([]);
     setNodePositions({});
     setUploadStage("idle");
@@ -714,6 +769,8 @@ export default function App() {
     event.stopPropagation();
     const point = nodePositions[nodeId];
     if (!point) return;
+    setDraggingNodeId(nodeId);
+    dragPreviewPointRef.current = { x: point.x, y: point.y };
     nodeDragRef.current = {
       id: nodeId,
       startMouseX: event.clientX,
@@ -788,6 +845,11 @@ export default function App() {
     setTransform(nextTransform);
     scheduleWorkspaceSync(nextTransform);
   }
+
+  const draggingNode = useMemo(() => {
+    if (!draggingNodeId) return null;
+    return canvasData.nodes.find((node) => node.id === draggingNodeId) ?? null;
+  }, [canvasData.nodes, draggingNodeId]);
 
   const selectedCaseLabel = caseOptions.find((item) => item.case_id === selectedCaseId)?.title ?? currentCase?.case_title ?? "Case";
   const dropzoneClass = `upload-dropzone figma-dropzone ${isDropActive || isDropSelected ? "active" : ""} ${uploadStage !== "idle" ? "uploading" : ""}`;
@@ -1041,6 +1103,7 @@ export default function App() {
                   `node-${node.kind}`,
                   levelClass,
                   selectedNodeIds.includes(node.id) ? "node-selected" : "",
+                  draggingNodeId === node.id ? "node-drag-hidden" : "",
                 ]
                   .filter(Boolean)
                   .join(" ");
@@ -1078,7 +1141,7 @@ export default function App() {
                       <div className="node-type-icon-wrap">
                         <img className="node-type-icon" src={isMeta ? metaTypeDefaultIcon : isInference ? inferTypeDefaultIcon : detailsIcon} alt={isMeta ? "meta" : isInference ? "inference" : "evidence"} />
                       </div>
-                      <span className="node-kind">{isMeta ? "元信息" : isInference ? "推论" : "证据"}</span>
+                      <span className="node-kind">{isMeta ? "???" : isInference ? "??" : "??"}</span>
                       <span className="node-id">{node.id}</span>
                     </div>
                     <strong className="node-title" title={node.label}>
@@ -1089,6 +1152,49 @@ export default function App() {
                   </div>
                 );
               })}
+
+              {draggingNode ? (() => {
+                const isMeta = draggingNode.source === "meta";
+                const isInference = draggingNode.source === "inference";
+                const isEvidence = draggingNode.source === "evidence";
+                const visualLevel = isEvidence ? 1 : viewLevel;
+                const levelClass = isMeta
+                  ? `meta-level-${visualLevel}`
+                  : isInference
+                    ? `infer-level-${visualLevel}`
+                    : "";
+                const ghostClass = [
+                  "canvas-node",
+                  "is-drag-ghost",
+                  `node-${draggingNode.kind}`,
+                  levelClass,
+                  selectedNodeIds.includes(draggingNode.id) ? "node-selected" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ");
+                const point = dragPreviewPointRef.current ?? nodePositions[draggingNode.id] ?? { x: draggingNode.x, y: draggingNode.y };
+
+                return (
+                  <div
+                    ref={dragOverlayRef}
+                    className={ghostClass}
+                    style={{ transform: `translate3d(${point.x}px, ${point.y}px, 0)` }}
+                  >
+                    <div className="node-header">
+                      <div className="node-type-icon-wrap">
+                        <img className="node-type-icon" src={isMeta ? metaTypeDefaultIcon : isInference ? inferTypeDefaultIcon : detailsIcon} alt={isMeta ? "meta" : isInference ? "inference" : "evidence"} />
+                      </div>
+                      <span className="node-kind">{isMeta ? "???" : isInference ? "??" : "??"}</span>
+                      <span className="node-id">{draggingNode.id}</span>
+                    </div>
+                    <strong className="node-title" title={draggingNode.label}>
+                      {draggingNode.label}
+                    </strong>
+                    <p className="node-meta">{firstLine(draggingNode.meta) || "-"}</p>
+                    {visualLevel === 3 ? <div className="node-preview" /> : null}
+                  </div>
+                );
+              })() : null}
             </div>
 
             {island.visible ? (

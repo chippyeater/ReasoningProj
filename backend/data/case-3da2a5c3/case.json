@@ -2,7 +2,7 @@
   "case_id": "case-3da2a5c3",
   "case_title": "未命名案件",
   "created_at": "2026-03-28T06:28:15.861440",
-  "updated_at": "2026-03-28T06:38:46.524948",
+  "updated_at": "2026-03-28T07:09:29.745232",
   "files": [
     {
       "file_id": "file-1555a764b4",
@@ -572,8 +572,8 @@
       "display_level": 1,
       "status": "active",
       "position": {
-        "x": 804.532152299771,
-        "y": 434.4908586972307
+        "x": 848.1724187426613,
+        "y": 455.0274546703555
       },
       "ui_state": {
         "selected": false,
@@ -585,7 +585,7 @@
         "现场勘验笔录.docx"
       ],
       "created_at": "2026-03-28T06:28:38.880097",
-      "updated_at": "2026-03-28T06:32:31.283798",
+      "updated_at": "2026-03-28T07:09:22.415388",
       "meta_type": "location",
       "detail": {
         "name": "勘验地点",
@@ -648,8 +648,8 @@
       "display_level": 1,
       "status": "active",
       "position": {
-        "x": 298.8772853256923,
-        "y": 590.1457256713095
+        "x": 332.67912240097496,
+        "y": 605.0583008515813
       },
       "ui_state": {
         "selected": false,
@@ -661,7 +661,7 @@
         "现场勘验笔录.docx"
       ],
       "created_at": "2026-03-28T06:28:38.880163",
-      "updated_at": "2026-03-28T06:29:11.510012",
+      "updated_at": "2026-03-28T07:09:29.745197",
       "meta_type": "object",
       "detail": {
         "name": "黑色手机",
@@ -916,16 +916,14 @@
   ],
   "workspace_state": {
     "current_view": "panorama",
-    "selected_card_ids": [
-      "infer-a7c96c3ceb"
-    ],
+    "selected_card_ids": [],
     "focused_card_id": "infer-a7c96c3ceb",
     "expanded_card_ids": [],
     "pinned_card_ids": [],
     "viewport": {
-      "zoom": 1.1686454771476027,
-      "offset_x": -444.8498472862567,
-      "offset_y": -44.97737042181518
+      "zoom": 1.0058624897894166,
+      "offset_x": -255.57218239823578,
+      "offset_y": -5.281571716868825
     }
   },
   "agent_runs": [
