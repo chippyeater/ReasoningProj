@@ -1,0 +1,971 @@
+{
+  "case_id": "case-3da2a5c3",
+  "case_title": "未命名案件",
+  "created_at": "2026-03-28T06:28:15.861440",
+  "updated_at": "2026-03-28T06:38:46.524948",
+  "files": [
+    {
+      "file_id": "file-1555a764b4",
+      "filename": "当事人证词.docx",
+      "file_type": "docx",
+      "file_size": 16414,
+      "storage_path": "upload_files\\file-1555a764b4.docx",
+      "uploaded_at": "2026-03-28T06:28:15.914159",
+      "parse_status": "parsed",
+      "preview_text": "询问笔录 被询问人：林浩 性别：男 年龄：31岁 职业：货运司机 询问地点：海州市公安局海东分局第二询问室 询问时间：2024年5月13日 09时10分至10时02分 询问人：孙磊、许安 记录人：何欣 问：请你说明2024年5月12日晚到星河仓储中心3号仓库的经过。 答：我那天晚上本来没打算去仓库，是后来王丽给我打电话，说陈伟可能在仓库，我才过去的。我大概是21点40分左右到的，不会更早。 问：你到达仓库时看到了什么？ 答：我到的...",
+      "page_count": null,
+      "error_message": null
+    },
+    {
+      "file_id": "file-c9303346e8",
+      "filename": "现场勘验笔录.docx",
+      "file_type": "docx",
+      "file_size": 16427,
+      "storage_path": "upload_files\\file-c9303346e8.docx",
+      "uploaded_at": "2026-03-28T06:28:15.954152",
+      "parse_status": "parsed",
+      "preview_text": "海州市公安局海东分局 现场勘验笔录 案件编号：HZ-HD-2024-0512-03 勘验时间：2024年5月12日 22时18分至23时47分 勘验地点：海州市海州路118号星河仓储中心3号仓库 勘验人员：赵建国、周晨 记录人员：刘婷 在场人员：仓库管理员张敏、报警人陈伟 一、现场基本情况 星河仓储中心位于海州路118号，3号仓库位于园区西北侧，仓库正门朝南，门前为空地和简易停车区，东侧约15米处为值班室。勘验当日天气晴，地面干燥...",
+      "page_count": null,
+      "error_message": null
+    }
+  ],
+  "info_units": [
+    {
+      "id": "info_1",
+      "type": "person",
+      "title": "林浩",
+      "summary": "林浩是被询问人",
+      "detail": "被询问人：林浩，性别：男，年龄：31岁，职业：货运司机。",
+      "source_refs": [
+        "当事人证词.docx"
+      ],
+      "confidence": "high",
+      "extraction_reason": "林浩是案件中的关键人物，提供了重要证词。",
+      "evidence_quote": "被询问人：林浩，性别：男，年龄：31岁，职业：货运司机。",
+      "created_at": "2026-03-28T06:28:38.879162",
+      "updated_at": "2026-03-28T06:28:38.879162"
+    },
+    {
+      "id": "info_2",
+      "type": "event",
+      "title": "询问时间",
+      "summary": "询问在2024年5月13日进行",
+      "detail": "询问时间：2024年5月13日 09时10分至10时02分。",
+      "source_refs": [
+        "当事人证词.docx"
+      ],
+      "confidence": "high",
+      "extraction_reason": "确定了询问的具体时间，有助于案件时间线的构建。",
+      "evidence_quote": "询问时间：2024年5月13日 09时10分至10时02分。",
+      "created_at": "2026-03-28T06:28:38.879314",
+      "updated_at": "2026-03-28T06:28:38.879314"
+    },
+    {
+      "id": "info_3",
+      "type": "location",
+      "title": "询问地点",
+      "summary": "询问在海州市公安局海东分局进行",
+      "detail": "询问地点：海州市公安局海东分局第二询问室。",
+      "source_refs": [
+        "当事人证词.docx"
+      ],
+      "confidence": "high",
+      "extraction_reason": "确定了询问的地点，有助于案件的地理背景理解。",
+      "evidence_quote": "询问地点：海州市公安局海东分局第二询问室。",
+      "created_at": "2026-03-28T06:28:38.879400",
+      "updated_at": "2026-03-28T06:28:38.879400"
+    },
+    {
+      "id": "info_4",
+      "type": "event",
+      "title": "到达仓库时间",
+      "summary": "林浩于21点40分到达仓库",
+      "detail": "我大概是21点40分左右到的，不会更早。",
+      "source_refs": [
+        "当事人证词.docx"
+      ],
+      "confidence": "high",
+      "extraction_reason": "林浩到达仓库的时间是案件关键时间点，有助于时间线的构建。",
+      "evidence_quote": "我大概是21点40分左右到的，不会更早。",
+      "created_at": "2026-03-28T06:28:38.879433",
+      "updated_at": "2026-03-28T06:28:38.879433"
+    },
+    {
+      "id": "info_5",
+      "type": "claim",
+      "title": "未进入仓库",
+      "summary": "林浩声称未进入3号仓库内部",
+      "detail": "我确定没有进去。我一直在门口附近。",
+      "source_refs": [
+        "当事人证词.docx"
+      ],
+      "confidence": "medium",
+      "extraction_reason": "林浩的说法与现场证据可能存在冲突，需进一步核实。",
+      "evidence_quote": "我确定没有进去。我一直在门口附近。",
+      "created_at": "2026-03-28T06:28:38.879454",
+      "updated_at": "2026-03-28T06:28:38.879454"
+    },
+    {
+      "id": "info_6",
+      "type": "event",
+      "title": "手机转账",
+      "summary": "林浩收到8500元转账",
+      "detail": "你手机上在2024年5月12日22时10分收到一笔8500元转账，备注“先还一部分”。",
+      "source_refs": [
+        "当事人证词.docx"
+      ],
+      "confidence": "high",
+      "extraction_reason": "转账信息可能与案件相关，需进一步调查。",
+      "evidence_quote": "你手机上在2024年5月12日22时10分收到一笔8500元转账，备注“先还一部分”。",
+      "created_at": "2026-03-28T06:28:38.879477",
+      "updated_at": "2026-03-28T06:28:38.879477"
+    },
+    {
+      "id": "info_7",
+      "type": "event",
+      "title": "现场勘验时间",
+      "summary": "现场勘验在2024年5月12日进行",
+      "detail": "勘验时间：2024年5月12日 22时18分至23时47分。",
+      "source_refs": [
+        "现场勘验笔录.docx"
+      ],
+      "confidence": "high",
+      "extraction_reason": "确定了现场勘验的时间，有助于案件时间线的构建。",
+      "evidence_quote": "勘验时间：2024年5月12日 22时18分至23时47分。",
+      "created_at": "2026-03-28T06:28:38.879497",
+      "updated_at": "2026-03-28T06:28:38.879497"
+    },
+    {
+      "id": "info_8",
+      "type": "location",
+      "title": "勘验地点",
+      "summary": "勘验在星河仓储中心3号仓库进行",
+      "detail": "勘验地点：海州市海州路118号星河仓储中心3号仓库。",
+      "source_refs": [
+        "现场勘验笔录.docx"
+      ],
+      "confidence": "high",
+      "extraction_reason": "确定了勘验的地点，有助于案件的地理背景理解。",
+      "evidence_quote": "勘验地点：海州市海州路118号星河仓储中心3号仓库。",
+      "created_at": "2026-03-28T06:28:38.879515",
+      "updated_at": "2026-03-28T06:28:38.879515"
+    },
+    {
+      "id": "info_9",
+      "type": "object",
+      "title": "灰色双肩包",
+      "summary": "现场发现一只灰色双肩包",
+      "detail": "仓库内部东侧货架第3排尽头靠墙位置发现一只灰色双肩包。",
+      "source_refs": [
+        "现场勘验笔录.docx"
+      ],
+      "confidence": "high",
+      "extraction_reason": "灰色双肩包是现场重要物证，可能与林浩相关。",
+      "evidence_quote": "仓库内部东侧货架第3排尽头靠墙位置发现一只灰色双肩包。",
+      "created_at": "2026-03-28T06:28:38.879534",
+      "updated_at": "2026-03-28T06:28:38.879534"
+    },
+    {
+      "id": "info_10",
+      "type": "object",
+      "title": "黑色手机",
+      "summary": "现场发现一部黑色手机",
+      "detail": "仓库内部发现黑色手机1部，屏幕存在裂纹，但仍可点亮。",
+      "source_refs": [
+        "现场勘验笔录.docx"
+      ],
+      "confidence": "high",
+      "extraction_reason": "黑色手机是现场重要物证，可能与林浩相关。",
+      "evidence_quote": "仓库内部发现黑色手机1部，屏幕存在裂纹，但仍可点亮。",
+      "created_at": "2026-03-28T06:28:38.879554",
+      "updated_at": "2026-03-28T06:28:38.879554"
+    },
+    {
+      "id": "info_11",
+      "type": "event",
+      "title": "监控记录",
+      "summary": "监控显示21时17分已有一名男性进入仓库前区域",
+      "detail": "监控回放显示2024年5月12日21时17分，一名身穿深色上衣、浅色长裤的男性由南门方向步行进入3号仓库前区域。",
+      "source_refs": [
+        "现场勘验笔录.docx"
+      ],
+      "confidence": "high",
+      "extraction_reason": "监控记录是案件关键证据，有助于确认嫌疑人身份。",
+      "evidence_quote": "监控回放显示2024年5月12日21时17分，一名身穿深色上衣、浅色长裤的男性由南门方向步行进入3号仓库前区域。",
+      "created_at": "2026-03-28T06:28:38.879573",
+      "updated_at": "2026-03-28T06:28:38.879573"
+    }
+  ],
+  "relations": [
+    {
+      "id": "rel_1",
+      "source_id": "info_1",
+      "target_id": "info_2",
+      "relation_type": "involve",
+      "confidence": "high",
+      "evidence_basis": "被询问人：林浩，性别：男，年龄：31岁，职业：货运司机。",
+      "rationale": "林浩是被询问人，参与了询问事件。",
+      "certainty_level": "explicit",
+      "created_at": "2026-03-28T06:28:50.532635"
+    },
+    {
+      "id": "rel_2",
+      "source_id": "info_2",
+      "target_id": "info_3",
+      "relation_type": "occur_at",
+      "confidence": "high",
+      "evidence_basis": "询问时间：2024年5月13日 09时10分至10时02分。",
+      "rationale": "询问事件发生在海州市公安局海东分局。",
+      "certainty_level": "explicit",
+      "created_at": "2026-03-28T06:28:50.532826"
+    },
+    {
+      "id": "rel_3",
+      "source_id": "info_4",
+      "target_id": "info_1",
+      "relation_type": "involve",
+      "confidence": "high",
+      "evidence_basis": "我大概是21点40分左右到的，不会更早。",
+      "rationale": "林浩提到他在21点40分到达仓库，说明他参与了相关事件。",
+      "certainty_level": "explicit",
+      "created_at": "2026-03-28T06:28:50.532881"
+    },
+    {
+      "id": "rel_4",
+      "source_id": "info_5",
+      "target_id": "info_1",
+      "relation_type": "state",
+      "confidence": "high",
+      "evidence_basis": "我确定没有进去。我一直在门口附近。",
+      "rationale": "林浩声称未进入3号仓库内部，说明他的行为状态。",
+      "certainty_level": "explicit",
+      "created_at": "2026-03-28T06:28:50.532922"
+    },
+    {
+      "id": "rel_5",
+      "source_id": "info_6",
+      "target_id": "info_1",
+      "relation_type": "involve",
+      "confidence": "high",
+      "evidence_basis": "你手机上在2024年5月12日22时10分收到一笔8500元转账，备注“先还一部分”。",
+      "rationale": "林浩收到了8500元的转账，说明他参与了这一事件。",
+      "certainty_level": "explicit",
+      "created_at": "2026-03-28T06:28:50.532957"
+    },
+    {
+      "id": "rel_6",
+      "source_id": "info_7",
+      "target_id": "info_8",
+      "relation_type": "occur_at",
+      "confidence": "high",
+      "evidence_basis": "勘验时间：2024年5月12日 22时18分至23时47分。",
+      "rationale": "现场勘验事件发生在星河仓储中心3号仓库。",
+      "certainty_level": "explicit",
+      "created_at": "2026-03-28T06:28:50.532990"
+    },
+    {
+      "id": "rel_7",
+      "source_id": "info_8",
+      "target_id": "info_9",
+      "relation_type": "occur_at",
+      "confidence": "high",
+      "evidence_basis": "勘验地点：海州市海州路118号星河仓储中心3号仓库。",
+      "rationale": "勘验事件发生在3号仓库，发现了灰色双肩包。",
+      "certainty_level": "explicit",
+      "created_at": "2026-03-28T06:28:50.533023"
+    },
+    {
+      "id": "rel_8",
+      "source_id": "info_8",
+      "target_id": "info_10",
+      "relation_type": "occur_at",
+      "confidence": "high",
+      "evidence_basis": "勘验地点：海州市海州路118号星河仓储中心3号仓库。",
+      "rationale": "勘验事件发生在3号仓库，发现了黑色手机。",
+      "certainty_level": "explicit",
+      "created_at": "2026-03-28T06:28:50.533054"
+    },
+    {
+      "id": "rel_9",
+      "source_id": "info_11",
+      "target_id": "info_8",
+      "relation_type": "occur_at",
+      "confidence": "high",
+      "evidence_basis": "监控回放显示2024年5月12日21时17分，一名身穿深色上衣、浅色长裤的男性由南门方向步行进入3号仓库前区域。",
+      "rationale": "监控记录显示有男性进入3号仓库前区域，与勘验地点相关。",
+      "certainty_level": "explicit",
+      "created_at": "2026-03-28T06:28:50.533084"
+    }
+  ],
+  "meta_cards": [
+    {
+      "id": "meta-info_1",
+      "card_type": "meta",
+      "title": "林浩",
+      "summary": "林浩是被询问人",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 80.0,
+        "y": 100.0
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "当事人证词.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.879680",
+      "updated_at": "2026-03-28T06:28:38.879680",
+      "meta_type": "person",
+      "detail": {
+        "name": "林浩",
+        "aliases": [],
+        "description": "被询问人：林浩，性别：男，年龄：31岁，职业：货运司机。",
+        "attributes": {
+          "extraction_reason": "林浩是案件中的关键人物，提供了重要证词。",
+          "evidence_quote": "被询问人：林浩，性别：男，年龄：31岁，职业：货运司机。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:high",
+          "extracted"
+        ]
+      }
+    },
+    {
+      "id": "meta-info_2",
+      "card_type": "meta",
+      "title": "询问时间",
+      "summary": "询问在2024年5月13日进行",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 340.0,
+        "y": 100.0
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "当事人证词.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.879844",
+      "updated_at": "2026-03-28T06:28:38.879844",
+      "meta_type": "event",
+      "detail": {
+        "name": "询问时间",
+        "aliases": [],
+        "description": "询问时间：2024年5月13日 09时10分至10时02分。",
+        "attributes": {
+          "extraction_reason": "确定了询问的具体时间，有助于案件时间线的构建。",
+          "evidence_quote": "询问时间：2024年5月13日 09时10分至10时02分。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:high",
+          "extracted"
+        ]
+      }
+    },
+    {
+      "id": "meta-info_3",
+      "card_type": "meta",
+      "title": "询问地点",
+      "summary": "询问在海州市公安局海东分局进行",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 600.0,
+        "y": 100.0
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "当事人证词.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.879901",
+      "updated_at": "2026-03-28T06:28:38.879901",
+      "meta_type": "location",
+      "detail": {
+        "name": "询问地点",
+        "aliases": [],
+        "description": "询问地点：海州市公安局海东分局第二询问室。",
+        "attributes": {
+          "extraction_reason": "确定了询问的地点，有助于案件的地理背景理解。",
+          "evidence_quote": "询问地点：海州市公安局海东分局第二询问室。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:high",
+          "extracted"
+        ]
+      }
+    },
+    {
+      "id": "meta-info_4",
+      "card_type": "meta",
+      "title": "到达仓库时间",
+      "summary": "林浩于21点40分到达仓库",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 860.0,
+        "y": 100.0
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "当事人证词.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.879943",
+      "updated_at": "2026-03-28T06:38:46.524907",
+      "meta_type": "event",
+      "detail": {
+        "name": "到达仓库时间",
+        "aliases": [],
+        "description": "我大概是21点40分左右到的，不会更早。",
+        "attributes": {
+          "extraction_reason": "林浩到达仓库的时间是案件关键时间点，有助于时间线的构建。",
+          "evidence_quote": "我大概是21点40分左右到的，不会更早。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:high",
+          "extracted"
+        ]
+      }
+    },
+    {
+      "id": "meta-info_5",
+      "card_type": "meta",
+      "title": "未进入仓库",
+      "summary": "林浩声称未进入3号仓库内部",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 80.0,
+        "y": 270.0
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "当事人证词.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.879979",
+      "updated_at": "2026-03-28T06:28:38.879979",
+      "meta_type": "claim",
+      "detail": {
+        "name": "未进入仓库",
+        "aliases": [],
+        "description": "我确定没有进去。我一直在门口附近。",
+        "attributes": {
+          "extraction_reason": "林浩的说法与现场证据可能存在冲突，需进一步核实。",
+          "evidence_quote": "我确定没有进去。我一直在门口附近。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:medium",
+          "extracted"
+        ]
+      }
+    },
+    {
+      "id": "meta-info_6",
+      "card_type": "meta",
+      "title": "手机转账",
+      "summary": "林浩收到8500元转账",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 340.0,
+        "y": 270.0
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "当事人证词.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.880026",
+      "updated_at": "2026-03-28T06:28:38.880026",
+      "meta_type": "event",
+      "detail": {
+        "name": "手机转账",
+        "aliases": [],
+        "description": "你手机上在2024年5月12日22时10分收到一笔8500元转账，备注“先还一部分”。",
+        "attributes": {
+          "extraction_reason": "转账信息可能与案件相关，需进一步调查。",
+          "evidence_quote": "你手机上在2024年5月12日22时10分收到一笔8500元转账，备注“先还一部分”。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:high",
+          "extracted"
+        ]
+      }
+    },
+    {
+      "id": "meta-info_7",
+      "card_type": "meta",
+      "title": "现场勘验时间",
+      "summary": "现场勘验在2024年5月12日进行",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 600.0,
+        "y": 270.0
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "现场勘验笔录.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.880064",
+      "updated_at": "2026-03-28T06:35:04.677431",
+      "meta_type": "event",
+      "detail": {
+        "name": "现场勘验时间",
+        "aliases": [],
+        "description": "勘验时间：2024年5月12日 22时18分至23时47分。",
+        "attributes": {
+          "extraction_reason": "确定了现场勘验的时间，有助于案件时间线的构建。",
+          "evidence_quote": "勘验时间：2024年5月12日 22时18分至23时47分。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:high",
+          "extracted"
+        ]
+      }
+    },
+    {
+      "id": "meta-info_8",
+      "card_type": "meta",
+      "title": "勘验地点",
+      "summary": "勘验在星河仓储中心3号仓库进行",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 804.532152299771,
+        "y": 434.4908586972307
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "现场勘验笔录.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.880097",
+      "updated_at": "2026-03-28T06:32:31.283798",
+      "meta_type": "location",
+      "detail": {
+        "name": "勘验地点",
+        "aliases": [],
+        "description": "勘验地点：海州市海州路118号星河仓储中心3号仓库。",
+        "attributes": {
+          "extraction_reason": "确定了勘验的地点，有助于案件的地理背景理解。",
+          "evidence_quote": "勘验地点：海州市海州路118号星河仓储中心3号仓库。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:high",
+          "extracted"
+        ]
+      }
+    },
+    {
+      "id": "meta-info_9",
+      "card_type": "meta",
+      "title": "灰色双肩包",
+      "summary": "现场发现一只灰色双肩包",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 80.0,
+        "y": 440.0
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "现场勘验笔录.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.880128",
+      "updated_at": "2026-03-28T06:28:38.880128",
+      "meta_type": "object",
+      "detail": {
+        "name": "灰色双肩包",
+        "aliases": [],
+        "description": "仓库内部东侧货架第3排尽头靠墙位置发现一只灰色双肩包。",
+        "attributes": {
+          "extraction_reason": "灰色双肩包是现场重要物证，可能与林浩相关。",
+          "evidence_quote": "仓库内部东侧货架第3排尽头靠墙位置发现一只灰色双肩包。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:high",
+          "extracted"
+        ]
+      }
+    },
+    {
+      "id": "meta-info_10",
+      "card_type": "meta",
+      "title": "黑色手机",
+      "summary": "现场发现一部黑色手机",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 298.8772853256923,
+        "y": 590.1457256713095
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "现场勘验笔录.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.880163",
+      "updated_at": "2026-03-28T06:29:11.510012",
+      "meta_type": "object",
+      "detail": {
+        "name": "黑色手机",
+        "aliases": [],
+        "description": "仓库内部发现黑色手机1部，屏幕存在裂纹，但仍可点亮。",
+        "attributes": {
+          "extraction_reason": "黑色手机是现场重要物证，可能与林浩相关。",
+          "evidence_quote": "仓库内部发现黑色手机1部，屏幕存在裂纹，但仍可点亮。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:high",
+          "extracted"
+        ]
+      }
+    },
+    {
+      "id": "meta-info_11",
+      "card_type": "meta",
+      "title": "监控记录",
+      "summary": "监控显示21时17分已有一名男性进入仓库前区域",
+      "display_level": 1,
+      "status": "active",
+      "position": {
+        "x": 770.2289119075992,
+        "y": 597.7964632851341
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [
+        "现场勘验笔录.docx"
+      ],
+      "created_at": "2026-03-28T06:28:38.880202",
+      "updated_at": "2026-03-28T06:29:07.504025",
+      "meta_type": "event",
+      "detail": {
+        "name": "监控记录",
+        "aliases": [],
+        "description": "监控回放显示2024年5月12日21时17分，一名身穿深色上衣、浅色长裤的男性由南门方向步行进入3号仓库前区域。",
+        "attributes": {
+          "extraction_reason": "监控记录是案件关键证据，有助于确认嫌疑人身份。",
+          "evidence_quote": "监控回放显示2024年5月12日21时17分，一名身穿深色上衣、浅色长裤的男性由南门方向步行进入3号仓库前区域。"
+        },
+        "image_urls": [],
+        "tags": [
+          "confidence:high",
+          "extracted"
+        ]
+      }
+    }
+  ],
+  "inference_cards": [
+    {
+      "id": "infer-a7c96c3ceb",
+      "card_type": "inference",
+      "title": "林浩的证词与转账信息的关系",
+      "summary": "林浩的证词与手机转账信息可能存在矛盾，需进一步调查转账的目的和时间。",
+      "display_level": 2,
+      "status": "active",
+      "position": {
+        "x": 464.9305022392724,
+        "y": 175.71843664465808
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [],
+      "created_at": "2026-03-28T06:30:20.138820",
+      "updated_at": "2026-03-28T06:30:57.183308",
+      "inference_type": "hypothesis",
+      "decision": "undecided",
+      "detail": {
+        "claim": "林浩在询问中提到未进入仓库，但在此之前收到了8500元的转账。",
+        "reasoning_steps": [
+          "Generated by LLM."
+        ],
+        "supporting_card_ids": [
+          "meta-info_5",
+          "meta-info_6"
+        ],
+        "opposing_card_ids": [],
+        "missing_card_ids": [],
+        "confidence": null,
+        "legal_basis_ids": [],
+        "notes": "Auto-generated"
+      }
+    },
+    {
+      "id": "infer-e6fe31457a",
+      "card_type": "inference",
+      "title": "询问时间与到达仓库时间的关系",
+      "summary": "林浩在2024年5月13日的询问时间与他到达仓库的时间相近，需核实其证词的准确性。",
+      "display_level": 2,
+      "status": "active",
+      "position": {
+        "x": 546.6035504188555,
+        "y": 308.32554417691006
+      },
+      "ui_state": {
+        "selected": false,
+        "highlighted": false,
+        "pinned": false,
+        "collapsed": false
+      },
+      "source_file_ids": [],
+      "created_at": "2026-03-28T06:30:20.139101",
+      "updated_at": "2026-03-28T06:31:09.162309",
+      "inference_type": "hypothesis",
+      "decision": "undecided",
+      "detail": {
+        "claim": "林浩在询问时间前到达仓库，可能影响其证词的可信度。",
+        "reasoning_steps": [
+          "Generated by LLM."
+        ],
+        "supporting_card_ids": [
+          "meta-info_2",
+          "meta-info_4"
+        ],
+        "opposing_card_ids": [],
+        "missing_card_ids": [],
+        "confidence": null,
+        "legal_basis_ids": [],
+        "notes": "Auto-generated"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-5c8c0dcb65",
+      "source": "meta-info_1",
+      "target": "meta-info_2",
+      "edge_type": "relates_to",
+      "label": "involve",
+      "weight": null,
+      "created_at": "2026-03-28T06:28:50.532784"
+    },
+    {
+      "id": "edge-3eac3b3f28",
+      "source": "meta-info_2",
+      "target": "meta-info_3",
+      "edge_type": "relates_to",
+      "label": "occur_at",
+      "weight": null,
+      "created_at": "2026-03-28T06:28:50.532861"
+    },
+    {
+      "id": "edge-58e70a18ce",
+      "source": "meta-info_4",
+      "target": "meta-info_1",
+      "edge_type": "relates_to",
+      "label": "involve",
+      "weight": null,
+      "created_at": "2026-03-28T06:28:50.532907"
+    },
+    {
+      "id": "edge-278433c3d5",
+      "source": "meta-info_5",
+      "target": "meta-info_1",
+      "edge_type": "relates_to",
+      "label": "state",
+      "weight": null,
+      "created_at": "2026-03-28T06:28:50.532943"
+    },
+    {
+      "id": "edge-8532a91099",
+      "source": "meta-info_6",
+      "target": "meta-info_1",
+      "edge_type": "relates_to",
+      "label": "involve",
+      "weight": null,
+      "created_at": "2026-03-28T06:28:50.532977"
+    },
+    {
+      "id": "edge-4228c07353",
+      "source": "meta-info_7",
+      "target": "meta-info_8",
+      "edge_type": "relates_to",
+      "label": "occur_at",
+      "weight": null,
+      "created_at": "2026-03-28T06:28:50.533009"
+    },
+    {
+      "id": "edge-a2aabad5e1",
+      "source": "meta-info_8",
+      "target": "meta-info_9",
+      "edge_type": "relates_to",
+      "label": "occur_at",
+      "weight": null,
+      "created_at": "2026-03-28T06:28:50.533042"
+    },
+    {
+      "id": "edge-c8f891379c",
+      "source": "meta-info_8",
+      "target": "meta-info_10",
+      "edge_type": "relates_to",
+      "label": "occur_at",
+      "weight": null,
+      "created_at": "2026-03-28T06:28:50.533072"
+    },
+    {
+      "id": "edge-f98895da33",
+      "source": "meta-info_11",
+      "target": "meta-info_8",
+      "edge_type": "relates_to",
+      "label": "occur_at",
+      "weight": null,
+      "created_at": "2026-03-28T06:28:50.533104"
+    },
+    {
+      "id": "edge-ba09437974",
+      "source": "meta-info_5",
+      "target": "infer-a7c96c3ceb",
+      "edge_type": "conflicts_with",
+      "label": "与转账信息存在矛盾",
+      "weight": null,
+      "created_at": "2026-03-28T06:30:20.139276"
+    },
+    {
+      "id": "edge-21a3acc6d5",
+      "source": "meta-info_6",
+      "target": "infer-a7c96c3ceb",
+      "edge_type": "conflicts_with",
+      "label": "与证词存在矛盾",
+      "weight": null,
+      "created_at": "2026-03-28T06:30:20.139323"
+    },
+    {
+      "id": "edge-feabe99fc0",
+      "source": "meta-info_2",
+      "target": "infer-e6fe31457a",
+      "edge_type": "relates_to",
+      "label": "与到达时间相关",
+      "weight": null,
+      "created_at": "2026-03-28T06:30:20.139351"
+    },
+    {
+      "id": "edge-d246e18b37",
+      "source": "meta-info_4",
+      "target": "infer-e6fe31457a",
+      "edge_type": "relates_to",
+      "label": "与询问时间相关",
+      "weight": null,
+      "created_at": "2026-03-28T06:30:20.139378"
+    }
+  ],
+  "workspace_state": {
+    "current_view": "panorama",
+    "selected_card_ids": [
+      "infer-a7c96c3ceb"
+    ],
+    "focused_card_id": "infer-a7c96c3ceb",
+    "expanded_card_ids": [],
+    "pinned_card_ids": [],
+    "viewport": {
+      "zoom": 1.1686454771476027,
+      "offset_x": -444.8498472862567,
+      "offset_y": -44.97737042181518
+    }
+  },
+  "agent_runs": [
+    {
+      "run_id": "run-40b4aec4cc",
+      "task": "extraction",
+      "subtask": "extract_info_units",
+      "input_snapshot": {
+        "case_id": "case-3da2a5c3",
+        "file_ids": [
+          "file-1555a764b4",
+          "file-c9303346e8"
+        ],
+        "raw_text": null,
+        "context": null
+      },
+      "output_snapshot": {
+        "count": 11
+      },
+      "status": "success",
+      "error": null,
+      "started_at": "2026-03-28T06:28:38.885026",
+      "finished_at": "2026-03-28T06:28:38.885026"
+    },
+    {
+      "run_id": "run-2930191d35",
+      "task": "relation",
+      "subtask": "build_relations",
+      "input_snapshot": {
+        "case_id": "case-3da2a5c3",
+        "info_unit_ids": null
+      },
+      "output_snapshot": {
+        "relations": 9,
+        "edges": 9
+      },
+      "status": "success",
+      "error": null,
+      "started_at": "2026-03-28T06:28:50.536519",
+      "finished_at": "2026-03-28T06:28:50.536519"
+    }
+  ]
+}

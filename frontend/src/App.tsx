@@ -1,14 +1,22 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createCase,
+  appendFilesToCase,
   deleteCase,
   getCase,
   listCases,
   selectCase,
   generateInference,
+  routeTask,
+  runExtraction,
+  runRelation,
+  runReasoning,
+  askQa,
+  actInteraction,
   renameCase,
   updateCardPosition,
   updateWorkspaceState,
+  trackInteraction,
   type CaseData,
   type CaseSummary,
   type MetaType,
@@ -176,7 +184,7 @@ export default function App() {
   const [isDropSelected, setIsDropSelected] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStage, setUploadStage] = useState<"idle" | "uploading">("idle");
   const [uploadDisplayText, setUploadDisplayText] = useState("");
@@ -195,6 +203,7 @@ export default function App() {
   const uploadAbortRef = useRef<AbortController | null>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const workspaceSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectionSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const panStateRef = useRef<{ active: boolean; startMouseX: number; startMouseY: number; startX: number; startY: number }>({
     active: false,
@@ -211,6 +220,14 @@ export default function App() {
     transformRef.current = transform;
   }, [transform]);
 
+  function pickSelectedNodeIds(nextCase: CaseData | null) {
+    if (!nextCase) return [] as string[];
+    const ids = nextCase.workspace_state?.selected_card_ids ?? [];
+    if (ids.length > 0) return ids;
+    const focused = nextCase.workspace_state?.focused_card_id;
+    return focused ? [focused] : [];
+  }
+
   useEffect(() => {
     void (async () => {
       try {
@@ -220,6 +237,7 @@ export default function App() {
 
         if (current.case?.case_id) {
           setSelectedCaseId(current.case.case_id);
+          setSelectedNodeIds(pickSelectedNodeIds(current.case));
           const viewport = current.case.workspace_state?.viewport;
           if (viewport) {
             setTransform({ x: viewport.offset_x, y: viewport.offset_y, scale: viewport.zoom });
@@ -459,6 +477,7 @@ export default function App() {
 
     setError("");
     setIsDropSelected(true);
+    fireTrack("upload_files_added", [], { count: list.length, file_names: list.map((f) => f.name) });
     setTimeout(() => {
       void submitCase(nextFiles);
     }, 0);
@@ -473,6 +492,7 @@ export default function App() {
   }
 
   function removeEvidence(id: string) {
+    fireTrack("queued_file_remove", [id]);
     setEvidences((current) => current.filter((item) => item.id !== id));
   }
 
@@ -508,10 +528,15 @@ export default function App() {
     setEvidences((current) => current.map((item) => ({ ...item, status: "submitted" as const })));
 
     try {
-      const response = await createCase(currentCase?.case_title ?? "未命名案件", files, controller.signal);
+      const response = currentCase?.case_id
+        ? await appendFilesToCase(currentCase.case_id, files, controller.signal)
+        : await createCase(currentCase?.case_title ?? "未命名案件", files, controller.signal);
+      await runRelation({ case_id: response.case.case_id });
+      const refreshedCase = await getCase();
       setUploadProgress(100);
-      setCurrentCase(response.case);
-      setEvidences((current) => current.map((item) => ({ ...item, status: "success" as const })));
+      setCurrentCase(refreshedCase.case);
+      setSelectedNodeIds(pickSelectedNodeIds(refreshedCase.case));
+      setEvidences([]);
       setUploadStage("idle");
       try {
         const cases = await listCases();
@@ -534,6 +559,7 @@ export default function App() {
   }
 
   function onCancelUpload() {
+    fireTrack("upload_cancel");
     uploadAbortRef.current?.abort();
     stopProgressTimer();
     setCaseLoading(false);
@@ -544,12 +570,14 @@ export default function App() {
   }
 
   async function onClearCase() {
+    fireTrack("case_clear_requested");
     uploadAbortRef.current?.abort();
     stopProgressTimer();
     setUploadProgress(0);
     setError("");
     await deleteCase();
     setCurrentCase(null);
+    setSelectedNodeIds([]);
     setEvidences([]);
     setNodePositions({});
     setUploadStage("idle");
@@ -568,9 +596,11 @@ export default function App() {
     if (!currentCase?.case_id) return;
     try {
       const updated = await updateWorkspaceState(currentCase.case_id, {
-        zoom: nextTransform.scale,
-        offset_x: nextTransform.x,
-        offset_y: nextTransform.y,
+        viewport: {
+          zoom: nextTransform.scale,
+          offset_x: nextTransform.x,
+          offset_y: nextTransform.y,
+        },
       });
       setCurrentCase(updated.case);
     } catch {
@@ -583,8 +613,38 @@ export default function App() {
       clearTimeout(workspaceSyncTimerRef.current);
     }
     workspaceSyncTimerRef.current = setTimeout(() => {
+      fireTrack("canvas_viewport_update", [], { zoom: nextTransform.scale, offset_x: nextTransform.x, offset_y: nextTransform.y });
       void persistWorkspace(nextTransform);
     }, 260);
+  }
+
+  async function persistSelectedNodes(nodeIds: string[], focusedNodeId: string | null) {
+    if (!currentCase?.case_id) return;
+    const knownCardIds = new Set([
+      ...currentCase.meta_cards.map((card) => card.id),
+      ...currentCase.inference_cards.map((card) => card.id),
+    ]);
+    const filteredIds = nodeIds.filter((id) => knownCardIds.has(id));
+    const focused = focusedNodeId && knownCardIds.has(focusedNodeId) ? focusedNodeId : (filteredIds[0] ?? null);
+
+    try {
+      const updated = await updateWorkspaceState(currentCase.case_id, {
+        selected_card_ids: filteredIds,
+        focused_card_id: focused,
+      });
+      setCurrentCase(updated.case);
+    } catch {
+      // keep local interaction smooth even if persistence fails
+    }
+  }
+
+  function scheduleSelectionSync(nodeIds: string[], focusedNodeId: string | null) {
+    if (selectionSyncTimerRef.current) {
+      clearTimeout(selectionSyncTimerRef.current);
+    }
+    selectionSyncTimerRef.current = setTimeout(() => {
+      void persistSelectedNodes(nodeIds, focusedNodeId);
+    }, 120);
   }
 
   async function persistCardPosition(cardId: string, point: Point) {
@@ -609,6 +669,7 @@ export default function App() {
     if (island.visible) {
       setIsland((current) => ({ ...current, visible: false }));
     }
+    event.preventDefault();
 
     const current = transformRef.current;
     panStateRef.current = {
@@ -622,6 +683,7 @@ export default function App() {
 
   function onCanvasContextMenu(event: React.MouseEvent<HTMLDivElement>) {
     event.preventDefault();
+    fireTrack("canvas_context_menu");
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
     const rect = wrapper.getBoundingClientRect();
@@ -648,6 +710,7 @@ export default function App() {
   }
 
   function onNodeMouseDown(event: React.MouseEvent<HTMLDivElement>, nodeId: string) {
+    event.preventDefault();
     event.stopPropagation();
     const point = nodePositions[nodeId];
     if (!point) return;
@@ -661,6 +724,7 @@ export default function App() {
   }
 
   async function onGenerateInferenceFromIsland() {
+    fireTrack("island_generate_click", currentCase?.workspace_state?.selected_card_ids ?? []);
     if (!currentCase) {
       setError("No active case.");
       return;
@@ -730,6 +794,19 @@ export default function App() {
   const viewLevel: 1 | 2 | 3 = transform.scale < 1 ? 1 : transform.scale < 1.6 ? 2 : 3;
   const zoomPercent = Math.round(transform.scale * 100);
 
+  function fireTrack(action: string, targets: string[] = [], params: Record<string, unknown> = {}) {
+    if (!currentCase?.case_id) return;
+    void trackInteraction({
+      case_id: currentCase.case_id,
+      action,
+      targets,
+      params,
+      context: { selected_case_id: selectedCaseId },
+    }).catch(() => {
+      // non-blocking telemetry
+    });
+  }
+
   return (
     <main className="page">
       <div className="studio-layout">
@@ -746,8 +823,9 @@ export default function App() {
                 className="case-selector-trigger"
                 type="button"
                 title="Double click to rename"
-                onClick={() => setCaseMenuOpen((current) => !current)}
+                onClick={() => { fireTrack("case_menu_toggle"); setCaseMenuOpen((current) => !current); }}
                 onDoubleClick={() => {
+                  fireTrack("case_rename_open");
                   void onRenameCurrentCase();
                 }}
               >
@@ -769,7 +847,9 @@ export default function App() {
                               try {
                                 const selectedCaseEnvelope = await selectCase(item.case_id);
                                 setCurrentCase(selectedCaseEnvelope.case);
+                                setSelectedNodeIds(pickSelectedNodeIds(selectedCaseEnvelope.case));
                                 setSelectedCaseId(item.case_id);
+                                fireTrack("case_switch", [item.case_id]);
                                 setEvidences([]);
                                 setCaseMenuOpen(false);
                               } catch (err) {
@@ -809,7 +889,7 @@ export default function App() {
             <div className="file-card-list">
               {allFiles.length === 0 ? <p className="tree-empty">No files</p> : null}
               {allFiles.map((item) => (
-                <article className={`figma-file-card ${selectedFileId === item.id ? "is-selected" : ""}`} key={item.id} onClick={() => setSelectedFileId(item.id)}>
+                <article className={`figma-file-card ${selectedFileId === item.id ? "is-selected" : ""}`} key={item.id} onClick={() => { setSelectedFileId(item.id); fireTrack("file_select", [item.id]); }}>
                   <div className="card-file-icon">
                     <img src={pickFileIcon(item.type, item.name)} alt={item.type} />
                   </div>
@@ -854,6 +934,7 @@ export default function App() {
               onClick={() => {
                 if (uploadStage === "idle") {
                   setIsDropSelected(true);
+    fireTrack("upload_picker_open");
                   hiddenFileInputRef.current?.click();
                 }
               }}
@@ -959,7 +1040,7 @@ export default function App() {
                   "canvas-node",
                   `node-${node.kind}`,
                   levelClass,
-                  selectedNodeId === node.id ? "node-selected" : "",
+                  selectedNodeIds.includes(node.id) ? "node-selected" : "",
                 ]
                   .filter(Boolean)
                   .join(" ");
@@ -970,7 +1051,26 @@ export default function App() {
                     className={nodeClass}
                     style={{ left: point.x, top: point.y }}
                     onMouseDown={(event) => {
-                      setSelectedNodeId(node.id);
+                      const isMultiSelect = event.metaKey || event.ctrlKey;
+                      let nextSelectedNodeIds: string[] = [];
+
+                      setSelectedNodeIds((current) => {
+                        if (isMultiSelect) {
+                          nextSelectedNodeIds = current.includes(node.id)
+                            ? current.filter((id) => id !== node.id)
+                            : [...current, node.id];
+                          return nextSelectedNodeIds;
+                        }
+                        nextSelectedNodeIds = [node.id];
+                        return nextSelectedNodeIds;
+                      });
+
+                      const focusedNodeId = nextSelectedNodeIds.includes(node.id)
+                        ? node.id
+                        : (nextSelectedNodeIds[nextSelectedNodeIds.length - 1] ?? null);
+
+                      fireTrack("node_select", nextSelectedNodeIds, { multi_select: isMultiSelect });
+                      scheduleSelectionSync(nextSelectedNodeIds, focusedNodeId);
                       onNodeMouseDown(event, node.id);
                     }}
                   >
@@ -1033,6 +1133,19 @@ export default function App() {
     </main>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

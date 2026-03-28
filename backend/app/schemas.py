@@ -23,14 +23,6 @@ class FileParseStatus(str, Enum):
     failed = "failed"
 
 
-class EvidenceType(str, Enum):
-    text_span = "text_span"
-    image_region = "image_region"
-    screenshot = "screenshot"
-    table = "table"
-    extracted_statement = "extracted_statement"
-    other = "other"
-
 
 class CardType(str, Enum):
     meta = "meta"
@@ -99,6 +91,62 @@ class ViewMode(str, Enum):
     detail = "detail"
 
 
+class ConfidenceLevel(str, Enum):
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+class CertaintyLevel(str, Enum):
+    explicit = "explicit"
+    inferred = "inferred"
+
+
+class RouterTask(str, Enum):
+    extraction = "extraction"
+    relation = "relation"
+    reasoning = "reasoning"
+    qa = "qa"
+    interaction = "interaction"
+
+
+class InfoUnitType(str, Enum):
+    person = "person"
+    event = "event"
+    object = "object"
+    claim = "claim"
+    time = "time"
+    location = "location"
+
+
+class RecommendedView(str, Enum):
+    timeline = "timeline"
+    conflict = "conflict"
+    hypothesis = "hypothesis"
+    evidence_chain = "evidence_chain"
+
+
+class IntentType(str, Enum):
+    qa = "qa"
+    search = "search"
+    reasoning = "reasoning"
+    canvas_edit = "canvas_edit"
+    view_switch = "view_switch"
+
+
+class ResponseMode(str, Enum):
+    text = "text"
+    canvas = "canvas"
+    mixed = "mixed"
+
+
+class UIActionType(str, Enum):
+    highlight = "highlight"
+    open_view = "open_view"
+    rearrange = "rearrange"
+    create_node = "create_node"
+
+
 class CaseFile(BaseModel):
     file_id: str
     filename: str
@@ -111,30 +159,6 @@ class CaseFile(BaseModel):
     preview_text: str | None = None
     page_count: int | None = None
     error_message: str | None = None
-
-
-class EvidenceAnchor(BaseModel):
-    file_id: str
-    page: int | None = None
-    section: str | None = None
-    paragraph_index: int | None = None
-    char_start: int | None = None
-    char_end: int | None = None
-    bbox: list[float] | None = None
-
-
-class EvidenceItem(BaseModel):
-    evidence_id: str
-    evidence_type: EvidenceType = EvidenceType.text_span
-
-    label: str
-    content: str | None = None
-    summary: str | None = None
-
-    anchors: list[EvidenceAnchor] = Field(default_factory=list)
-    source_file_ids: list[str] = Field(default_factory=list)
-
-    created_at: datetime
 
 
 class CardPosition(BaseModel):
@@ -168,7 +192,6 @@ class CardBase(BaseModel):
     position: CardPosition = Field(default_factory=CardPosition)
     ui_state: CardUIState = Field(default_factory=CardUIState)
 
-    source_evidence_ids: list[str] = Field(default_factory=list)
     source_file_ids: list[str] = Field(default_factory=list)
 
     created_at: datetime
@@ -224,8 +247,45 @@ class GraphEdge(BaseModel):
     label: str | None = None
     weight: float | None = None
 
-    source_evidence_ids: list[str] = Field(default_factory=list)
     created_at: datetime
+
+
+class InfoUnit(BaseModel):
+    id: str
+    type: InfoUnitType
+    title: str
+    summary: str
+    detail: str
+    source_refs: list[str] = Field(default_factory=list)
+    confidence: ConfidenceLevel = ConfidenceLevel.medium
+    extraction_reason: str
+    evidence_quote: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class RelationRecord(BaseModel):
+    id: str
+    source_id: str
+    target_id: str
+    relation_type: str
+    confidence: ConfidenceLevel = ConfidenceLevel.medium
+    evidence_basis: str
+    rationale: str
+    certainty_level: CertaintyLevel = CertaintyLevel.explicit
+    created_at: datetime
+
+
+class AgentRunLog(BaseModel):
+    run_id: str
+    task: RouterTask
+    subtask: str | None = None
+    input_snapshot: dict[str, Any] = Field(default_factory=dict)
+    output_snapshot: dict[str, Any] = Field(default_factory=dict)
+    status: Literal["success", "failed", "fallback"] = "success"
+    error: str | None = None
+    started_at: datetime
+    finished_at: datetime
 
 
 class WorkspaceState(BaseModel):
@@ -248,13 +308,15 @@ class CaseData(BaseModel):
     updated_at: datetime
 
     files: list[CaseFile] = Field(default_factory=list)
-    evidences: list[EvidenceItem] = Field(default_factory=list)
+    info_units: list[InfoUnit] = Field(default_factory=list)
+    relations: list[RelationRecord] = Field(default_factory=list)
 
     meta_cards: list[MetaCard] = Field(default_factory=list)
     inference_cards: list[InferenceCard] = Field(default_factory=list)
     edges: list[GraphEdge] = Field(default_factory=list)
 
     workspace_state: WorkspaceState = Field(default_factory=WorkspaceState)
+    agent_runs: list[AgentRunLog] = Field(default_factory=list)
 
 
 class GetCaseResponse(BaseModel):
@@ -285,9 +347,9 @@ class UpdateWorkspaceRequest(BaseModel):
     viewport: CanvasViewport | None = None
 
 
-
 class UpdateCaseRequest(BaseModel):
     case_title: str
+
 
 class GenerateInferenceRequest(BaseModel):
     case_id: str
@@ -315,3 +377,105 @@ class ListCasesResponse(BaseModel):
     cases: list[CaseListItem] = Field(default_factory=list)
     current_case_id: str | None = None
 
+
+class RouteRequest(BaseModel):
+    user_input: str
+    current_selection: list[str] = Field(default_factory=list)
+    system_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class RouteResponse(BaseModel):
+    task: RouterTask
+    subtask: str = ""
+    target_scope: list[str] = Field(default_factory=list)
+    requires_tool: bool = False
+
+
+class ExtractionRequest(BaseModel):
+    case_id: str
+    file_ids: list[str] | None = None
+    raw_text: str | None = None
+    context: str | None = None
+
+
+class ExtractionResponse(BaseModel):
+    success: bool
+    info_units: list[InfoUnit] = Field(default_factory=list)
+    message: str | None = None
+
+
+class RelationRequest(BaseModel):
+    case_id: str
+    info_unit_ids: list[str] | None = None
+
+
+class RelationResponse(BaseModel):
+    success: bool
+    relations: list[RelationRecord] = Field(default_factory=list)
+    new_edges: list[GraphEdge] = Field(default_factory=list)
+    message: str | None = None
+
+
+class ReasoningRequest(BaseModel):
+    case_id: str
+    selected_info_units: list[str] = Field(default_factory=list)
+    selected_relations: list[str] = Field(default_factory=list)
+    user_prompt: str = ""
+    current_canvas_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReasoningResponse(BaseModel):
+    success: bool
+    recommended_view: RecommendedView = RecommendedView.hypothesis
+    reasoning_structure: dict[str, Any] = Field(default_factory=dict)
+    view_payload: dict[str, Any] = Field(default_factory=dict)
+    missing_information: list[str] = Field(default_factory=list)
+    reasoning_rationale: str = ""
+    new_inference_cards: list[InferenceCard] = Field(default_factory=list)
+    new_edges: list[GraphEdge] = Field(default_factory=list)
+    message: str | None = None
+
+
+class QARequest(BaseModel):
+    case_id: str
+    question: str
+
+
+class QAResponse(BaseModel):
+    answer: str
+    matched_items: list[str] = Field(default_factory=list)
+    highlight_targets: list[str] = Field(default_factory=list)
+    confidence: ConfidenceLevel = ConfidenceLevel.medium
+
+
+class UIAction(BaseModel):
+    action: UIActionType
+    targets: list[str] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class InteractionRequest(BaseModel):
+    case_id: str
+    user_input: str
+    current_selection: list[str] = Field(default_factory=list)
+    system_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class InteractionResponse(BaseModel):
+    intent_type: IntentType
+    response_mode: ResponseMode
+    ui_actions: list[UIAction] = Field(default_factory=list)
+    assistant_message: str = ""
+
+class InteractionTrackRequest(BaseModel):
+    case_id: str
+    action: str
+    targets: list[str] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class InteractionTrackResponse(BaseModel):
+    success: bool
+    run_id: str
+    message: str | None = None

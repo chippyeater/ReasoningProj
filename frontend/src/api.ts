@@ -2,7 +2,6 @@
 
 export type FileType = "pdf" | "docx" | "image" | "txt" | "markdown" | "other";
 export type FileParseStatus = "pending" | "parsing" | "parsed" | "failed";
-export type EvidenceType = "text_span" | "image_region" | "screenshot" | "table" | "extracted_statement" | "other";
 export type CardType = "meta" | "inference";
 export type MetaType =
   | "person"
@@ -50,27 +49,6 @@ export type CaseFile = {
   error_message?: string | null;
 };
 
-export type EvidenceAnchor = {
-  file_id: string;
-  page?: number | null;
-  section?: string | null;
-  paragraph_index?: number | null;
-  char_start?: number | null;
-  char_end?: number | null;
-  bbox?: number[] | null;
-};
-
-export type EvidenceItem = {
-  evidence_id: string;
-  evidence_type: EvidenceType;
-  label: string;
-  content?: string | null;
-  summary?: string | null;
-  anchors: EvidenceAnchor[];
-  source_file_ids: string[];
-  created_at: string;
-};
-
 export type CardPosition = { x: number; y: number };
 
 export type CardUIState = {
@@ -89,7 +67,6 @@ export type MetaCard = {
   status: "active" | "hidden" | "archived";
   position: CardPosition;
   ui_state: CardUIState;
-  source_evidence_ids: string[];
   source_file_ids: string[];
   created_at: string;
   updated_at: string;
@@ -113,7 +90,6 @@ export type InferenceCard = {
   status: "active" | "hidden" | "archived";
   position: CardPosition;
   ui_state: CardUIState;
-  source_evidence_ids: string[];
   source_file_ids: string[];
   created_at: string;
   updated_at: string;
@@ -138,7 +114,6 @@ export type GraphEdge = {
   edge_type: EdgeType;
   label?: string | null;
   weight?: number | null;
-  source_evidence_ids: string[];
   created_at: string;
 };
 
@@ -161,7 +136,6 @@ export type CaseData = {
   created_at: string;
   updated_at: string;
   files: CaseFile[];
-  evidences: EvidenceItem[];
   meta_cards: MetaCard[];
   inference_cards: InferenceCard[];
   edges: GraphEdge[];
@@ -237,6 +211,19 @@ export async function createCase(
   return readJson<{ case: CaseData }>(response);
 }
 
+export async function appendFilesToCase(caseId: string, files: File[], signal?: AbortSignal): Promise<{ case: CaseData }> {
+  const response = await fetch(`${API_BASE}/api/cases/${caseId}/files`, {
+    method: "POST",
+    signal,
+    body: (() => {
+      const formData = new FormData();
+      files.forEach((file) => formData.append("files", file));
+      return formData;
+    })(),
+  });
+  return readJson<{ case: CaseData }>(response);
+}
+
 export async function getCase(): Promise<CaseEnvelope> {
   return readJson<CaseEnvelope>(await fetch(`${API_BASE}/api/case`));
 }
@@ -298,15 +285,24 @@ export async function generateInference(
   );
 }
 
+export type WorkspacePatch = {
+  current_view?: ViewMode;
+  selected_card_ids?: string[];
+  focused_card_id?: string | null;
+  expanded_card_ids?: string[];
+  pinned_card_ids?: string[];
+  viewport?: { zoom: number; offset_x: number; offset_y: number };
+};
+
 export async function updateWorkspaceState(
   caseId: string,
-  viewport: { zoom: number; offset_x: number; offset_y: number }
+  patch: WorkspacePatch
 ): Promise<{ case: CaseData }> {
   return readJson<{ case: CaseData }>(
     await fetch(`${API_BASE}/api/cases/${caseId}/workspace`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ viewport }),
+      body: JSON.stringify(patch),
     })
   );
 }
@@ -321,6 +317,176 @@ export async function updateCardPosition(
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ position }),
+    })
+  );
+}
+
+export type InteractionTrackPayload = {
+  case_id: string;
+  action: string;
+  targets?: string[];
+  params?: Record<string, unknown>;
+  context?: Record<string, unknown>;
+};
+
+export type InteractionTrackResponse = {
+  success: boolean;
+  run_id: string;
+  message?: string | null;
+};
+
+export async function trackInteraction(payload: InteractionTrackPayload): Promise<InteractionTrackResponse> {
+  return readJson<InteractionTrackResponse>(
+    await fetch(`${API_BASE}/api/interaction/track`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export type RouterTask = "extraction" | "relation" | "reasoning" | "qa" | "interaction";
+
+export type RouteRequestPayload = {
+  user_input: string;
+  current_selection?: string[];
+  system_state?: Record<string, unknown>;
+};
+
+export type RouteResponsePayload = {
+  task: RouterTask;
+  subtask: string;
+  target_scope: string[];
+  requires_tool: boolean;
+};
+
+export type ExtractionRunRequest = {
+  case_id: string;
+  file_ids?: string[];
+  raw_text?: string;
+  context?: string;
+};
+
+export type ExtractionRunResponse = {
+  success: boolean;
+  info_units: Array<Record<string, unknown>>;
+  message?: string | null;
+};
+
+export type RelationRunRequest = {
+  case_id: string;
+  info_unit_ids?: string[];
+};
+
+export type RelationRunResponse = {
+  success: boolean;
+  relations: Array<Record<string, unknown>>;
+  new_edges: GraphEdge[];
+  message?: string | null;
+};
+
+export type ReasoningRunRequest = {
+  case_id: string;
+  selected_info_units: string[];
+  selected_relations: string[];
+  user_prompt: string;
+  current_canvas_state?: Record<string, unknown>;
+};
+
+export type ReasoningRunResponse = {
+  success: boolean;
+  recommended_view: "timeline" | "conflict" | "hypothesis" | "evidence_chain";
+  reasoning_structure: Record<string, unknown>;
+  view_payload: Record<string, unknown>;
+  missing_information: string[];
+  reasoning_rationale: string;
+  new_inference_cards: InferenceCard[];
+  new_edges: GraphEdge[];
+  message?: string | null;
+};
+
+export type QAAskRequest = {
+  case_id: string;
+  question: string;
+};
+
+export type QAAskResponse = {
+  answer: string;
+  matched_items: string[];
+  highlight_targets: string[];
+  confidence: "high" | "medium" | "low";
+};
+
+export type InteractionActRequest = {
+  case_id: string;
+  user_input: string;
+  current_selection?: string[];
+  system_state?: Record<string, unknown>;
+};
+
+export type InteractionActResponse = {
+  intent_type: "qa" | "search" | "reasoning" | "canvas_edit" | "view_switch";
+  response_mode: "text" | "canvas" | "mixed";
+  ui_actions: Array<{ action: "highlight" | "open_view" | "rearrange" | "create_node"; targets: string[]; params: Record<string, unknown> }>;
+  assistant_message: string;
+};
+
+export async function routeTask(payload: RouteRequestPayload): Promise<RouteResponsePayload> {
+  return readJson<RouteResponsePayload>(
+    await fetch(`${API_BASE}/api/router/route`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function runExtraction(payload: ExtractionRunRequest): Promise<ExtractionRunResponse> {
+  return readJson<ExtractionRunResponse>(
+    await fetch(`${API_BASE}/api/extraction/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function runRelation(payload: RelationRunRequest): Promise<RelationRunResponse> {
+  return readJson<RelationRunResponse>(
+    await fetch(`${API_BASE}/api/relation/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function runReasoning(payload: ReasoningRunRequest): Promise<ReasoningRunResponse> {
+  return readJson<ReasoningRunResponse>(
+    await fetch(`${API_BASE}/api/reasoning/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function askQa(payload: QAAskRequest): Promise<QAAskResponse> {
+  return readJson<QAAskResponse>(
+    await fetch(`${API_BASE}/api/qa/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function actInteraction(payload: InteractionActRequest): Promise<InteractionActResponse> {
+  return readJson<InteractionActResponse>(
+    await fetch(`${API_BASE}/api/interaction/act`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     })
   );
 }
