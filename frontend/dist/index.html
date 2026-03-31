@@ -1,17 +1,67 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="zh-CN">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23222'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-size='14' fill='white' font-family='Arial'%3ER%3C/text%3E%3C/svg%3E"
-    />
-    <title>Reasoning Interface Generator</title>
-    <script type="module" crossorigin src="/assets/index-fcSfHqg8.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DlbpVqT8.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>推理视图 MVP</title>
+    <script type="module" crossorigin src="/assets/index-CHza2b_s.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DRhlmiiY.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div class="app">
+      <header class="top">
+        <div class="brand">推理视图 MVP</div>
+        <div class="case-title" id="caseTitle">当前案件：未加载</div>
+        <div class="top-actions">
+          <label class="btn primary" for="fileInput">上传材料</label>
+          <input id="fileInput" class="hidden" type="file" multiple>
+          <button class="btn" id="relationBtn">生成关系</button>
+          <button class="btn" id="fitBtn">适配视图</button>
+          <button class="btn" id="reloadBtn">刷新案件</button>
+        </div>
+      </header>
+
+      <aside class="sidebar">
+        <section class="section" style="flex:1;display:flex;flex-direction:column">
+          <div class="title">材料</div>
+          <div class="upload-zone" id="uploadZone">
+            <strong>拖入材料或 <span>点击选择</span></strong>
+            <div class="muted">支持多文件上传。上传后会自动追加到当前案件，没有案件则自动新建。</div>
+          </div>
+          <div class="list" id="fileList"></div>
+        </section>
+
+        <section class="section" style="flex:1;display:flex;flex-direction:column">
+          <div class="title">当前选择</div>
+          <div class="list" id="selectionList"></div>
+        </section>
+      </aside>
+
+      <main class="canvas-wrap" id="wrap">
+        <div class="content" id="content">
+          <div class="grid"></div>
+          <svg id="svg">
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                <polygon points="0 0,10 3.5,0 7" fill="rgba(255,255,255,.32)"></polygon>
+              </marker>
+            </defs>
+            <g id="links"></g>
+          </svg>
+          <div class="nodes" id="nodes"></div>
+        </div>
+        <div class="empty" id="empty">
+          <h2>先拿到一份案件</h2>
+          <p>这不是组件演示页。它只保留一条真链路：上传材料，读取当前案件，渲染卡片与边，生成冲突卡，再由你完成冲突裁决。</p>
+        </div>
+      </main>
+
+      <footer class="bottom">
+        <div class="status" id="status">等待案件加载</div>
+        <input class="input" id="prompt" type="text" placeholder="输入：生成冲突视图 / 找待验证点 / 生成推论">
+        <button class="btn primary" id="sendBtn">发送</button>
+      </footer>
+    </div>
+
   </body>
 </html>

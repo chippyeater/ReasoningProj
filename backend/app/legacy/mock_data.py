@@ -1,3 +1,9 @@
+# pyright: reportGeneralTypeIssues=false, reportAttributeAccessIssue=false, reportUndefinedVariable=false, reportMissingImports=false
+
+"""LEGACY MODULE: not used by the current backend flow.
+Kept only for historical reference.
+"""
+
 """Fallback response builder used when LLM is unavailable or returns invalid output."""
 
 from app.schemas import ReasonResponse

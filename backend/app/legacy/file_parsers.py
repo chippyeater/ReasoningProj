@@ -1,3 +1,9 @@
+# pyright: reportGeneralTypeIssues=false, reportAttributeAccessIssue=false, reportUndefinedVariable=false, reportMissingImports=false
+
+"""LEGACY MODULE: not used by the current backend flow.
+Kept only for historical reference.
+"""
+
 """Parse uploaded files into normalized evidence inputs."""
 
 from io import BytesIO

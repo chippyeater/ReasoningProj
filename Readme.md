@@ -1,69 +1,282 @@
-# ReasoningProj
+# ReasoningProj Backend Integration Doc
 
-这是一个前后端分离的推理工作台项目：左侧负责文件管理与上传，右侧是可拖拽节点画布和右键灵动岛，后端负责文件解析、结构化抽取与案例状态持久化。
+This document reflects the current backend implementation in:
+- `backend/app/main.py`
+- `backend/app/schemas.py`
 
-## 工程架构
+## 1. Service Basics
 
-### 1. 前端（`frontend/`）
-- 技术栈：React + TypeScript + Vite
-- 入口：`frontend/src/main.tsx`
-- 主界面：`frontend/src/App.tsx`
-- 样式：`frontend/src/styles.css`
-- 接口封装：`frontend/src/api.ts`
-- 资源：`frontend/src/assets/`
+- Framework: FastAPI
+- Default local URL: `http://localhost:8000`
+- Entry: `backend/app/main.py`
+- Data models: `backend/app/schemas.py`
+- Main data directory: `backend/data/<case_id>/`
 
-当前界面结构：
-- 左侧栏（固定 360 宽）：头像、搜索、文件树、拖拽上传区
-- 右侧画布：无限网格背景、实体/事件/主张节点、关系连线
-- 交互：画布拖拽平移、滚轮缩放、节点拖拽、右键唤起可拖拽灵动岛（底部吸附）
+## 2. General Conventions
 
-上传区当前逻辑：
-- 拖拽/点击选文件后自动发起上传
-- 上传中显示环形进度条 + 文件名列表（中文逗号分隔，过多显示 `...`）
-- 上传完成后按钮从 `Cancel` 变为 `Confirm`
+- No auth is enabled right now.
+- CORS is open (`allow_origins=["*"]`).
+- Datetime fields are ISO8601 UTC strings.
+- Default request body is JSON, except file upload endpoints (`multipart/form-data`).
 
-### 2. 后端（`backend/`）
-- 技术栈：FastAPI + Python
-- 入口：`backend/app/main.py`
-- 结构化模型：`backend/app/schemas.py`
-- LLM 调用与流程：`backend/app/llm.py`
-- 文件解析：`backend/app/file_parsers.py`
-- 证据工具：`backend/app/evidence_tools.py`
-- 当前案例存储：`backend/app/case_store.py`
-- 日志落盘：`backend/app/log_store.py`
-- Prompt：`backend/prompts/`
-  - `extraction_system_prompt.md`
-  - `question_reasoning_system_prompt.md`
+## 3. API Endpoints
 
-数据目录：
-- 当前案例：`backend/data/current_case.json`
-- 调试日志：`backend/logs/*.json`
+## 3.1 Health
 
-## 主要接口
+### `GET /health`
+- Purpose: service health check
+- Response:
 
-- `GET /health`
-  - 健康检查
-- `GET /api/case`
-  - 获取当前案例
-- `POST /api/case`
-  - 创建/更新当前案例（支持 `multipart/form-data` 文件上传）
-- `DELETE /api/case`
-  - 清空当前案例
+```json
+{ "status": "ok" }
+```
 
-## 运行方式
+## 3.2 Case APIs
 
-### 1) 启动后端
+### `GET /api/cases`
+- Purpose: list cases
+- Response model: `ListCasesResponse`
+
+### `GET /api/case`
+- Purpose: get current selected case
+- Response model: `GetCaseResponse` (`case` may be `null`)
+
+### `GET /api/cases/{case_id}`
+- Purpose: get case by ID
+- Response model: `GetCaseResponse`
+- Errors: `404 Case not found`
+
+### `POST /api/cases`
+- Purpose: create or upsert case
+- Response model: `UpsertCaseResponse`
+- Supports three input modes:
+
+1. `multipart/form-data`
+- Fields: `case_title` (optional)
+- Files: one or many file parts
+- Behavior: create new case, save uploaded files, run extraction.
+
+2. JSON payload with `case`
+- Body shape: `{ "case": CaseData }`
+- Behavior: upsert full case object.
+
+3. JSON payload without `case`
+- Body shape: `{ "case_title"?: string, "case_id"?: string }`
+- Behavior: create empty case.
+
+### `POST /api/cases/{case_id}/files`
+- Purpose: append uploaded files to existing case
+- Request: `multipart/form-data`
+- Response model: `UpsertCaseResponse`
+- Current implementation note: `append_files_to_case` is currently a placeholder (no file append, no extraction rerun).
+
+### `POST /api/cases/{case_id}/select`
+- Purpose: set current case
+- Response model: `GetCaseResponse`
+- Errors: `404 Case not found`
+
+### `PATCH /api/cases/{case_id}`
+- Purpose: update case metadata
+- Request model: `UpdateCaseRequest`
+- Response model: `UpsertCaseResponse`
+
+### `DELETE /api/case`
+- Purpose: clear current case pointer
+- Response:
+
+```json
+{ "status": "cleared" }
+```
+
+### `DELETE /api/cases/{case_id}`
+- Purpose: delete a specific case
+- Response:
+
+```json
+{ "status": "deleted", "case_id": "case-xxxx" }
+```
+
+## 3.3 Card and Workspace APIs
+
+### `PATCH /api/cases/{case_id}/cards/{card_id}`
+- Purpose: patch one card (`meta`, `inference`, or `law`)
+- Request model: `UpdateCardRequest`
+- Response model: `UpsertCaseResponse`
+- Errors: `404 Case not found`, `404 Card not found`
+
+### `PATCH /api/cases/{case_id}/workspace`
+- Purpose: patch workspace state
+- Request model: `UpdateWorkspaceRequest`
+- Response model: `UpsertCaseResponse`
+
+## 3.4 Agent and Reasoning APIs
+
+### `POST /api/inference/generate`
+- Purpose: generate inference cards/edges from selected cards
+- Request model: `GenerateInferenceRequest`
+- Response model: `GenerateInferenceResponse`
+
+### `POST /api/router/route`
+- Purpose: route incoming user intent to a task
+- Request model: `RouteRequest`
+- Response model: `RouteResponse`
+
+### `POST /api/extraction/run`
+- Purpose: run extraction and generate `info_units`
+- Request model: `ExtractionRequest`
+- Response model: `ExtractionResponse`
+
+### `POST /api/relation/run`
+- Purpose: run relation extraction and generate `relations` and `edges`
+- Request model: `RelationRequest`
+- Response model: `RelationResponse`
+
+### `POST /api/reasoning/run`
+- Purpose: run reasoning agent
+- Request model: `ReasoningRequest`
+- Response model: `ReasoningResponse`
+
+### `POST /api/qa/ask`
+- Purpose: QA over current case
+- Request model: `QARequest`
+- Response model: `QAResponse`
+
+### `POST /api/interaction/act`
+- Purpose: parse user intent into UI actions
+- Request model: `InteractionRequest`
+- Response model: `InteractionResponse`
+
+### `POST /api/interaction/track`
+- Purpose: track frontend interaction events
+- Request model: `InteractionTrackRequest`
+- Response model: `InteractionTrackResponse`
+
+## 4. Core Type Definitions
+
+## 4.1 Main Enums
+
+- `FileType`: `pdf | docx | image | txt | markdown | other`
+- `FileParseStatus`: `pending | parsing | parsed | failed`
+- `CardType`: `meta | inference | law`
+- `DisplayLevel`: `1 | 2 | 3`
+- `CardStatus`: `active | hidden | archived`
+- `InferenceType`: `hypothesis | conclusion | conflict | missing_evidence | reasoning_step | evidence_chain | risk | other`
+- `InferenceDecision`: `undecided | accepted | rejected | pending`
+- `EdgeType`: `relates_to | supports | opposes | derives | mentions | conflicts_with | missing_for | cites | belongs_to`
+- `ViewMode`: `panorama | reasoning | detail`
+- `ConfidenceLevel`: `high | medium | low`
+- `CertaintyLevel`: `explicit | inferred`
+- `RouterTask`: `extraction | relation | reasoning | qa | interaction`
+- `RecommendedView`: `timeline | conflict | hypothesis | evidence_chain`
+- `IntentType`: `qa | search | reasoning | canvas_edit | view_switch`
+- `ResponseMode`: `text | canvas | mixed`
+- `UIActionType`: `highlight | open_view | rearrange | create_node`
+- `InfoUnitType`: `subject | event | state | claim`
+- `SubjectSubtype`: `person | organization`
+- `EventSubtype`: `legal_act | factual_act | transaction | communication | violation`
+- `StateSubtype`: `temporal | physical_state | usage_state`
+- `ClaimSubtype`: `fact_assertion | legal_assertion | defense`
+- `InfoUnitSubtype`: union of all subtypes above
+
+Note:
+- `InfoUnitType` is the source of truth for extraction-level card typing.
+- `MetaCard` now stores `info_type` and `info_subtype` directly.
+
+## 4.2 Info Unit Types
+
+- Validation rule exists in `InfoUnit`: `type` and `subtype` must match.
+
+## 4.3 Core Models
+
+### `CaseFile`
+- File metadata and parsing state.
+- Fields include:
+- `file_id`, `filename`, `file_type`, `file_size`, `storage_path`
+- `uploaded_at`, `parse_status`, `preview_text`, `page_count`, `error_message`
+
+### `InfoUnit`
+- Minimal extracted unit for analysis.
+- Fields include:
+- `id`, `type`, `subtype`, `legal_type`
+- `title`, `summary`, `detail`
+- `source_refs[]`, `confidence`
+- `extraction_reason`, `evidence_quote`
+- `created_at`, `updated_at`
+
+### `RelationRecord`
+- Fields include:
+- `id`, `source_id`, `target_id`, `relation_type`
+- `confidence`, `evidence_basis`, `rationale`, `certainty_level`
+- `created_at`
+
+### Card Models
+- `MetaCard` (`card_type=meta`) + `MetaDetail`
+- `InferenceCard` (`card_type=inference`) + `InferenceDetail`
+- `LawCard` (`card_type=law`) + `LawDetail`
+- All inherit `CardBase`:
+- `title`, `summary`, `display_level`, `status`, `position`, `ui_state`, `source_file_ids`, timestamps
+
+### `GraphEdge`
+- Fields:
+- `id`, `source`, `target`, `edge_type`, `label`, `weight`, `created_at`
+
+### `WorkspaceState`
+- Fields:
+- `current_view`
+- `selected_card_ids[]`, `focused_card_id`
+- `expanded_card_ids[]`, `pinned_card_ids[]`
+- `viewport` (`zoom`, `offset_x`, `offset_y`)
+
+### `CaseData`
+- Top-level case object:
+- `case_id`, `case_title`, `created_at`, `updated_at`
+- `files[]`
+- `info_units[]`
+- `relations[]`
+- `meta_cards[]`
+- `inference_cards[]`
+- `law_cards[]`
+- `edges[]`
+- `workspace_state`
+- `agent_runs[]`
+
+## 4.4 API Request/Response Models
+
+- Case:
+- `GetCaseResponse`
+- `UpsertCaseResponse`
+- `ListCasesResponse`
+- `CaseListItem`
+- `UpdateCaseRequest`
+
+- Editing:
+- `UpdateCardRequest`
+- `UpdateWorkspaceRequest`
+
+- Agent:
+- `GenerateInferenceRequest`, `GenerateInferenceResponse`
+- `RouteRequest`, `RouteResponse`
+- `ExtractionRequest`, `ExtractionResponse`
+- `RelationRequest`, `RelationResponse`
+- `ReasoningRequest`, `ReasoningResponse`
+- `QARequest`, `QAResponse`
+- `InteractionRequest`, `InteractionResponse`
+- `InteractionTrackRequest`, `InteractionTrackResponse`
+- `UIAction`
+
+## 5. Local Run
+
+## 5.1 Backend
 
 ```bash
 cd backend
 python -m venv .venv
-# Windows
 .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 2) 启动前端
+## 5.2 Frontend
 
 ```bash
 cd frontend
@@ -71,29 +284,13 @@ npm install
 npm run dev
 ```
 
-访问：`http://localhost:5173`
+Frontend default URL: `http://localhost:5173`
 
-## 环境变量
+## 6. Integration Notes
 
-项目默认从根目录 `.env` 读取模型配置。常见变量：
+- For full-case upsert, use `POST /api/cases` with body `{ "case": CaseData }`.
+- For uploads, always use `multipart/form-data`.
+- When schema changes, update backend `schemas.py` first, then frontend API types.
 
-```bash
-GITHUB_TOKEN="<your_token>"
-GITHUB_ENDPOINT="https://models.github.ai/inference"
-GITHUB_MODEL_ID="openai/gpt-4o-mini"
-```
 
-也兼容 OpenAI 风格变量：
 
-```bash
-OPENAI_API_KEY="<your_key>"
-OPENAI_BASE_URL="<your_base_url>"
-OPENAI_MODEL="<model_name>"
-```
-
-## 当前状态说明
-
-- 目前是单案例模式（`current_case.json`）
-- 文件上传、解析、案例回写已联通
-- 前端画布视图与文件树联动已完成
-- `openclaw-integration/` 目录保留，但当前主流程不依赖 openclaw

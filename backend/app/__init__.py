@@ -1,1 +1,1 @@
-﻿"""Make backend/app a Python package."""
+"""Make backend/app a Python package."""

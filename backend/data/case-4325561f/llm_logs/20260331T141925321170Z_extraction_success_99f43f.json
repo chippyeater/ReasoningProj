@@ -1,0 +1,190 @@
+{
+  "timestamp": "2026-03-31T14:19:25.322856+00:00",
+  "stage": "extraction",
+  "mode": null,
+  "status": "success",
+  "message": "llm-extraction-success",
+  "request": {
+    "case_title": "MVP案件",
+    "file_ids": [
+      "file-06b00bee7b",
+      "file-16d4ace3c7",
+      "file-e256bb1ee8",
+      "file-31ebd1366e",
+      "file-3a4acd1eac"
+    ],
+    "context": "",
+    "raw_text": "",
+    "files": [
+      {
+        "file_id": "file-06b00bee7b",
+        "filename": "李某笔录.docx",
+        "file_type": "docx",
+        "parse_status": "parsed",
+        "content": "这个事情其实很简单，他就是提前退租了，这个在合同里面是写得很清楚的，提前退的话押金是不退的。\n他确实是说帮我找了下一个租客，但这个事情本来就是他自己的事情，因为他违约在先，我也没有要求他一定要帮我找人。\n而且中间其实还是有空了几天的，不是完全无缝衔接的，这段时间我这边也是有损失的。\n所以我觉得按合同来处理是没有问题的，押金不退也是合理的。"
+      },
+      {
+        "file_id": "file-16d4ace3c7",
+        "filename": "聊天记录（节选）.docx",
+        "file_type": "docx",
+        "parse_status": "parsed",
+        "content": "微信聊天记录（节选）\n2026-02-25\n张某：我这边工作有变动，可能要提前搬走\n李某：那你这个属于提前退租哦\n张某：嗯，我可以帮忙找下一个租客\n李某：你要是能找到人接着租，可以协商退你一部分押金\n---\n2026-03-01\n张某：我已经找到一个朋友愿意接着租\n李某：可以，到时候看情况再说\n---\n2026-03-05\n张某：我这周搬走了，押金什么时候退？\n李某：你是提前退租，押金不退的\n张某：之前不是说可以协商吗\n李某：那要看情况，我现在房子空着呢"
+      },
+      {
+        "file_id": "file-e256bb1ee8",
+        "filename": "张某笔录.docx",
+        "file_type": "docx",
+        "parse_status": "parsed",
+        "content": "我是在 3 月 5 号那天正式搬走的，当时房子我已经打扫干净了，也没有什么损坏的地方。\n其实我在 3 月初的时候就已经帮忙联系好了下一个租客，对方是我朋友，他 3 月 8 号就直接搬进去住了，后来也是跟房东重新签了合同。\n所以我觉得这个房子其实也没有空置多久，基本是无缝接上的。\n这种情况下，我理解房东应该不会有什么实际损失，所以我才觉得押金不应该被全部扣掉。"
+      },
+      {
+        "file_id": "file-31ebd1366e",
+        "filename": "转账记录.docx",
+        "file_type": "docx",
+        "parse_status": "parsed",
+        "content": "转账记录截图（文字转写）\n\n时间：2026-01-05 \n付款人：张某 \n收款人：李某 \n金额：2000 元 \n备注：房屋押金"
+      },
+      {
+        "file_id": "file-3a4acd1eac",
+        "filename": "租房合同.docx",
+        "file_type": "docx",
+        "parse_status": "parsed",
+        "content": "《房屋租赁合同》\n出租方（甲方）：李某\n承租方（乙方）：张某\n一、租赁信息\n1. 房屋地址：上海市杨浦区某小区 1 号楼 101 室\n2. 租赁期限：2026 年 1 月 5 日 至 2026 年 7 月 5 日\n二、费用\n1. 押金：人民币 2000 元\n2. 租金：每月 3000 元\n三、押金条款\n1. 租赁期满且无违约情况下，押金全额退还\n2. 若乙方提前退租，押金不予退还\n四、其他\n本合同自双方签字之日起生效\n甲方：李某\n乙方：张某\n签订时间：2026 年 1 月 5 日"
+      }
+    ]
+  },
+  "request_debug": {
+    "sent_sections": [
+      "case_title",
+      "file_ids",
+      "context",
+      "raw_text",
+      "files"
+    ],
+    "request_meta": {
+      "temperature": 0.2,
+      "model": "openai/gpt-4o-mini",
+      "base_url": "https://models.github.ai/inference"
+    }
+  },
+  "llm_response": {
+    "raw_reply": "{\n  \"core_issue\": \"押金是否应退还\",\n  \"issue_set\": [\n    \"押金是否应退还\",\n    \"是否存在实际损失\"\n  ],\n  \"info_units\": [\n    {\n      \"id\": \"info_1\",\n      \"type\": \"claim\",\n      \"subtype\": \"fact_assertion\",\n      \"subject_legal_type\": \"null\",\n      \"title\": \"合同条款说明\",\n      \"summary\": \"合同规定提前退租押金不退。\",\n      \"detail\": \"这个事情其实很简单，他就是提前退租了，这个在合同里面是写得很清楚的，提前退的话押金是不退的。\",\n      \"actor\": null,\n      \"target\": null,\n      \"speaker\": \"李某\",\n      \"side\": \"landlord\",\n      \"stance_target\": \"押金是否应退还\",\n      \"source_refs\": [\n        \"file-06b00bee7b\"\n      ],\n      \"confidence\": \"high\",\n      \"extraction_reason\": \"这是对合同条款的直接引用，明确了押金不退的条件。\",\n      \"evidence_quote\": \"这个在合同里面是写得很清楚的，提前退的话押金是不退的。\"\n    },\n    {\n      \"id\": \"info_2\",\n      \"type\": \"claim\",\n      \"subtype\": \"fact_assertion\",\n      \"subject_legal_type\": \"null\",\n      \"title\": \"损失说明\",\n      \"summary\": \"房东认为有损失。\",\n      \"detail\": \"而且中间其实还是有空了几天的，不是完全无缝衔接的，这段时间我这边也是有损失的。\",\n      \"actor\": null,\n      \"target\": null,\n      \"speaker\": \"李某\",\n      \"side\": \"landlord\",\n      \"stance_target\": \"是否存在实际损失\",\n      \"source_refs\": [\n        \"file-06b00bee7b\"\n      ],\n      \"confidence\": \"high\",\n      \"extraction_reason\": \"这是对房东损失的主张，涉及到合同履行的实际情况。\",\n      \"evidence_quote\": \"这段时间我这边也是有损失的。\"\n    },\n    {\n      \"id\": \"info_3\",\n      \"type\": \"claim\",\n      \"subtype\": \"fact_assertion\",\n      \"subject_legal_type\": \"null\",\n      \"title\": \"租客搬走时间\",\n      \"summary\": \"张某在3月5日搬走。\",\n      \"detail\": \"我是在 3 月 5 号那天正式搬走的，当时房子我已经打扫干净了，也没有什么损坏的地方。\",\n      \"actor\": null,\n      \"target\": null,\n      \"speaker\": \"张某\",\n      \"side\": \"tenant\",\n      \"stance_target\": \"押金是否应退还\",\n      \"source_refs\": [\n        \"file-e256bb1ee8\"\n      ],\n      \"confidence\": \"high\",\n      \"extraction_reason\": \"这是租客搬走的具体时间，影响押金退还的判断。\",\n      \"evidence_quote\": \"我是在 3 月 5 号那天正式搬走的。\"\n    },\n    {\n      \"id\": \"info_4\",\n      \"type\": \"claim\",\n      \"subtype\": \"fact_assertion\",\n      \"subject_legal_type\": \"null\",\n      \"title\": \"租客找到新租客\",\n      \"summary\": \"张某称已找到新租客。\",\n      \"detail\": \"其实我在 3 月初的时候就已经帮忙联系好了下一个租客，对方是我朋友，他 3 月 8 号就直接搬进去住了。\",\n      \"actor\": null,\n      \"target\": null,\n      \"speaker\": \"张某\",\n      \"side\": \"tenant\",\n      \"stance_target\": \"是否存在实际损失\",\n      \"source_refs\": [\n        \"file-e256bb1ee8\"\n      ],\n      \"confidence\": \"high\",\n      \"extraction_reason\": \"这是租客主张的找到新租客的情况，影响损失的判断。\",\n      \"evidence_quote\": \"其实我在 3 月初的时候就已经帮忙联系好了下一个租客。\"\n    },\n    {\n      \"id\": \"info_5\",\n      \"type\": \"event\",\n      \"subtype\": \"transaction\",\n      \"subject_legal_type\": \"null\",\n      \"title\": \"押金转账记录\",\n      \"summary\": \"张某支付了2000元押金。\",\n      \"detail\": \"转账记录显示张某于2026年1月5日向李某支付了2000元押金。\",\n      \"actor\": \"张某\",\n      \"target\": \"李某\",\n      \"speaker\": null,\n      \"side\": \"neutral\",\n      \"stance_target\": null,\n      \"source_refs\": [\n        \"file-31ebd1366e\"\n      ],\n      \"confidence\": \"high\",\n      \"extraction_reason\": \"这是押金支付的具体记录，涉及合同履行。\",\n      \"evidence_quote\": \"付款人：张某，收款人：李某，金额：2000 元，备注：房屋押金\"\n    }\n  ]\n}",
+    "parsed": {
+      "core_issue": "押金是否应退还",
+      "issue_set": [
+        "押金是否应退还",
+        "是否存在实际损失"
+      ],
+      "info_units": [
+        {
+          "id": "info_1",
+          "type": "claim",
+          "subtype": "fact_assertion",
+          "subject_legal_type": "null",
+          "title": "合同条款说明",
+          "summary": "合同规定提前退租押金不退。",
+          "detail": "这个事情其实很简单，他就是提前退租了，这个在合同里面是写得很清楚的，提前退的话押金是不退的。",
+          "actor": null,
+          "target": null,
+          "speaker": "李某",
+          "side": "landlord",
+          "stance_target": "押金是否应退还",
+          "source_refs": [
+            "file-06b00bee7b"
+          ],
+          "confidence": "high",
+          "extraction_reason": "这是对合同条款的直接引用，明确了押金不退的条件。",
+          "evidence_quote": "这个在合同里面是写得很清楚的，提前退的话押金是不退的。"
+        },
+        {
+          "id": "info_2",
+          "type": "claim",
+          "subtype": "fact_assertion",
+          "subject_legal_type": "null",
+          "title": "损失说明",
+          "summary": "房东认为有损失。",
+          "detail": "而且中间其实还是有空了几天的，不是完全无缝衔接的，这段时间我这边也是有损失的。",
+          "actor": null,
+          "target": null,
+          "speaker": "李某",
+          "side": "landlord",
+          "stance_target": "是否存在实际损失",
+          "source_refs": [
+            "file-06b00bee7b"
+          ],
+          "confidence": "high",
+          "extraction_reason": "这是对房东损失的主张，涉及到合同履行的实际情况。",
+          "evidence_quote": "这段时间我这边也是有损失的。"
+        },
+        {
+          "id": "info_3",
+          "type": "claim",
+          "subtype": "fact_assertion",
+          "subject_legal_type": "null",
+          "title": "租客搬走时间",
+          "summary": "张某在3月5日搬走。",
+          "detail": "我是在 3 月 5 号那天正式搬走的，当时房子我已经打扫干净了，也没有什么损坏的地方。",
+          "actor": null,
+          "target": null,
+          "speaker": "张某",
+          "side": "tenant",
+          "stance_target": "押金是否应退还",
+          "source_refs": [
+            "file-e256bb1ee8"
+          ],
+          "confidence": "high",
+          "extraction_reason": "这是租客搬走的具体时间，影响押金退还的判断。",
+          "evidence_quote": "我是在 3 月 5 号那天正式搬走的。"
+        },
+        {
+          "id": "info_4",
+          "type": "claim",
+          "subtype": "fact_assertion",
+          "subject_legal_type": "null",
+          "title": "租客找到新租客",
+          "summary": "张某称已找到新租客。",
+          "detail": "其实我在 3 月初的时候就已经帮忙联系好了下一个租客，对方是我朋友，他 3 月 8 号就直接搬进去住了。",
+          "actor": null,
+          "target": null,
+          "speaker": "张某",
+          "side": "tenant",
+          "stance_target": "是否存在实际损失",
+          "source_refs": [
+            "file-e256bb1ee8"
+          ],
+          "confidence": "high",
+          "extraction_reason": "这是租客主张的找到新租客的情况，影响损失的判断。",
+          "evidence_quote": "其实我在 3 月初的时候就已经帮忙联系好了下一个租客。"
+        },
+        {
+          "id": "info_5",
+          "type": "event",
+          "subtype": "transaction",
+          "subject_legal_type": "null",
+          "title": "押金转账记录",
+          "summary": "张某支付了2000元押金。",
+          "detail": "转账记录显示张某于2026年1月5日向李某支付了2000元押金。",
+          "actor": "张某",
+          "target": "李某",
+          "speaker": null,
+          "side": "neutral",
+          "stance_target": null,
+          "source_refs": [
+            "file-31ebd1366e"
+          ],
+          "confidence": "high",
+          "extraction_reason": "这是押金支付的具体记录，涉及合同履行。",
+          "evidence_quote": "付款人：张某，收款人：李某，金额：2000 元，备注：房屋押金"
+        }
+      ]
+    }
+  },
+  "debug": {
+    "error_code": 200,
+    "response_meta": {
+      "http_status": 200,
+      "provider_body_preview": "{\"choices\":[{\"content_filter_results\":{\"hate\":{\"filtered\":false,\"severity\":\"safe\"},\"protected_material_code\":{\"filtered\":false,\"detected\":false},\"protected_material_text\":{\"filtered\":false,\"detected\":false},\"self_harm\":{\"filtered\":false,\"severity\":\"safe\"},\"sexual\":{\"filtered\":false,\"severity\":\"safe\"},\"violence\":{\"filtered\":false,\"severity\":\"safe\"}},\"finish_reason\":\"stop\",\"index\":0,\"logprobs\":null,\"message\":{\"annotations\":[],\"content\":\"{\\n  \\\"core_issue\\\": \\\"押金是否应退还\\\",\\n  \\\"issue_set\\\": [\\n    \\\"押金是否应退还\\\",\\n    \\\"是否存在实际损失\\\"\\n  ],\\n  \\\"info_units\\\": [\\n    {\\n      \\\"id\\\": \\\"info_1\\\",\\n      \\\"type\\\": \\\"claim\\\",\\n      \\\"subtype\\\": \\\"fact_assertion\\\",\\n      \\\"subject_legal_type\\\": \\\"null\\\",\\n      \\\"title\\\": \\\"合同条款说明\\\",\\n      \\\"summary\\\": \\\"合同规定提前退租押金不退。\\\",\\n      \\\"detail\\\": \\\"这个事情其实很简单，他就是提前退租了，这个在合同里面是写得很清楚的，提前退的话押金是不退的。\\\",\\n      \\\"actor\\\": null,\\n      \\\"target\\\": null,\\n      \\\"speaker\\\": \\\"李某\\\",\\n      \\\"side\\\": \\\"landlord\\\",\\n      \\\"stance_target\\\": \\\"押金是否应退还\\\",\\n      \\\"source_refs\\\": [\\n        \\\"file-06b00bee7b\\\"\\n      ],\\n      \\\"confidence\\\": \\\"high\\\",\\n      \\\"extraction_reason\\\": \\\"这是对合同条款的直接引用，明确了押金不退的条件。\\\",\\n      \\\"evidence_quote\\\": \\\"这个在合同里面是写得很清楚的，提前退的话押金是不退的。\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"info_2\\\",\\n      \\\"type\\\": \\\"claim\\\",\\n      \\\"subtype\\\": \\\"fact_assertion\\\",\\n      \\\"subject_legal_type\\\": \\\"null\\\",\\n      \\\"title\\\": \\\"损失说明\\\",\\n      \\\"summary\\\": \\\"房东认为有损失。\\\",\\n      \\\"detail\\\": \\\"而且中间其实还是有空了几天的，不是完全无缝衔接的，这段时间我这边也是有损失的。\\\",\\n      \\\"actor\\\": null,\\n      \\\"target\\\": null,\\n      \\\"speaker\\\": \\\"李某\\\",\\n      \\\"side\\\": \\\"landlord\\\",\\n      \\\"stance_target\\\": \\\"是否存在实际损失\\\",\\n      \\\"source_refs\\\": [\\n        \\\"file-06b00bee7b\\\"\\n      ],\\n      \\\"confidence\\\": \\\"high\\\",\\n      \\\"extraction_reason\\\": \\\"这是对房东损失的主张，涉及到合同履行的实际情况。\\\",\\n      \\\"evidence_quote\\\": \\\"这段时间我这边也是有损失的。\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"info_3\\\",\\n      \\\"type\\\": \\\"claim\\\",\\n      \\\"subtype\\\": \\\"fact_assertion\\\",\\n      \\\"subject_legal_type\\\": \\\"null\\\",\\n      \\\"title\\\": \\\"租客搬走时间\\\",\\n      \\\"summary\\\": \\\"张某在3月5日搬走。\\\",\\n      \\\"detail\\\": \\\"我是在 3 月 5 号那天正式搬走的，当时房子我已经打扫干净了，也没有什么损坏的地方。\\\",\\n      \\\"actor\\\": null,\\n      \\\"target\\\": null,\\n      \\\"speaker\\\": \\\"张某\\\",\\n      \\\"side\\\": \\\"tenant\\\",\\n      \\\"stance_target\\\": \\\"押金是否应退还\\\",\\n      \\\"source_refs\\\": [\\n        \\\"file-e256bb1ee8\\\"\\n      ],\\n      \\\"confidence\\\": \\\"high\\\",\\n      \\\"extraction_reason\\\": \\\"这是租客搬走的具体时间，影响押金退还的判断。\\\",\\n      \\\"evidence_quote\\\": \\\"我是在 3 月 5 号那天正式搬走的。\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"info_4\\\",\\n      \\\"type\\\": \\\"claim\\\",\\n      \\\"subtype\\\": \\\"fact_assertion\\\",\\n      \\\"subject_legal_type\\\": \\\"null\\\",\\n      \\\"title\\\": \\\"租客找到新租客\\\",\\n      \\\"summary\\\": \\\"张某称已找到新租客。\\\",\\n      \\\"detail\\\": \\\"其实我在 3 月初的时候就已经帮忙联系好了下一个租客，对方是我朋友，他 3 月 8 号就直接搬进去住了。\\\",\\n      \\\"actor\\\": null,\\n      \\\"target\\\": null,\\n      \\\"speaker\\\": \\\"张某\\\",\\n      \\\"side\\\": \\\"tenant\\\",\\n      \\\"stance_target\\\": \\\"是否存在实际损失\\\",\\n      \\\"source_refs\\\": [\\n        \\\"file-e256bb1ee8\\\"\\n      ],\\n      \\\"confidence\\\": \\\"high\\\",\\n      \\\"extraction_reason\\\": \\\"这是租客主张的找到新租客的情况，影响损失的判断。\\\",\\n      \\\"evidence_quote\\\": \\\"其实我在 3 月初的时候就已经帮忙联系好了下一个租客。\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"info_5\\\",\\n      \\\"type\\\": \\\"event\\\",\\n      \\\"subtype\\\": \\\"transaction\\\",\\n      \\\"subject_legal_type\\\": \\\"null\\\",\\n      \\\"title\\\": \\\"押金转账记录\\\",\\n      \\\"summary\\\": \\\"张某支付了2000元押金。\\\",\\n      \\\"detail\\\": \\\"转账记录显示张某于2026年1月5日向李某支付了2000元押金。\\\",\\n      \\\"actor\\\": \\\"张某\\\",\\n      \\\"target\\\": \\\"李某\\\",\\n      \\\"speaker\\\": null,\\n      \\\"side\\\": \\\"neutral\\\",\\n      \\\"stance_target\\\": null,\\n      \\\"source_refs\\\": [\\n        \\\"file-31ebd1366e\\\"\\n      ],\\n      \\\"confidence\\\": \\\"high\\\",\\n      \\\"extraction_reason\\\": \\\"这是押金支付的具体记录，涉及合同履行。\\\",\\n      \\\"evidence_quote\\\": \\\"付款人：张某，收款人：李某，金额：2000 元，备注：房屋押金\\\"\\n    }\\n  ]\\n}\",\"refusal\":null,\"role\":\"assistant\"}}],\"created\":1774966750,\"id\":\"chatcmpl-DPUDuvfqGKjs4XThtneedgeNu31HD\",\"model\":\"gpt-4o-mini-2024-07-18\",\"object\":\"chat.completion\",\"prompt_filter_results\":[{\"prompt_index\":0,\"content_filter_res"
+    },
+    "info_unit_count": 5
+  }
+}

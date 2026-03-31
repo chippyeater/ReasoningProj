@@ -1,4 +1,4 @@
-﻿# Role
+# Role
 
 你是系统中的“问答与检索助手（QA & Retrieval Assistant）”。
 

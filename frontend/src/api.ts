@@ -2,19 +2,7 @@
 
 export type FileType = "pdf" | "docx" | "image" | "txt" | "markdown" | "other";
 export type FileParseStatus = "pending" | "parsing" | "parsed" | "failed";
-export type CardType = "meta" | "inference";
-export type MetaType =
-  | "person"
-  | "organization"
-  | "location"
-  | "time"
-  | "object"
-  | "account"
-  | "document"
-  | "event"
-  | "claim"
-  | "law"
-  | "other";
+export type CardType = "meta" | "inference" | "law";
 export type InferenceType =
   | "hypothesis"
   | "conclusion"
@@ -33,8 +21,48 @@ export type EdgeType =
   | "conflicts_with"
   | "missing_for"
   | "cites"
-  | "belongs_to";
+  | "belongs_to"
+  | "grounded_in"
+  | "applies_to"
+  | "retrieved_for";
 export type ViewMode = "panorama" | "reasoning" | "detail";
+
+
+export type InfoUnitType = "subject" | "event" | "state" | "claim";
+export type InfoUnitSubtype =
+  | "person"
+  | "organization"
+  | "legal_act"
+  | "factual_act"
+  | "transaction"
+  | "communication"
+  | "violation"
+  | "temporal"
+  | "physical_state"
+  | "usage_state"
+  | "fact_assertion"
+  | "legal_assertion"
+  | "defense";
+
+export type SubjectLegalType = "natural_person" | "legal_person" | "unincorporated_org";
+export type NormSourceType = "statute" | "judicial_interpretation" | "local_regulation" | "guideline" | "case_rule" | "other";
+export type NormLevel = "constitution" | "law" | "administrative_regulation" | "local_regulation" | "judicial_interpretation" | "normative_document" | "other";
+
+export type InfoUnit = {
+  id: string;
+  type: InfoUnitType;
+  subtype: InfoUnitSubtype;
+  subject_legal_type?: SubjectLegalType | null;
+  title: string;
+  summary: string;
+  detail: string;
+  source_refs: string[];
+  confidence: "high" | "medium" | "low";
+  extraction_reason: string;
+  evidence_quote: string;
+  created_at: string;
+  updated_at: string;
+};
 
 export type CaseFile = {
   file_id: string;
@@ -70,13 +98,12 @@ export type MetaCard = {
   source_file_ids: string[];
   created_at: string;
   updated_at: string;
-  meta_type: MetaType;
+  info_type: InfoUnitType;
+  info_subtype: InfoUnitSubtype;
   detail: {
     name?: string | null;
-    aliases: string[];
     description?: string | null;
     attributes: Record<string, unknown>;
-    image_urls: string[];
     tags: string[];
   };
 };
@@ -103,7 +130,34 @@ export type InferenceCard = {
     missing_card_ids: string[];
     confidence?: number | null;
     legal_basis_ids: string[];
-    notes?: string | null;
+  };
+};
+
+
+export type LawCard = {
+  id: string;
+  card_type: "law";
+  title: string;
+  summary?: string | null;
+  display_level: 1 | 2 | 3;
+  status: "active" | "hidden" | "archived";
+  position: CardPosition;
+  ui_state: CardUIState;
+  source_file_ids: string[];
+  created_at: string;
+  updated_at: string;
+  source_type: NormSourceType;
+  norm_level: NormLevel;
+  detail: {
+    source_type: NormSourceType;
+    norm_level: NormLevel;
+    article_no?: string | null;
+    title_full: string;
+    effective_status?: string | null;
+    source_url?: string | null;
+    keywords: string[];
+    text?: string | null;
+    source_info_unit_ids: string[];
   };
 };
 
@@ -112,6 +166,7 @@ export type GraphEdge = {
   source: string;
   target: string;
   edge_type: EdgeType;
+  relation_type?: string | null;
   label?: string | null;
   weight?: number | null;
   created_at: string;
@@ -136,8 +191,10 @@ export type CaseData = {
   created_at: string;
   updated_at: string;
   files: CaseFile[];
+  info_units: InfoUnit[];
   meta_cards: MetaCard[];
   inference_cards: InferenceCard[];
+  law_cards: LawCard[];
   edges: GraphEdge[];
   workspace_state: WorkspaceState;
 };
@@ -162,6 +219,29 @@ export type GenerateInferenceMode = "hypothesis" | "conclusion" | "conflict_chec
 export type GenerateInferenceResponse = {
   success: boolean;
   new_inference_cards: InferenceCard[];
+  new_edges: GraphEdge[];
+  updated_workspace_state?: WorkspaceState | null;
+  message?: string | null;
+};
+
+export type LawRetrieveIntent =
+  | "support_conflict_resolution"
+  | "retrieve_for_conclusion"
+  | "validate_conflict_basis";
+
+export type LawRetrieveRequest = {
+  case_id: string;
+  conflict_card_id: string;
+  selected_card_ids?: string[];
+  intent?: LawRetrieveIntent;
+  query_hint?: string | null;
+  max_results?: number;
+};
+
+export type LawRetrieveResponse = {
+  success: boolean;
+  conflict_card_id: string;
+  new_law_cards: LawCard[];
   new_edges: GraphEdge[];
   updated_workspace_state?: WorkspaceState | null;
   message?: string | null;
@@ -285,6 +365,16 @@ export async function generateInference(
   );
 }
 
+export async function retrieveLaw(payload: LawRetrieveRequest): Promise<LawRetrieveResponse> {
+  return readJson<LawRetrieveResponse>(
+    await fetch(`${API_BASE}/api/law/retrieve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
 export type WorkspacePatch = {
   current_view?: ViewMode;
   selected_card_ids?: string[];
@@ -321,6 +411,20 @@ export async function updateCardPosition(
   );
 }
 
+
+export async function updateCardDisplayLevel(
+  caseId: string,
+  cardId: string,
+  displayLevel: 1 | 2 | 3
+): Promise<{ case: CaseData }> {
+  return readJson<{ case: CaseData }>(
+    await fetch(`${API_BASE}/api/cases/${caseId}/cards/${cardId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ display_level: displayLevel }),
+    })
+  );
+}
 export type InteractionTrackPayload = {
   case_id: string;
   action: string;
@@ -369,7 +473,7 @@ export type ExtractionRunRequest = {
 
 export type ExtractionRunResponse = {
   success: boolean;
-  info_units: Array<Record<string, unknown>>;
+  info_units: InfoUnit[];
   message?: string | null;
 };
 
@@ -490,3 +594,8 @@ export async function actInteraction(payload: InteractionActRequest): Promise<In
     })
   );
 }
+
+
+
+
+

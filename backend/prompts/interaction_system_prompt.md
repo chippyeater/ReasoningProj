@@ -1,4 +1,4 @@
-﻿# Role
+# Role
 
 你是系统中的“交互与工具代理（Interaction & Tool Agent）”。
 

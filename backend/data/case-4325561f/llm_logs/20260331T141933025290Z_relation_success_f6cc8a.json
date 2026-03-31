@@ -1,0 +1,152 @@
+{
+  "timestamp": "2026-03-31T14:19:33.025485+00:00",
+  "stage": "relation",
+  "mode": null,
+  "status": "success",
+  "message": "llm-relation-success",
+  "request": {
+    "case_title": "MVP案件",
+    "info_unit_ids": [
+      "info_1",
+      "info_2",
+      "info_3",
+      "info_4",
+      "info_5"
+    ],
+    "info_units": [
+      {
+        "id": "info_1",
+        "type": "claim",
+        "subtype": "fact_assertion",
+        "subject_legal_type": null,
+        "title": "合同条款说明",
+        "summary": "合同规定提前退租押金不退。",
+        "detail": "这个事情其实很简单，他就是提前退租了，这个在合同里面是写得很清楚的，提前退的话押金是不退的。",
+        "source_refs": [
+          "file-06b00bee7b"
+        ],
+        "evidence_quote": "这个在合同里面是写得很清楚的，提前退的话押金是不退的。"
+      },
+      {
+        "id": "info_2",
+        "type": "claim",
+        "subtype": "fact_assertion",
+        "subject_legal_type": null,
+        "title": "损失说明",
+        "summary": "房东认为有损失。",
+        "detail": "而且中间其实还是有空了几天的，不是完全无缝衔接的，这段时间我这边也是有损失的。",
+        "source_refs": [
+          "file-06b00bee7b"
+        ],
+        "evidence_quote": "这段时间我这边也是有损失的。"
+      },
+      {
+        "id": "info_3",
+        "type": "claim",
+        "subtype": "fact_assertion",
+        "subject_legal_type": null,
+        "title": "租客搬走时间",
+        "summary": "张某在3月5日搬走。",
+        "detail": "我是在 3 月 5 号那天正式搬走的，当时房子我已经打扫干净了，也没有什么损坏的地方。",
+        "source_refs": [
+          "file-e256bb1ee8"
+        ],
+        "evidence_quote": "我是在 3 月 5 号那天正式搬走的。"
+      },
+      {
+        "id": "info_4",
+        "type": "claim",
+        "subtype": "fact_assertion",
+        "subject_legal_type": null,
+        "title": "租客找到新租客",
+        "summary": "张某称已找到新租客。",
+        "detail": "其实我在 3 月初的时候就已经帮忙联系好了下一个租客，对方是我朋友，他 3 月 8 号就直接搬进去住了。",
+        "source_refs": [
+          "file-e256bb1ee8"
+        ],
+        "evidence_quote": "其实我在 3 月初的时候就已经帮忙联系好了下一个租客。"
+      },
+      {
+        "id": "info_5",
+        "type": "event",
+        "subtype": "transaction",
+        "subject_legal_type": null,
+        "title": "押金转账记录",
+        "summary": "张某支付了2000元押金。",
+        "detail": "转账记录显示张某于2026年1月5日向李某支付了2000元押金。",
+        "source_refs": [
+          "file-31ebd1366e"
+        ],
+        "evidence_quote": "付款人：张某，收款人：李某，金额：2000 元，备注：房屋押金"
+      }
+    ]
+  },
+  "request_debug": {
+    "sent_sections": [
+      "case_title",
+      "info_unit_ids",
+      "info_units"
+    ],
+    "request_meta": {
+      "temperature": 0.2,
+      "model": "openai/gpt-4o-mini",
+      "base_url": "https://models.github.ai/inference"
+    }
+  },
+  "llm_response": {
+    "raw_reply": "{\n  \"relations\": [\n    {\n      \"id\": \"rel_1\",\n      \"source_id\": \"info_1\",\n      \"target_id\": \"info_5\",\n      \"relation_type\": \"about\",\n      \"confidence\": \"high\",\n      \"certainty_level\": \"explicit\",\n      \"evidence_basis\": \"这个在合同里面是写得很清楚的，提前退的话押金是不退的。\",\n      \"rationale\": \"该观点明确描述了合同条款与押金的关系。\"\n    },\n    {\n      \"id\": \"rel_2\",\n      \"source_id\": \"info_2\",\n      \"target_id\": \"info_5\",\n      \"relation_type\": \"support\",\n      \"confidence\": \"high\",\n      \"certainty_level\": \"explicit\",\n      \"evidence_basis\": \"这段时间我这边也是有损失的。\",\n      \"rationale\": \"房东的损失说明支持了押金不退的观点。\"\n    },\n    {\n      \"id\": \"rel_3\",\n      \"source_id\": \"info_3\",\n      \"target_id\": \"info_4\",\n      \"relation_type\": \"support\",\n      \"confidence\": \"high\",\n      \"certainty_level\": \"explicit\",\n      \"evidence_basis\": \"我是在 3 月 5 号那天正式搬走的。\",\n      \"rationale\": \"租客搬走时间与找到新租客的时间相关联。\"\n    },\n    {\n      \"id\": \"rel_4\",\n      \"source_id\": \"info_4\",\n      \"target_id\": \"info_5\",\n      \"relation_type\": \"support\",\n      \"confidence\": \"high\",\n      \"certainty_level\": \"explicit\",\n      \"evidence_basis\": \"其实我在 3 月初的时候就已经帮忙联系好了下一个租客。\",\n      \"rationale\": \"租客找到新租客的声明支持了押金的支付记录。\"\n    }\n  ]\n}",
+    "parsed": {
+      "relations": [
+        {
+          "id": "rel_1",
+          "source_id": "info_1",
+          "target_id": "info_5",
+          "relation_type": "about",
+          "confidence": "high",
+          "certainty_level": "explicit",
+          "evidence_basis": "这个在合同里面是写得很清楚的，提前退的话押金是不退的。",
+          "rationale": "该观点明确描述了合同条款与押金的关系。"
+        },
+        {
+          "id": "rel_2",
+          "source_id": "info_2",
+          "target_id": "info_5",
+          "relation_type": "support",
+          "confidence": "high",
+          "certainty_level": "explicit",
+          "evidence_basis": "这段时间我这边也是有损失的。",
+          "rationale": "房东的损失说明支持了押金不退的观点。"
+        },
+        {
+          "id": "rel_3",
+          "source_id": "info_3",
+          "target_id": "info_4",
+          "relation_type": "support",
+          "confidence": "high",
+          "certainty_level": "explicit",
+          "evidence_basis": "我是在 3 月 5 号那天正式搬走的。",
+          "rationale": "租客搬走时间与找到新租客的时间相关联。"
+        },
+        {
+          "id": "rel_4",
+          "source_id": "info_4",
+          "target_id": "info_5",
+          "relation_type": "support",
+          "confidence": "high",
+          "certainty_level": "explicit",
+          "evidence_basis": "其实我在 3 月初的时候就已经帮忙联系好了下一个租客。",
+          "rationale": "租客找到新租客的声明支持了押金的支付记录。"
+        }
+      ]
+    }
+  },
+  "debug": {
+    "error_code": 200,
+    "response_meta": {
+      "http_status": 200,
+      "provider_body_preview": "{\"choices\":[{\"content_filter_results\":{\"hate\":{\"filtered\":false,\"severity\":\"safe\"},\"protected_material_code\":{\"filtered\":false,\"detected\":false},\"protected_material_text\":{\"filtered\":false,\"detected\":false},\"self_harm\":{\"filtered\":false,\"severity\":\"safe\"},\"sexual\":{\"filtered\":false,\"severity\":\"safe\"},\"violence\":{\"filtered\":false,\"severity\":\"safe\"}},\"finish_reason\":\"stop\",\"index\":0,\"logprobs\":null,\"message\":{\"annotations\":[],\"content\":\"{\\n  \\\"relations\\\": [\\n    {\\n      \\\"id\\\": \\\"rel_1\\\",\\n      \\\"source_id\\\": \\\"info_1\\\",\\n      \\\"target_id\\\": \\\"info_5\\\",\\n      \\\"relation_type\\\": \\\"about\\\",\\n      \\\"confidence\\\": \\\"high\\\",\\n      \\\"certainty_level\\\": \\\"explicit\\\",\\n      \\\"evidence_basis\\\": \\\"这个在合同里面是写得很清楚的，提前退的话押金是不退的。\\\",\\n      \\\"rationale\\\": \\\"该观点明确描述了合同条款与押金的关系。\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"rel_2\\\",\\n      \\\"source_id\\\": \\\"info_2\\\",\\n      \\\"target_id\\\": \\\"info_5\\\",\\n      \\\"relation_type\\\": \\\"support\\\",\\n      \\\"confidence\\\": \\\"high\\\",\\n      \\\"certainty_level\\\": \\\"explicit\\\",\\n      \\\"evidence_basis\\\": \\\"这段时间我这边也是有损失的。\\\",\\n      \\\"rationale\\\": \\\"房东的损失说明支持了押金不退的观点。\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"rel_3\\\",\\n      \\\"source_id\\\": \\\"info_3\\\",\\n      \\\"target_id\\\": \\\"info_4\\\",\\n      \\\"relation_type\\\": \\\"support\\\",\\n      \\\"confidence\\\": \\\"high\\\",\\n      \\\"certainty_level\\\": \\\"explicit\\\",\\n      \\\"evidence_basis\\\": \\\"我是在 3 月 5 号那天正式搬走的。\\\",\\n      \\\"rationale\\\": \\\"租客搬走时间与找到新租客的时间相关联。\\\"\\n    },\\n    {\\n      \\\"id\\\": \\\"rel_4\\\",\\n      \\\"source_id\\\": \\\"info_4\\\",\\n      \\\"target_id\\\": \\\"info_5\\\",\\n      \\\"relation_type\\\": \\\"support\\\",\\n      \\\"confidence\\\": \\\"high\\\",\\n      \\\"certainty_level\\\": \\\"explicit\\\",\\n      \\\"evidence_basis\\\": \\\"其实我在 3 月初的时候就已经帮忙联系好了下一个租客。\\\",\\n      \\\"rationale\\\": \\\"租客找到新租客的声明支持了押金的支付记录。\\\"\\n    }\\n  ]\\n}\",\"refusal\":null,\"role\":\"assistant\"}}],\"created\":1774966766,\"id\":\"chatcmpl-DPUEA98Rnb8JBUWOhl0zt57DZ47NA\",\"model\":\"gpt-4o-mini-2024-07-18\",\"object\":\"chat.completion\",\"prompt_filter_results\":[{\"prompt_index\":0,\"content_filter_results\":{\"hate\":{\"filtered\":false,\"severity\":\"safe\"},\"jailbreak\":{\"filtered\":false,\"detected\":false},\"self_harm\":{\"filtered\":false,\"severity\":\"safe\"},\"sexual\":{\"filtered\":false,\"severity\":\"safe\"},\"violence\":{\"filtered\":false,\"severity\":\"safe\"}}}],\"system_fingerprint\":\"fp_eb37e061ec\",\"usage\":{\"completion_tokens\":418,\"completion_tokens_details\":{\"accepted_prediction_tokens\":0,\"audio_tokens\":0,\"reasoning_tokens\":0,\"rejected_prediction_tokens\":0},\"prompt_tokens\":1876,\"prompt_tokens_details\":{\"audio_tokens\":0,\"cached_tokens\":0},\"total_tokens\":2294}}\n"
+    },
+    "relation_count": 4,
+    "edge_count": 4
+  }
+}

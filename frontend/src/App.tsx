@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   createCase,
   appendFilesToCase,
@@ -15,11 +15,13 @@ import {
   actInteraction,
   renameCase,
   updateCardPosition,
+  updateCardDisplayLevel,
   updateWorkspaceState,
   trackInteraction,
   type CaseData,
   type CaseSummary,
-  type MetaType,
+  type InferenceCard,
+  type InfoUnitType,
 } from "./api";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
@@ -52,28 +54,59 @@ type AddedEvidence = {
   file: File;
 };
 
-type CanvasKind = "person" | "org" | "object" | "event" | "claim" | "evidence";
+type CanvasKind = "person" | "org" | "object" | "event" | "claim" | "law" | "evidence";
+
+type CanvasDetailField = {
+  key: string;
+  value: string;
+};
 
 type CanvasNode = {
   id: string;
   label: string;
   meta: string;
+  actionLabel?: string;
+  detailFields: CanvasDetailField[];
   kind: CanvasKind;
-  source: "meta" | "inference" | "evidence";
+  source: "meta" | "inference" | "law" | "evidence" | "placeholder";
   level: 1 | 2 | 3;
+  state?: "normal" | "missing";
+  semanticRole?: "default" | "conflict";
+  conflictDetail?: ConflictDetail;
   x: number;
   y: number;
+};
+
+type ConflictNodeState = "candidate" | "pending" | "conclusion" | "muted";
+
+type ConflictReferenceItem = {
+  id: string;
+  title: string;
+  meta: string;
+};
+
+type ConflictDetail = {
+  state: ConflictNodeState;
+  stateLabel: string;
+  decisionLabel: string;
+  claim: string;
+  confidenceLabel: string | null;
+  supportItems: ConflictReferenceItem[];
+  opposeItems: ConflictReferenceItem[];
+  missingItems: ConflictReferenceItem[];
+  reasoningSteps: string[];
 };
 
 type CanvasEdge = {
   id: string;
   sourceId: string;
   targetId: string;
-  label: string;
+  relationType: string;
   strength: number;
 };
 
 type Point = { x: number; y: number };
+type NodeSize = { width: number; height: number };
 
 type FileTreeItem = {
   id: string;
@@ -88,10 +121,35 @@ const CANVAS_WIDTH = 3200;
 const CANVAS_HEIGHT = 2200;
 const NODE_WIDTH = 230;
 const NODE_HEIGHT = 120;
-const ISLAND_WIDTH = 422;
-const ISLAND_HEIGHT = 38;
+const DEFAULT_NODE_SIZE: NodeSize = { width: NODE_WIDTH, height: NODE_HEIGHT };
+const ISLAND_WIDTH = 350;
+const ISLAND_MIN_HEIGHT = 38;
+const ISLAND_MAX_INPUT_HEIGHT = 120;
 const ISLAND_PADDING = 8;
 const ISLAND_BOTTOM_DOCK_THRESHOLD = 28;
+function clampViewport(point: Point, viewportWidth: number, viewportHeight: number): Point {
+  const centeredX = Math.max(0, (viewportWidth - CANVAS_WIDTH) / 2);
+  const centeredY = Math.max(0, (viewportHeight - CANVAS_HEIGHT) / 2);
+  const minX = viewportWidth >= CANVAS_WIDTH ? centeredX : viewportWidth - CANVAS_WIDTH;
+  const maxX = viewportWidth >= CANVAS_WIDTH ? centeredX : 0;
+  const minY = viewportHeight >= CANVAS_HEIGHT ? centeredY : viewportHeight - CANVAS_HEIGHT;
+  const maxY = viewportHeight >= CANVAS_HEIGHT ? centeredY : 0;
+  return {
+    x: Math.min(maxX, Math.max(minX, point.x)),
+    y: Math.min(maxY, Math.max(minY, point.y)),
+  };
+}
+
+function clampViewportToWrapper(point: Point, wrapper: HTMLDivElement | null): Point {
+  if (!wrapper) return point;
+  const rect = wrapper.getBoundingClientRect();
+  return clampViewport(point, rect.width, rect.height);
+}
+
+function stepDisplayLevel(currentLevel: 1 | 2 | 3, direction: "up" | "down"): 1 | 2 | 3 {
+  if (direction === "up") return currentLevel === 1 ? 2 : currentLevel === 2 ? 3 : 3;
+  return currentLevel === 3 ? 2 : currentLevel === 2 ? 1 : 1;
+}
 
 function inferType(file: File): "document" | "image" | "video" | "audio" {
   if (file.type.startsWith("image/")) return "image";
@@ -117,18 +175,177 @@ function parseStatusLabel(status?: string) {
   return "unknown";
 }
 
-function kindFromMetaType(type: MetaType): CanvasKind {
-  if (type === "person") return "person";
-  if (type === "organization") return "org";
+function kindFromInfoType(type: InfoUnitType): CanvasKind {
   if (type === "event") return "event";
   if (type === "claim") return "claim";
+  if (type === "subject") return "person";
   return "object";
 }
 
+
+function infoTypeLabel(type: InfoUnitType): string {
+  if (type === "subject") return "主体";
+  if (type === "event") return "事件";
+  if (type === "state") return "状态";
+  if (type === "claim") return "主张";
+  return type;
+}
+
+function conflictDecisionLabel(decision: InferenceCard["decision"]): string {
+  if (decision === "accepted") return "已形成结论";
+  if (decision === "rejected") return "已排除";
+  if (decision === "pending") return "待确认";
+  return "候选冲突";
+}
+
+function conflictNodeState(card: InferenceCard): ConflictNodeState {
+  if (card.status !== "active") return "muted";
+  if (card.decision === "accepted" || card.decision === "rejected") return "conclusion";
+  if (card.decision === "pending") return "pending";
+  return "candidate";
+}
+
+function conflictStateLabel(state: ConflictNodeState): string {
+  if (state === "conclusion") return "结论态";
+  if (state === "pending") return "待确认";
+  if (state === "muted") return "灰态";
+  return "候选态";
+}
+
+function formatConflictConfidence(confidence?: number | null): string | null {
+  if (confidence === null || confidence === undefined || Number.isNaN(confidence)) return null;
+  const normalized = confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence);
+  return `置信度 ${normalized}%`;
+}
+
+function resolveConflictReference(caseData: CaseData, cardId: string): ConflictReferenceItem {
+  const normalizedId = cardId.trim();
+  const metaCard = caseData.meta_cards.find((card) => card.id === normalizedId);
+  if (metaCard) {
+    return {
+      id: normalizedId,
+      title: metaCard.title,
+      meta: firstLine(metaCard.summary || metaCard.detail.description || infoTypeLabel(metaCard.info_type)) || "元信息",
+    };
+  }
+
+  const inferenceCard = caseData.inference_cards.find((card) => card.id === normalizedId);
+  if (inferenceCard) {
+    return {
+      id: normalizedId,
+      title: inferenceCard.title,
+      meta: firstLine(inferenceCard.detail.claim || conflictDecisionLabel(inferenceCard.decision)) || "推理",
+    };
+  }
+
+  const lawCard = caseData.law_cards.find((card) => card.id === normalizedId);
+  if (lawCard) {
+    return {
+      id: normalizedId,
+      title: lawCard.title,
+      meta: firstLine(lawCard.detail.text || lawCard.source_type) || "法条",
+    };
+  }
+
+  return {
+    id: normalizedId,
+    title: "待补充证据",
+    meta: normalizedId,
+  };
+}
+
+function buildConflictDetail(caseData: CaseData, card: InferenceCard): ConflictDetail {
+  const state = conflictNodeState(card);
+  return {
+    state,
+    stateLabel: conflictStateLabel(state),
+    decisionLabel: conflictDecisionLabel(card.decision),
+    claim: firstLine(card.detail.claim) || firstLine(card.summary || undefined) || card.title,
+    confidenceLabel: formatConflictConfidence(card.detail.confidence),
+    supportItems: card.detail.supporting_card_ids.map((id) => resolveConflictReference(caseData, id)),
+    opposeItems: card.detail.opposing_card_ids.map((id) => resolveConflictReference(caseData, id)),
+    missingItems: card.detail.missing_card_ids.map((id) => resolveConflictReference(caseData, id)),
+    reasoningSteps: card.detail.reasoning_steps.map((step) => step.trim()).filter(Boolean),
+  };
+}
+
+function findMatchedInfoUnit(caseData: CaseData, card: CaseData["meta_cards"][number]) {
+  const exact = caseData.info_units.find(
+    (unit) => unit.type === card.info_type && unit.subtype === card.info_subtype && unit.title === card.title,
+  );
+  if (exact) return exact;
+
+  const byTypeAndTitle = caseData.info_units.find(
+    (unit) => unit.type === card.info_type && unit.title === card.title,
+  );
+  if (byTypeAndTitle) return byTypeAndTitle;
+
+  return caseData.info_units.find((unit) => unit.title === card.title);
+}
+
+function formatDetailValue(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((item) => formatDetailValue(item))
+      .filter((item): item is string => Boolean(item));
+    if (parts.length === 0) return null;
+    return parts.join(", ");
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => {
+        const normalized = formatDetailValue(v);
+        if (!normalized) return null;
+        return `${k}=${normalized}`;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (entries.length === 0) return null;
+    return entries.join(", ");
+  }
+  return null;
+}
+
+function buildDetailFields(fields: Array<[string, unknown]>): CanvasDetailField[] {
+  return fields
+    .map(([key, raw]) => {
+      const value = formatDetailValue(raw);
+      if (!value) return null;
+      return { key, value };
+    })
+    .filter((item): item is CanvasDetailField => Boolean(item));
+}
+
 function edgeStrength(edgeType: string) {
-  if (edgeType === "supports") return 3;
-  if (edgeType === "opposes" || edgeType === "conflicts_with") return 2;
+  if (edgeType === "supports" || edgeType === "grounded_in" || edgeType === "retrieved_for") return 3;
+  if (edgeType === "opposes" || edgeType === "conflicts_with" || edgeType === "missing_for") return 2;
   return 1;
+}
+
+function edgeTypeLabel(edgeType: string, fallback?: string | null) {
+  if (fallback && fallback.trim()) return fallback;
+  const labels: Record<string, string> = {
+    relates_to: "\u76f8\u5173",
+    supports: "\u652f\u6301",
+    opposes: "\u53cd\u9a73",
+    derives: "\u63a8\u5bfc",
+    mentions: "\u63d0\u53ca",
+    conflicts_with: "\u51b2\u7a81",
+    missing_for: "\u7f3a\u5931\u4e8e",
+    cites: "\u5f15\u7528",
+    belongs_to: "\u5c5e\u4e8e",
+    grounded_in: "\u4f9d\u636e\u4e8e",
+    applies_to: "\u9002\u7528\u4e8e",
+    retrieved_for: "\u4e3a\u6b64\u68c0\u7d22",
+  };
+  return labels[edgeType] ?? edgeType;
 }
 
 function readableBytes(size: number) {
@@ -175,6 +392,25 @@ function pickFileIcon(type: "document" | "image", fileName: string) {
   return docIcon;
 }
 
+function inferGenerateModeFromPrompt(
+  prompt: string,
+): "hypothesis" | "conflict_check" | "missing_evidence" {
+  const normalized = prompt.trim().toLowerCase();
+  if (!normalized) return "hypothesis";
+
+  const hasKeyword = (keywords: string[]) => keywords.some((keyword) => normalized.includes(keyword));
+
+  if (hasKeyword(["\u51b2\u7a81", "\u77db\u76fe", "\u5bf9\u6bd4", "\u6bd4\u8f83", "\u51b2\u7a81\u89c6\u56fe", "conflict", "contradict", "oppose"])) {
+    return "conflict_check";
+  }
+
+  if (hasKeyword(["\u7f3a\u5931", "\u5f85\u9a8c\u8bc1", "\u8865\u8bc1", "\u8bc1\u636e\u4e0d\u8db3", "\u5f85\u8865", "missing", "lack", "insufficient"])) {
+    return "missing_evidence";
+  }
+
+  return "hypothesis";
+}
+
 export default function App() {
   const [evidences, setEvidences] = useState<AddedEvidence[]>([]);
   const [currentCase, setCurrentCase] = useState<CaseData | null>(null);
@@ -185,6 +421,7 @@ export default function App() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStage, setUploadStage] = useState<"idle" | "uploading">("idle");
@@ -193,17 +430,19 @@ export default function App() {
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [caseMenuOpen, setCaseMenuOpen] = useState(false);
 
-  const [transform, setTransform] = useState({ x: 240, y: 110, scale: 0.9 });
+  const [transform, setTransform] = useState({ x: 0, y: 0 });
   const [nodePositions, setNodePositions] = useState<Record<string, Point>>({});
+  const [nodeSizes, setNodeSizes] = useState<Record<string, NodeSize>>({});
 
   const [island, setIsland] = useState({ visible: false, x: 20, y: 20, text: "" });
+  const [islandHeight, setIslandHeight] = useState(ISLAND_MIN_HEIGHT);
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const nodeElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const caseSelectorRef = useRef<HTMLDivElement | null>(null);
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadAbortRef = useRef<AbortController | null>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const workspaceSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectionSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const panStateRef = useRef<{ active: boolean; startMouseX: number; startMouseY: number; startX: number; startY: number }>({
@@ -220,12 +459,35 @@ export default function App() {
   const dragRafRef = useRef<number | null>(null);
   const pendingPanRef = useRef<{ x: number; y: number } | null>(null);
   const panRafRef = useRef<number | null>(null);
-  const dragOverlayRef = useRef<HTMLDivElement | null>(null);
   const dragPreviewPointRef = useRef<Point | null>(null);
+  const islandContainerRef = useRef<HTMLDivElement | null>(null);
+  const islandInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const islandHeightRef = useRef(ISLAND_MIN_HEIGHT);
 
   useEffect(() => {
     transformRef.current = transform;
   }, [transform]);
+
+  useEffect(() => {
+    islandHeightRef.current = islandHeight;
+  }, [islandHeight]);
+
+  useEffect(() => {
+    const input = islandInputRef.current;
+    if (!input) return;
+    input.style.height = "auto";
+    const nextHeight = Math.min(ISLAND_MAX_INPUT_HEIGHT, Math.max(20, input.scrollHeight));
+    input.style.height = `${nextHeight}px`;
+  }, [island.text, island.visible]);
+
+  useEffect(() => {
+    const islandEl = islandContainerRef.current;
+    if (!islandEl || !island.visible) return;
+    const nextHeight = Math.max(ISLAND_MIN_HEIGHT, islandEl.offsetHeight);
+    if (nextHeight !== islandHeightRef.current) {
+      setIslandHeight(nextHeight);
+    }
+  }, [island.text, island.visible]);
 
   function pickSelectedNodeIds(nextCase: CaseData | null) {
     if (!nextCase) return [] as string[];
@@ -233,6 +495,26 @@ export default function App() {
     if (ids.length > 0) return ids;
     const focused = nextCase.workspace_state?.focused_card_id;
     return focused ? [focused] : [];
+  }
+
+  function pickFocusedNodeId(nextCase: CaseData | null) {
+    if (!nextCase) return null;
+    return nextCase.workspace_state?.focused_card_id ?? pickSelectedNodeIds(nextCase)[0] ?? null;
+  }
+
+  function getNodeVisualLevel(node: CanvasNode): 1 | 2 | 3 {
+    if (node.source === "evidence") return 1;
+    if (node.source === "placeholder") return 2;
+    return node.level;
+  }
+
+  function getNodeHeaderKind(node: CanvasNode): string {
+    if (node.semanticRole === "conflict") return "冲突";
+    if (node.source === "meta") return node.actionLabel || "";
+    if (node.source === "inference") return "推论";
+    if (node.source === "law") return "法条";
+    if (node.source === "evidence") return "证据";
+    return "";
   }
 
   useEffect(() => {
@@ -245,9 +527,10 @@ export default function App() {
         if (current.case?.case_id) {
           setSelectedCaseId(current.case.case_id);
           setSelectedNodeIds(pickSelectedNodeIds(current.case));
+          setFocusedNodeId(pickFocusedNodeId(current.case));
           const viewport = current.case.workspace_state?.viewport;
           if (viewport) {
-            setTransform({ x: viewport.offset_x, y: viewport.offset_y, scale: viewport.zoom });
+            setTransform(clampViewportToWrapper({ x: viewport.offset_x, y: viewport.offset_y }, wrapperRef.current));
           }
           return;
         }
@@ -260,6 +543,28 @@ export default function App() {
         // ignore initial load failures
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    if (selectedNodeIds.length === 0) {
+      setFocusedNodeId(currentCase?.workspace_state?.focused_card_id ?? null);
+      return;
+    }
+
+    setFocusedNodeId((current) => {
+      if (current && selectedNodeIds.includes(current)) return current;
+      return selectedNodeIds[selectedNodeIds.length - 1] ?? null;
+    });
+  }, [currentCase?.workspace_state?.focused_card_id, selectedNodeIds]);
+
+  useEffect(() => {
+    const clampCurrentViewport = () => {
+      setTransform((current) => clampViewportToWrapper(current, wrapperRef.current));
+    };
+
+    clampCurrentViewport();
+    window.addEventListener("resize", clampCurrentViewport);
+    return () => window.removeEventListener("resize", clampCurrentViewport);
   }, []);
 
   useEffect(() => {
@@ -311,39 +616,134 @@ export default function App() {
     const edges: CanvasEdge[] = [];
 
     currentCase.meta_cards.slice(0, 24).forEach((card, index) => {
+      const matchedInfoUnit = findMatchedInfoUnit(currentCase, card);
+      const description = card.detail.description || card.summary || card.title;
       nodes.push({
         id: card.id,
         label: card.title,
-        meta: card.summary || card.meta_type,
-        kind: kindFromMetaType(card.meta_type),
+        meta: card.summary || card.detail.description || card.info_subtype || card.info_type,
+        actionLabel: infoTypeLabel(card.info_type),
+        detailFields: buildDetailFields([
+          ["subType", card.info_subtype],
+          ["subjectLegalType", matchedInfoUnit?.subject_legal_type ?? null],
+          ["description", description],
+          ["extraction_reason", matchedInfoUnit?.extraction_reason ?? null],
+          ["evidence_quote", matchedInfoUnit?.evidence_quote ?? null],
+        ]),
+        kind: kindFromInfoType(card.info_type),
         source: "meta",
         level: card.display_level,
+        state: "normal",
         x: card.position?.x ?? (120 + (index % 4) * 280),
         y: card.position?.y ?? (120 + Math.floor(index / 4) * 170),
       });
     });
 
     currentCase.inference_cards.slice(0, 16).forEach((card, index) => {
+      const isConflictCard = card.inference_type === "conflict";
+      const conflictDetail = isConflictCard ? buildConflictDetail(currentCase, card) : undefined;
       nodes.push({
         id: card.id,
         label: card.title,
         meta: card.detail.claim,
+        actionLabel: isConflictCard ? "冲突" : "推论",
+        detailFields: buildDetailFields([
+          ["ID", card.id],
+          ["InferenceType", card.inference_type],
+          ["Decision", card.decision],
+          ["Claim", card.detail.claim],
+          ["ReasoningSteps", card.detail.reasoning_steps],
+          ["Supporting", card.detail.supporting_card_ids],
+          ["Opposing", card.detail.opposing_card_ids],
+          ["Missing", card.detail.missing_card_ids],
+          ["Confidence", card.detail.confidence],
+                  ]),
         kind: "claim",
         source: "inference",
-        level: 2,
+        level: card.display_level,
+        state: conflictDetail?.state === "muted" ? "missing" : "normal",
+        semanticRole: isConflictCard ? "conflict" : "default",
+        conflictDetail,
         x: card.position?.x ?? (1320 + (index % 2) * 300),
         y: card.position?.y ?? (160 + Math.floor(index / 2) * 180),
       });
     });
+
+    currentCase.law_cards.slice(0, 12).forEach((card, index) => {
+      nodes.push({
+        id: card.id,
+        label: card.title,
+        meta: card.detail.title_full || card.summary || `${card.source_type} / ${card.norm_level}`,
+        actionLabel: "法条",
+        detailFields: buildDetailFields([
+          ["ID", card.id],
+          ["SourceType", card.source_type],
+          ["NormLevel", card.norm_level],
+          ["ArticleNo", card.detail.article_no],
+          ["TitleFull", card.detail.title_full],
+          ["EffectiveStatus", card.detail.effective_status],
+          ["SourceUrl", card.detail.source_url],
+          ["Keywords", card.detail.keywords],
+          ["Text", card.detail.text],
+          ["Summary", card.summary],
+        ]),
+        kind: "law",
+        source: "law",
+        level: card.display_level,
+        state: "normal",
+        x: card.position?.x ?? (1880 + (index % 2) * 300),
+        y: card.position?.y ?? (140 + Math.floor(index / 2) * 180),
+      });
+    });
+
+    const existingNodeIds = new Set(nodes.map((node) => node.id));
+    const missingEvidenceIds = new Set<string>();
+    currentCase.inference_cards.forEach((card) => {
+      (card.detail?.missing_card_ids ?? []).forEach((missingId) => {
+        const normalized = missingId.trim();
+        if (!normalized) return;
+        if (existingNodeIds.has(normalized)) return;
+        missingEvidenceIds.add(normalized);
+      });
+    });
+
+    Array.from(missingEvidenceIds)
+      .slice(0, 18)
+      .forEach((missingId, index) => {
+        nodes.push({
+          id: `missing-${missingId}`,
+          label: "待补充",
+          meta: `缺失证据: ${missingId}`,
+          detailFields: buildDetailFields([
+            ["Type", "待补充"],
+            ["MissingTarget", missingId],
+          ]),
+          kind: "object",
+          source: "placeholder",
+          level: 2,
+          state: "missing",
+          x: 440 + (index % 2) * 460,
+          y: 620 + Math.floor(index / 2) * 164,
+        });
+      });
 
     evidences.slice(0, 12).forEach((item, index) => {
       nodes.push({
         id: `queued-${item.id}`,
         label: item.file.name,
         meta: item.type,
+        actionLabel: "证据",
+        detailFields: buildDetailFields([
+          ["ID", item.id],
+          ["File", item.file.name],
+          ["MimeType", item.file.type],
+          ["Size", readableBytes(item.file.size)],
+          ["Status", item.status],
+        ]),
         kind: "evidence",
         source: "evidence",
         level: 1,
+        state: "normal",
         x: 120 + (index % 3) * 280,
         y: 1180 + Math.floor(index / 3) * 160,
       });
@@ -354,7 +754,7 @@ export default function App() {
         id: edge.id,
         sourceId: edge.source,
         targetId: edge.target,
-        label: edge.label || edge.edge_type,
+        relationType: edgeTypeLabel(edge.edge_type, edge.relation_type || edge.label),
         strength: edgeStrength(edge.edge_type),
       });
     });
@@ -388,9 +788,8 @@ export default function App() {
     const handleMove = (event: MouseEvent) => {
       const draggingNode = nodeDragRef.current;
       if (draggingNode) {
-        const scale = transformRef.current.scale;
-        const dx = (event.clientX - draggingNode.startMouseX) / scale;
-        const dy = (event.clientY - draggingNode.startMouseY) / scale;
+        const dx = event.clientX - draggingNode.startMouseX;
+        const dy = event.clientY - draggingNode.startMouseY;
         pendingDragRef.current = { id: draggingNode.id, x: draggingNode.startX + dx, y: draggingNode.startY + dy };
 
         if (dragRafRef.current === null) {
@@ -398,10 +797,18 @@ export default function App() {
             dragRafRef.current = null;
             const pending = pendingDragRef.current;
             if (!pending) return;
-            dragPreviewPointRef.current = { x: pending.x, y: pending.y };
-            if (dragOverlayRef.current) {
-              dragOverlayRef.current.style.transform = `translate3d(${pending.x}px, ${pending.y}px, 0)`;
-            }
+            const nextPoint = { x: pending.x, y: pending.y };
+            dragPreviewPointRef.current = nextPoint;
+            setNodePositions((previous) => {
+              const current = previous[pending.id];
+              if (current && current.x === nextPoint.x && current.y === nextPoint.y) {
+                return previous;
+              }
+              return {
+                ...previous,
+                [pending.id]: nextPoint,
+              };
+            });
           });
         }
         return;
@@ -415,7 +822,8 @@ export default function App() {
         const rawX = event.clientX - rect.left - draggingIsland.offsetX;
         const rawY = event.clientY - rect.top - draggingIsland.offsetY;
         const clampedX = Math.max(ISLAND_PADDING, Math.min(rawX, rect.width - ISLAND_WIDTH - ISLAND_PADDING));
-        const clampedY = Math.max(ISLAND_PADDING, Math.min(rawY, rect.height - ISLAND_HEIGHT - ISLAND_PADDING));
+        const currentIslandHeight = islandContainerRef.current?.offsetHeight ?? islandHeightRef.current;
+        const clampedY = Math.max(ISLAND_PADDING, Math.min(rawY, rect.height - currentIslandHeight - ISLAND_PADDING));
         setIsland((current) => ({ ...current, x: clampedX, y: clampedY }));
         return;
       }
@@ -424,7 +832,7 @@ export default function App() {
       if (!pan.active) return;
       const dx = event.clientX - pan.startMouseX;
       const dy = event.clientY - pan.startMouseY;
-      pendingPanRef.current = { x: pan.startX + dx, y: pan.startY + dy };
+      pendingPanRef.current = clampViewportToWrapper({ x: pan.startX + dx, y: pan.startY + dy }, wrapperRef.current);
 
       if (panRafRef.current === null) {
         panRafRef.current = window.requestAnimationFrame(() => {
@@ -446,10 +854,11 @@ export default function App() {
           const rect = wrapper.getBoundingClientRect();
           setIsland((current) => {
             if (!current.visible) return current;
-            const bottomGap = rect.height - (current.y + ISLAND_HEIGHT);
+            const currentIslandHeight = islandContainerRef.current?.offsetHeight ?? islandHeightRef.current;
+            const bottomGap = rect.height - (current.y + currentIslandHeight);
             if (bottomGap <= ISLAND_BOTTOM_DOCK_THRESHOLD) {
               const dockX = Math.max(ISLAND_PADDING, (rect.width - ISLAND_WIDTH) / 2);
-              const dockY = Math.max(ISLAND_PADDING, rect.height - ISLAND_HEIGHT - ISLAND_PADDING);
+              const dockY = Math.max(ISLAND_PADDING, rect.height - currentIslandHeight - ISLAND_PADDING);
               return { ...current, x: dockX, y: dockY };
             }
             return current;
@@ -590,6 +999,11 @@ export default function App() {
       setUploadProgress(100);
       setCurrentCase(refreshedCase.case);
       setSelectedNodeIds(pickSelectedNodeIds(refreshedCase.case));
+      setFocusedNodeId(pickFocusedNodeId(refreshedCase.case));
+      if (refreshedCase.case?.workspace_state?.viewport) {
+        const viewport = refreshedCase.case.workspace_state.viewport;
+        setTransform(clampViewportToWrapper({ x: viewport.offset_x, y: viewport.offset_y }, wrapperRef.current));
+      }
       setEvidences([]);
       setUploadStage("idle");
       try {
@@ -632,9 +1046,11 @@ export default function App() {
     await deleteCase();
     setCurrentCase(null);
     setSelectedNodeIds([]);
+    setFocusedNodeId(null);
     setDraggingNodeId(null);
     setEvidences([]);
     setNodePositions({});
+    setTransform(clampViewportToWrapper({ x: 0, y: 0 }, wrapperRef.current));
     setUploadStage("idle");
     setUploadDisplayText("");
     try {
@@ -647,12 +1063,12 @@ export default function App() {
     }
   }
 
-  async function persistWorkspace(nextTransform: { x: number; y: number; scale: number }) {
+  async function persistWorkspace(nextTransform: { x: number; y: number }) {
     if (!currentCase?.case_id) return;
     try {
       const updated = await updateWorkspaceState(currentCase.case_id, {
         viewport: {
-          zoom: nextTransform.scale,
+          zoom: 1,
           offset_x: nextTransform.x,
           offset_y: nextTransform.y,
         },
@@ -663,21 +1079,12 @@ export default function App() {
     }
   }
 
-  function scheduleWorkspaceSync(nextTransform: { x: number; y: number; scale: number }) {
-    if (workspaceSyncTimerRef.current) {
-      clearTimeout(workspaceSyncTimerRef.current);
-    }
-    workspaceSyncTimerRef.current = setTimeout(() => {
-      fireTrack("canvas_viewport_update", [], { zoom: nextTransform.scale, offset_x: nextTransform.x, offset_y: nextTransform.y });
-      void persistWorkspace(nextTransform);
-    }, 260);
-  }
-
   async function persistSelectedNodes(nodeIds: string[], focusedNodeId: string | null) {
     if (!currentCase?.case_id) return;
     const knownCardIds = new Set([
       ...currentCase.meta_cards.map((card) => card.id),
       ...currentCase.inference_cards.map((card) => card.id),
+      ...currentCase.law_cards.map((card) => card.id),
     ]);
     const filteredIds = nodeIds.filter((id) => knownCardIds.has(id));
     const focused = focusedNodeId && knownCardIds.has(focusedNodeId) ? focusedNodeId : (filteredIds[0] ?? null);
@@ -706,11 +1113,37 @@ export default function App() {
     if (!currentCase?.case_id) return;
     const isKnownCard =
       currentCase.meta_cards.some((card) => card.id === cardId) ||
-      currentCase.inference_cards.some((card) => card.id === cardId);
+      currentCase.inference_cards.some((card) => card.id === cardId) ||
+      currentCase.law_cards.some((card) => card.id === cardId);
     if (!isKnownCard) return;
 
     try {
-      const updated = await updateCardPosition(currentCase.case_id, cardId, point);
+      await updateCardPosition(currentCase.case_id, cardId, point);
+    } catch {
+      // keep local interaction smooth even if persistence fails
+    }
+  }
+
+  async function persistCardDisplayLevel(cardId: string, displayLevel: 1 | 2 | 3) {
+    if (!currentCase?.case_id) return;
+    const isKnownCard =
+      currentCase.meta_cards.some((card) => card.id === cardId) ||
+      currentCase.inference_cards.some((card) => card.id === cardId) ||
+      currentCase.law_cards.some((card) => card.id === cardId);
+    if (!isKnownCard) return;
+
+    setCurrentCase((existing) => {
+      if (!existing) return existing;
+      return {
+        ...existing,
+        meta_cards: existing.meta_cards.map((card) => (card.id === cardId ? { ...card, display_level: displayLevel } : card)),
+        inference_cards: existing.inference_cards.map((card) => (card.id === cardId ? { ...card, display_level: displayLevel } : card)),
+        law_cards: existing.law_cards.map((card) => (card.id === cardId ? { ...card, display_level: displayLevel } : card)),
+      };
+    });
+
+    try {
+      const updated = await updateCardDisplayLevel(currentCase.case_id, cardId, displayLevel);
       setCurrentCase(updated.case);
     } catch {
       // keep local interaction smooth even if persistence fails
@@ -746,7 +1179,8 @@ export default function App() {
     const rawX = event.clientX - rect.left + ISLAND_PADDING;
     const rawY = event.clientY - rect.top + ISLAND_PADDING;
     const clampedX = Math.max(ISLAND_PADDING, Math.min(rawX, rect.width - ISLAND_WIDTH - ISLAND_PADDING));
-    const clampedY = Math.max(ISLAND_PADDING, Math.min(rawY, rect.height - ISLAND_HEIGHT - ISLAND_PADDING));
+    const currentIslandHeight = islandContainerRef.current?.offsetHeight ?? islandHeightRef.current;
+    const clampedY = Math.max(ISLAND_PADDING, Math.min(rawY, rect.height - currentIslandHeight - ISLAND_PADDING));
 
     setIsland((current) => ({ ...current, visible: true, x: clampedX, y: clampedY }));
   }
@@ -796,8 +1230,20 @@ export default function App() {
     setCaseLoading(true);
     setError("");
     try {
-      const selectedCardIds = currentCase.meta_cards.slice(0, 6).map((card) => card.id);
-      await generateInference(currentCase.case_id, prompt, "hypothesis", selectedCardIds);
+      const knownCardIds = new Set([
+        ...currentCase.meta_cards.map((card) => card.id),
+        ...currentCase.inference_cards.map((card) => card.id),
+        ...currentCase.law_cards.map((card) => card.id),
+      ]);
+      const selectedCardIds = selectedNodeIds.filter((id) => knownCardIds.has(id));
+      const fallbackCardIds = currentCase.meta_cards.slice(0, 6).map((card) => card.id);
+      const mode = inferGenerateModeFromPrompt(prompt);
+      await generateInference(
+        currentCase.case_id,
+        prompt,
+        mode,
+        selectedCardIds.length > 0 ? selectedCardIds : fallbackCardIds,
+      );
       const [nextCase, nextCases] = await Promise.all([getCase(), listCases()]);
       setCurrentCase(nextCase.case);
       setCaseOptions(nextCases.cases);
@@ -826,24 +1272,22 @@ export default function App() {
   }
   function onCanvasWheel(event: React.WheelEvent<HTMLDivElement>) {
     event.preventDefault();
-    const wrapper = wrapperRef.current;
-    if (!wrapper) return;
+    if (!currentCase || !focusedNodeId) return;
 
-    const rect = wrapper.getBoundingClientRect();
-    const mouseX = event.clientX - rect.left;
-    const mouseY = event.clientY - rect.top;
+    const currentNode = canvasData.nodes.find((node) => node.id === focusedNodeId);
+    if (!currentNode) return;
+    if (currentNode.source === "evidence" || currentNode.source === "placeholder" || currentNode.source === "law") return;
 
-    const delta = -event.deltaY * 0.0012;
-    const nextScale = Math.max(0.25, Math.min(2.5, transform.scale * Math.exp(delta)));
+    const direction = event.deltaY < 0 ? "up" : "down";
+    const nextLevel = stepDisplayLevel(currentNode.level, direction);
+    if (nextLevel === currentNode.level) return;
 
-    const nextTransform = {
-      x: mouseX - (mouseX - transform.x) * (nextScale / transform.scale),
-      y: mouseY - (mouseY - transform.y) * (nextScale / transform.scale),
-      scale: nextScale,
-    };
-
-    setTransform(nextTransform);
-    scheduleWorkspaceSync(nextTransform);
+    fireTrack("node_display_level_change", [focusedNodeId], {
+      from: currentNode.level,
+      to: nextLevel,
+      direction,
+    });
+    void persistCardDisplayLevel(focusedNodeId, nextLevel);
   }
 
   const draggingNode = useMemo(() => {
@@ -851,10 +1295,80 @@ export default function App() {
     return canvasData.nodes.find((node) => node.id === draggingNodeId) ?? null;
   }, [canvasData.nodes, draggingNodeId]);
 
+  useEffect(() => {
+    const activeNodeIds = new Set(canvasData.nodes.map((node) => node.id));
+    setNodeSizes((current) => {
+      let changed = false;
+      const next: Record<string, NodeSize> = {};
+
+      Object.entries(current).forEach(([id, size]) => {
+        if (!activeNodeIds.has(id)) {
+          changed = true;
+          return;
+        }
+        next[id] = size;
+      });
+
+      return changed ? next : current;
+    });
+  }, [canvasData.nodes]);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver((entries) => {
+      setNodeSizes((current) => {
+        let changed = false;
+        const next = { ...current };
+
+        entries.forEach((entry) => {
+          const element = entry.target as HTMLDivElement;
+          const nodeId = element.dataset.nodeId;
+          if (!nodeId) return;
+
+          const width = Math.round(entry.contentRect.width);
+          const height = Math.round(entry.contentRect.height);
+          const prev = current[nodeId];
+          if (prev && prev.width === width && prev.height === height) return;
+
+          next[nodeId] = { width, height };
+          changed = true;
+        });
+
+        return changed ? next : current;
+      });
+    });
+
+    canvasData.nodes.forEach((node) => {
+      const element = nodeElementRefs.current[node.id];
+      if (!element) return;
+
+      observer.observe(element);
+      const rect = element.getBoundingClientRect();
+      const width = Math.round(rect.width);
+      const height = Math.round(rect.height);
+
+      setNodeSizes((current) => {
+        const prev = current[node.id];
+        if (prev && prev.width === width && prev.height === height) return current;
+        return { ...current, [node.id]: { width, height } };
+      });
+    });
+
+    return () => observer.disconnect();
+  }, [canvasData.nodes]);
+
+  function getNodeSize(nodeId: string): NodeSize {
+    return nodeSizes[nodeId] ?? DEFAULT_NODE_SIZE;
+  }
+
   const selectedCaseLabel = caseOptions.find((item) => item.case_id === selectedCaseId)?.title ?? currentCase?.case_title ?? "Case";
   const dropzoneClass = `upload-dropzone figma-dropzone ${isDropActive || isDropSelected ? "active" : ""} ${uploadStage !== "idle" ? "uploading" : ""}`;
-  const viewLevel: 1 | 2 | 3 = transform.scale < 1 ? 1 : transform.scale < 1.6 ? 2 : 3;
-  const zoomPercent = Math.round(transform.scale * 100);
+  const canvasContentStyle = {
+    width: `${CANVAS_WIDTH}px`,
+    height: `${CANVAS_HEIGHT}px`,
+    transform: `translate(${transform.x}px, ${transform.y}px)`,
+  } as CSSProperties;
 
   function fireTrack(action: string, targets: string[] = [], params: Record<string, unknown> = {}) {
     if (!currentCase?.case_id) return;
@@ -867,6 +1381,180 @@ export default function App() {
     }).catch(() => {
       // non-blocking telemetry
     });
+  }
+
+  function renderConflictGlyph() {
+    return (
+      <span className="conflict-glyph" aria-hidden="true">
+        <span className="conflict-glyph-branch conflict-glyph-branch-left" />
+        <span className="conflict-glyph-branch conflict-glyph-branch-right" />
+        <span className="conflict-glyph-dot conflict-glyph-dot-top" />
+        <span className="conflict-glyph-dot conflict-glyph-dot-left" />
+        <span className="conflict-glyph-dot conflict-glyph-dot-right" />
+      </span>
+    );
+  }
+
+  function renderConflictList(title: string, tone: "support" | "oppose" | "missing", items: ConflictReferenceItem[]) {
+    return (
+      <section className={`conflict-section conflict-section-${tone}`}>
+        <div className="conflict-section-header">
+          <span>{title}</span>
+          <span>{items.length}</span>
+        </div>
+        {items.length === 0 ? (
+          <p className="conflict-empty">{"暂无"}</p>
+        ) : (
+          <div className="conflict-reference-list">
+            {items.map((item) => (
+              <article className="conflict-reference-item" key={`${tone}-${item.id}`}>
+                <p className="conflict-reference-title" title={item.title}>{item.title}</p>
+                <p className="conflict-reference-meta" title={item.meta}>{item.meta}</p>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  function renderConflictContent(node: Pick<CanvasNode, "id" | "label" | "conflictDetail">, visualLevel: 1 | 2 | 3) {
+    const detail = node.conflictDetail;
+    if (!detail) return null;
+
+    if (visualLevel === 1) {
+      return (
+        <div className="conflict-pill-shell">
+          <span className="conflict-icon-badge">{renderConflictGlyph()}</span>
+          <span className="conflict-pill-title">{"冲突"}</span>
+        </div>
+      );
+    }
+
+    if (visualLevel === 2) {
+      return (
+        <div className="node-content-group conflict-card-shell">
+          <div className="conflict-card-head">
+            <div className="conflict-card-title-row">
+              <span className="conflict-icon-badge">{renderConflictGlyph()}</span>
+              <div className="conflict-card-title-copy">
+                <p className="conflict-card-title" title={node.label}>{node.label}</p>
+                <p className="conflict-card-state">{detail.stateLabel}</p>
+              </div>
+            </div>
+            <span className="conflict-chip">{detail.decisionLabel}</span>
+          </div>
+          <p className="conflict-card-claim" title={detail.claim}>{detail.claim}</p>
+          <div className="conflict-metric-row">
+            <span className="conflict-mini-chip">{"支持"} {detail.supportItems.length}</span>
+            <span className="conflict-mini-chip">{"反证"} {detail.opposeItems.length}</span>
+            <span className="conflict-mini-chip">{"缺口"} {detail.missingItems.length}</span>
+            {detail.confidenceLabel ? <span className="conflict-mini-chip">{detail.confidenceLabel}</span> : null}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="node-content-group conflict-detail-shell">
+        <div className="conflict-card-head">
+          <div className="conflict-card-title-row">
+            <span className="conflict-icon-badge">{renderConflictGlyph()}</span>
+            <div className="conflict-card-title-copy">
+              <p className="conflict-card-title" title={node.label}>{node.label}</p>
+              <p className="conflict-card-state">{detail.stateLabel}</p>
+            </div>
+          </div>
+          <span className="conflict-chip">{detail.decisionLabel}</span>
+        </div>
+        <div className="conflict-summary-panel">
+          <p className="conflict-card-claim">{detail.claim}</p>
+          <div className="conflict-metric-row">
+            <span className="conflict-mini-chip">{"支持"} {detail.supportItems.length}</span>
+            <span className="conflict-mini-chip">{"反证"} {detail.opposeItems.length}</span>
+            <span className="conflict-mini-chip">{"缺口"} {detail.missingItems.length}</span>
+            {detail.confidenceLabel ? <span className="conflict-mini-chip">{detail.confidenceLabel}</span> : null}
+          </div>
+        </div>
+        <div className="conflict-compare-grid">
+          {renderConflictList("支持证据", "support", detail.supportItems)}
+          {renderConflictList("反向证据", "oppose", detail.opposeItems)}
+        </div>
+        {detail.missingItems.length > 0 ? renderConflictList("待补证据", "missing", detail.missingItems) : null}
+        {detail.reasoningSteps.length > 0 ? (
+          <section className="conflict-section conflict-section-neutral">
+            <div className="conflict-section-header">
+              <span>{"推理链"}</span>
+              <span>{detail.reasoningSteps.length}</span>
+            </div>
+            <ol className="conflict-step-list">
+              {detail.reasoningSteps.map((step, index) => (
+                <li className="conflict-step-item" key={`${node.id}-step-${index}`}>{step}</li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderNodeHeader(
+    node: Pick<CanvasNode, "id" | "label" | "source">,
+    headerKind: string,
+    isMeta: boolean,
+    isPlaceholder: boolean,
+    isInference: boolean,
+    isLaw: boolean,
+  ) {
+    return (
+      <div className="node-header">
+        <div className="node-type-icon-wrap">
+          <img className="node-type-icon" src={isMeta || isPlaceholder ? metaTypeDefaultIcon : isInference ? inferTypeDefaultIcon : isLaw ? inferTypeDefaultIcon : detailsIcon} alt={isMeta ? "meta" : isInference ? "inference" : isLaw ? "law" : "evidence"} />
+        </div>
+        <span className="node-title" title={node.label}>{node.label}</span>
+        {!isLaw && headerKind ? <span className="node-kind" title={headerKind}>{headerKind}</span> : null}
+        <span className="node-id">{node.id}</span>
+      </div>
+    );
+  }
+
+  function renderNodeContent(
+    node: Pick<CanvasNode, "id" | "label" | "meta" | "detailFields" | "source" | "semanticRole" | "conflictDetail">,
+    visualLevel: 1 | 2 | 3,
+    headerKind: string,
+    isMeta: boolean,
+    isPlaceholder: boolean,
+    isInference: boolean,
+    isLaw: boolean,
+  ) {
+    if (node.semanticRole === "conflict") {
+      return renderConflictContent(node, visualLevel);
+    }
+
+    if (isLaw) {
+      return (
+        <div className="node-content-group">
+          {renderNodeHeader(node, headerKind, isMeta, isPlaceholder, isInference, isLaw)}
+          <p className="node-meta">{node.meta || "-"}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="node-content-group">
+        {renderNodeHeader(node, headerKind, isMeta, isPlaceholder, isInference, isLaw)}
+        {visualLevel >= 2 ? <p className="node-meta">{node.meta || "-"}</p> : null}
+        {visualLevel >= 3 && node.detailFields.length > 0 ? (
+          <div className="node-preview">
+            {node.detailFields.map((field, index) => (
+              <p className="node-preview-row" key={`${node.id}-field-${index}`}>
+                <strong>{field.key}</strong>: {field.value}
+              </p>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -910,6 +1598,13 @@ export default function App() {
                                 const selectedCaseEnvelope = await selectCase(item.case_id);
                                 setCurrentCase(selectedCaseEnvelope.case);
                                 setSelectedNodeIds(pickSelectedNodeIds(selectedCaseEnvelope.case));
+                                setFocusedNodeId(pickFocusedNodeId(selectedCaseEnvelope.case));
+                                if (selectedCaseEnvelope.case?.workspace_state?.viewport) {
+                                  const viewport = selectedCaseEnvelope.case.workspace_state.viewport;
+                                  setTransform(clampViewportToWrapper({ x: viewport.offset_x, y: viewport.offset_y }, wrapperRef.current));
+                                } else {
+                                  setTransform(clampViewportToWrapper({ x: 0, y: 0 }, wrapperRef.current));
+                                }
                                 setSelectedCaseId(item.case_id);
                                 fireTrack("case_switch", [item.case_id]);
                                 setEvidences([]);
@@ -996,7 +1691,7 @@ export default function App() {
               onClick={() => {
                 if (uploadStage === "idle") {
                   setIsDropSelected(true);
-    fireTrack("upload_picker_open");
+                  fireTrack("upload_picker_open");
                   hiddenFileInputRef.current?.click();
                 }
               }}
@@ -1058,11 +1753,7 @@ export default function App() {
           >
             <div
               className="canvas-content"
-              style={{
-                width: `${CANVAS_WIDTH}px`,
-                height: `${CANVAS_HEIGHT}px`,
-                transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-              }}
+              style={canvasContentStyle}
             >
               <svg className="canvas-links" width={CANVAS_WIDTH} height={CANVAS_HEIGHT}>
                 {canvasData.edges.map((edge) => {
@@ -1070,18 +1761,35 @@ export default function App() {
                   const target = nodePositions[edge.targetId];
                   if (!source || !target) return null;
 
-                  const sx = source.x + NODE_WIDTH / 2;
-                  const sy = source.y + NODE_HEIGHT / 2;
-                  const tx = target.x + NODE_WIDTH / 2;
-                  const ty = target.y + NODE_HEIGHT / 2;
-                  const cx = (sx + tx) / 2 + (ty - sy) * 0.15;
-                  const cy = (sy + ty) / 2 + (sx - tx) * 0.08;
+                  const sourceSize = getNodeSize(edge.sourceId);
+                  const targetSize = getNodeSize(edge.targetId);
+
+                  const sx = source.x + sourceSize.width / 2;
+                  const sy = source.y + sourceSize.height / 2;
+                  const tx = target.x + targetSize.width / 2;
+                  const ty = target.y + targetSize.height / 2;
+                  const mx = (sx + tx) / 2;
+                  const my = (sy + ty) / 2;
+                  const relationType = edge.relationType;
+                  const labelWidth = Math.max(64, relationType.length * 9 + 20);
+                  const labelHeight = 26;
 
                   return (
                     <g key={edge.id}>
-                      <path d={`M ${sx} ${sy} Q ${cx} ${cy} ${tx} ${ty}`} className="canvas-link" strokeWidth={edge.strength} />
-                      <circle cx={(sx + tx) / 2} cy={(sy + ty) / 2} r={7} className="link-hub" />
-                      <title>{edge.label}</title>
+                      <line x1={sx} y1={sy} x2={tx} y2={ty} className="canvas-link" strokeWidth={edge.strength} />
+                      <rect
+                        x={mx - labelWidth / 2}
+                        y={my - labelHeight / 2}
+                        width={labelWidth}
+                        height={labelHeight}
+                        rx={8}
+                        ry={8}
+                        className="edge-label-box"
+                      />
+                      <text x={mx} y={my} textAnchor="middle" dominantBaseline="central" className="edge-label-text">
+                        {relationType}
+                      </text>
+                      <title>{relationType}</title>
                     </g>
                   );
                 })}
@@ -1091,27 +1799,36 @@ export default function App() {
                 const point = nodePositions[node.id] ?? { x: node.x, y: node.y };
                 const isMeta = node.source === "meta";
                 const isInference = node.source === "inference";
-                const isEvidence = node.source === "evidence";
-                const visualLevel = isEvidence ? 1 : viewLevel;
-                const levelClass = isMeta
+                const isLaw = node.source === "law";
+                const isPlaceholder = node.source === "placeholder";
+                const visualLevel = getNodeVisualLevel(node);
+                const levelClass = isMeta || isPlaceholder
                   ? `meta-level-${visualLevel}`
                   : isInference
                     ? `infer-level-${visualLevel}`
-                    : "";
+                    : isLaw
+                      ? "law-level-2"
+                      : "";
                 const nodeClass = [
                   "canvas-node",
                   `node-${node.kind}`,
                   levelClass,
+                  node.semanticRole === "conflict" ? "node-conflict" : "",
+                  node.conflictDetail ? `conflict-state-${node.conflictDetail.state}` : "",
+                  node.state === "missing" ? "node-missing" : "",
                   selectedNodeIds.includes(node.id) ? "node-selected" : "",
-                  draggingNodeId === node.id ? "node-drag-hidden" : "",
                 ]
                   .filter(Boolean)
                   .join(" ");
-
+                const headerKind = getNodeHeaderKind(node);
                 return (
                   <div
                     key={node.id}
                     className={nodeClass}
+                    data-node-id={node.id}
+                    ref={(element) => {
+                      nodeElementRefs.current[node.id] = element;
+                    }}
                     style={{ left: point.x, top: point.y }}
                     onMouseDown={(event) => {
                       const isMultiSelect = event.metaKey || event.ctrlKey;
@@ -1128,95 +1845,45 @@ export default function App() {
                         return nextSelectedNodeIds;
                       });
 
-                      const focusedNodeId = nextSelectedNodeIds.includes(node.id)
+                      const nextFocusedNodeId = nextSelectedNodeIds.includes(node.id)
                         ? node.id
                         : (nextSelectedNodeIds[nextSelectedNodeIds.length - 1] ?? null);
 
+                      setFocusedNodeId(nextFocusedNodeId);
                       fireTrack("node_select", nextSelectedNodeIds, { multi_select: isMultiSelect });
-                      scheduleSelectionSync(nextSelectedNodeIds, focusedNodeId);
+                      scheduleSelectionSync(nextSelectedNodeIds, nextFocusedNodeId);
                       onNodeMouseDown(event, node.id);
                     }}
                   >
-                    <div className="node-header">
-                      <div className="node-type-icon-wrap">
-                        <img className="node-type-icon" src={isMeta ? metaTypeDefaultIcon : isInference ? inferTypeDefaultIcon : detailsIcon} alt={isMeta ? "meta" : isInference ? "inference" : "evidence"} />
-                      </div>
-                      <span className="node-kind">{isMeta ? "???" : isInference ? "??" : "??"}</span>
-                      <span className="node-id">{node.id}</span>
-                    </div>
-                    <strong className="node-title" title={node.label}>
-                      {node.label}
-                    </strong>
-                    <p className="node-meta">{firstLine(node.meta) || "-"}</p>
-                    {visualLevel === 3 ? <div className="node-preview" /> : null}
+                    {renderNodeContent(node, visualLevel, headerKind, isMeta, isPlaceholder, isInference, isLaw)}
                   </div>
                 );
               })}
-
-              {draggingNode ? (() => {
-                const isMeta = draggingNode.source === "meta";
-                const isInference = draggingNode.source === "inference";
-                const isEvidence = draggingNode.source === "evidence";
-                const visualLevel = isEvidence ? 1 : viewLevel;
-                const levelClass = isMeta
-                  ? `meta-level-${visualLevel}`
-                  : isInference
-                    ? `infer-level-${visualLevel}`
-                    : "";
-                const ghostClass = [
-                  "canvas-node",
-                  "is-drag-ghost",
-                  `node-${draggingNode.kind}`,
-                  levelClass,
-                  selectedNodeIds.includes(draggingNode.id) ? "node-selected" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ");
-                const point = dragPreviewPointRef.current ?? nodePositions[draggingNode.id] ?? { x: draggingNode.x, y: draggingNode.y };
-
-                return (
-                  <div
-                    ref={dragOverlayRef}
-                    className={ghostClass}
-                    style={{ transform: `translate3d(${point.x}px, ${point.y}px, 0)` }}
-                  >
-                    <div className="node-header">
-                      <div className="node-type-icon-wrap">
-                        <img className="node-type-icon" src={isMeta ? metaTypeDefaultIcon : isInference ? inferTypeDefaultIcon : detailsIcon} alt={isMeta ? "meta" : isInference ? "inference" : "evidence"} />
-                      </div>
-                      <span className="node-kind">{isMeta ? "???" : isInference ? "??" : "??"}</span>
-                      <span className="node-id">{draggingNode.id}</span>
-                    </div>
-                    <strong className="node-title" title={draggingNode.label}>
-                      {draggingNode.label}
-                    </strong>
-                    <p className="node-meta">{firstLine(draggingNode.meta) || "-"}</p>
-                    {visualLevel === 3 ? <div className="node-preview" /> : null}
-                  </div>
-                );
-              })() : null}
             </div>
 
             {island.visible ? (
               <div
+                ref={islandContainerRef}
                 className="dynamic-island"
                 style={{ left: island.x, top: island.y }}
                 onMouseDown={onIslandMouseDown}
                 onContextMenu={(event) => event.preventDefault()}
               >
                 <img src={writeIcon} alt="write" className="island-icon" />
-                <input
+                <textarea
+                  ref={islandInputRef}
                   value={island.text}
                   onChange={(event) => setIsland((current) => ({ ...current, text: event.target.value }))}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") {
+                    if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
                       void onGenerateInferenceFromIsland();
                     }
                   }}
                   placeholder="Generate inference..."
+                  rows={1}
                 />
-                <div className="island-spacer" />
+
                 <button
                   type="button"
                   className="icon-btn"
@@ -1232,13 +1899,55 @@ export default function App() {
             ) : null}
 
             {!currentCase ? <div className="canvas-empty">Upload files to generate nodes.</div> : null}
-            <div className="canvas-zoom-badge">{zoomPercent}%</div>
           </div>
         </section>
       </div>
     </main>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

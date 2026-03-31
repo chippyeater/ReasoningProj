@@ -1,0 +1,82 @@
+[
+  {
+    "id": "law_1",
+    "title": "中华人民共和国民法典",
+    "article_no": "第四百六十五条",
+    "doc_type": "law",
+    "effective_status": "有效",
+    "keywords": ["合同", "法律效力", "约束力"],
+    "text": "依法成立的合同，对当事人具有法律约束力。",
+    "source_url": "https://flk.npc.gov.cn/detail2.html?ZmY4MDgxODE3NjE2ZjM4MzAxNzYyMzQ2ZGI2YjA1YjY"
+  },
+  {
+    "id": "law_2",
+    "title": "中华人民共和国民法典",
+    "article_no": "第四百六十六条",
+    "doc_type": "law",
+    "effective_status": "有效",
+    "keywords": ["合同解释", "条款理解"],
+    "text": "合同条款的含义应当按照通常理解予以解释；有两种以上解释的，应当作出不利于提供格式条款一方的解释。",
+    "source_url": "https://flk.npc.gov.cn"
+  },
+  {
+    "id": "law_3",
+    "title": "中华人民共和国民法典",
+    "article_no": "第五百零九条",
+    "doc_type": "law",
+    "effective_status": "有效",
+    "keywords": ["合同履行", "诚实信用"],
+    "text": "当事人应当按照约定全面履行自己的义务，并遵循诚实信用原则。",
+    "source_url": "https://flk.npc.gov.cn"
+  },
+  {
+    "id": "law_4",
+    "title": "中华人民共和国民法典",
+    "article_no": "第五百七十七条",
+    "doc_type": "law",
+    "effective_status": "有效",
+    "keywords": ["违约责任", "赔偿损失"],
+    "text": "当事人一方不履行合同义务或者履行合同义务不符合约定的，应当承担继续履行、采取补救措施或者赔偿损失等违约责任。",
+    "source_url": "https://flk.npc.gov.cn"
+  },
+  {
+    "id": "law_5",
+    "title": "中华人民共和国民法典",
+    "article_no": "第五百八十四条",
+    "doc_type": "law",
+    "effective_status": "有效",
+    "keywords": ["损失赔偿", "实际损失"],
+    "text": "当事人一方违约后，应当赔偿对方因违约所受到的损失，包括合同履行后可以获得的利益，但不得超过违约一方订立合同时预见到或者应当预见到的损失。",
+    "source_url": "https://flk.npc.gov.cn"
+  },
+  {
+    "id": "law_6",
+    "title": "中华人民共和国民法典",
+    "article_no": "第七百零七条",
+    "doc_type": "law",
+    "effective_status": "有效",
+    "keywords": ["租赁合同"],
+    "text": "租赁合同是出租人将租赁物交付承租人使用、收益，承租人支付租金的合同。",
+    "source_url": "https://flk.npc.gov.cn"
+  },
+  {
+    "id": "law_7",
+    "title": "中华人民共和国民法典",
+    "article_no": "第七百一十四条",
+    "doc_type": "law",
+    "effective_status": "有效",
+    "keywords": ["租赁解除", "提前退租"],
+    "text": "承租人未按照约定支付租金的，出租人可以解除合同；承租人提前退租的，应当承担违约责任。",
+    "source_url": "https://flk.npc.gov.cn"
+  },
+  {
+    "id": "law_8",
+    "title": "最高人民法院关于民事诉讼证据的若干规定（2019修正）",
+    "article_no": "第九十三条",
+    "doc_type": "judicial_interpretation",
+    "effective_status": "有效",
+    "keywords": ["电子数据", "微信聊天记录", "证据"],
+    "text": "电子数据包括网页、博客、微博客、手机短信、电子邮件、即时通信记录等形成或者存储在电子介质中的信息。",
+    "source_url": "https://www.court.gov.cn"
+  }
+]

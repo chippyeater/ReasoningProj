@@ -1,3 +1,9 @@
+# pyright: reportGeneralTypeIssues=false, reportAttributeAccessIssue=false, reportUndefinedVariable=false, reportMissingImports=false
+
+"""LEGACY MODULE: old LLM pipeline, not used by the current backend flow.
+Kept only for historical reference.
+"""
+
 """LLM pipeline for case extraction and question reasoning."""
 
 import json
@@ -6,8 +12,9 @@ from typing import Any
 
 import httpx
 
-from app.evidence_tools import build_evidence_context
-from app.schemas import (
+from app.legacy.evidence_tools import build_evidence_context
+from app.schemas import (  # legacy, incompatible with current schema set
+
     CaseQuestionResponse,
     CurrentCase,
     EvidenceInput,

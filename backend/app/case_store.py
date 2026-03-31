@@ -1,11 +1,14 @@
-﻿"""Local storage for case snapshots and per-case artifacts."""
+"""Local storage for case snapshots and per-case artifacts."""
 
 from __future__ import annotations
 
 import json
+import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from app.schemas import CaseData, CaseListItem
 
@@ -14,7 +17,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CURRENT_POINTER_PATH = DATA_DIR / "current_case_id.txt"
 CASE_JSON_NAME = "case.json"
 UPLOAD_FILES_DIRNAME = "upload_files"
-LLM_LOG_FILE = "llm_log.jsonl"
+LLM_LOG_DIRNAME = "llm_logs"
 INTERACTION_LOG_FILE = "interaction_log.jsonl"
 
 
@@ -30,8 +33,8 @@ def case_upload_dir(case_id: str) -> Path:
     return case_dir(case_id) / UPLOAD_FILES_DIRNAME
 
 
-def case_llm_log_path(case_id: str) -> Path:
-    return case_dir(case_id) / LLM_LOG_FILE
+def case_llm_log_dir(case_id: str) -> Path:
+    return case_dir(case_id) / LLM_LOG_DIRNAME
 
 
 def case_interaction_log_path(case_id: str) -> Path:
@@ -42,9 +45,89 @@ def append_case_log(case_id: str, log_type: str, payload: dict[str, Any]) -> Non
     if log_type not in {"llm", "interaction"}:
         raise ValueError("log_type must be 'llm' or 'interaction'")
     _ensure_case_dirs(case_id)
-    target = case_llm_log_path(case_id) if log_type == "llm" else case_interaction_log_path(case_id)
+    if log_type == "llm":
+        target = case_llm_log_dir(case_id) / _build_llm_log_filename(payload)
+        normalized = _normalize_llm_log_payload(payload)
+        target.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        return
+    target = case_interaction_log_path(case_id)
     with target.open("a", encoding="utf-8") as log_file:
         log_file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _build_llm_log_filename(payload: dict[str, Any]) -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    stage = _slugify_filename_part(payload.get("stage") or "llm")
+    status = _slugify_filename_part(payload.get("status") or "unknown")
+    return f"{timestamp}_{stage}_{status}_{uuid4().hex[:6]}.json"
+
+
+def _slugify_filename_part(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[^a-z0-9_-]+", "-", text)
+    text = re.sub(r"-+", "-", text).strip("-")
+    return text or "unknown"
+
+
+def _normalize_llm_log_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    request_snapshot = payload.get("request_snapshot")
+    request_meta = payload.get("request_meta")
+    raw_reply = payload.get("raw_reply")
+    parsed_snapshot = payload.get("parsed_snapshot")
+
+    normalized: dict[str, Any] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "stage": payload.get("stage"),
+        "mode": payload.get("mode"),
+        "status": payload.get("status"),
+        "message": payload.get("message"),
+    }
+
+    if request_snapshot not in (None, {}, []):
+        normalized["request"] = request_snapshot
+
+    request_debug = {
+        key: value
+        for key, value in {
+            "sent_sections": payload.get("sent_sections"),
+            "request_meta": request_meta,
+        }.items()
+        if value not in (None, "", [], {})
+    }
+    if request_debug:
+        normalized["request_debug"] = request_debug
+
+    llm_response = {
+        key: value
+        for key, value in {
+            "raw_reply": raw_reply,
+            "parsed": parsed_snapshot,
+        }.items()
+        if value not in (None, "", [], {})
+    }
+    if llm_response:
+        normalized["llm_response"] = llm_response
+
+    reserved = {
+        "stage",
+        "mode",
+        "status",
+        "message",
+        "request_snapshot",
+        "sent_sections",
+        "request_meta",
+        "raw_reply",
+        "parsed_snapshot",
+    }
+    debug = {
+        key: value
+        for key, value in payload.items()
+        if key not in reserved and value not in (None, "", [], {})
+    }
+    if debug:
+        normalized["debug"] = debug
+
+    return normalized
 
 
 def _ensure_dirs() -> None:
@@ -55,6 +138,7 @@ def _ensure_case_dirs(case_id: str) -> None:
     root = case_dir(case_id)
     root.mkdir(parents=True, exist_ok=True)
     case_upload_dir(case_id).mkdir(parents=True, exist_ok=True)
+    case_llm_log_dir(case_id).mkdir(parents=True, exist_ok=True)
 
 
 def _read_current_case_id() -> str | None:

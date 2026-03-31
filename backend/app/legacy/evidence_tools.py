@@ -1,3 +1,9 @@
+# pyright: reportGeneralTypeIssues=false, reportAttributeAccessIssue=false, reportUndefinedVariable=false, reportMissingImports=false
+
+"""LEGACY MODULE: not used by the current backend flow.
+Kept only for historical reference.
+"""
+
 """Evidence parsing tools used to normalize uploaded evidence for the LLM."""
 
 from app.schemas import EvidenceInput, ParsedEvidence

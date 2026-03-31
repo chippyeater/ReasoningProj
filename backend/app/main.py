@@ -1,4 +1,4 @@
-﻿"""FastAPI application entrypoint."""
+"""FastAPI application entrypoint."""
 
 import json
 from datetime import datetime
@@ -12,6 +12,7 @@ from app.case_service import (
     create_case_from_uploads,
     create_empty_case,
     generate_inference_with_llm,
+    run_law_retrieve,
     route_task,
     run_extraction_agent,
     run_interaction_agent,
@@ -43,6 +44,8 @@ from app.schemas import (
     InteractionResponse,
     InteractionTrackRequest,
     InteractionTrackResponse,
+    LawRetrieveRequest,
+    LawRetrieveResponse,
     ListCasesResponse,
     QARequest,
     QAResponse,
@@ -234,6 +237,31 @@ async def post_generate_inference(payload: GenerateInferenceRequest) -> Generate
         message=gen_message,
     )
 
+
+
+@app.post("/api/law/retrieve", response_model=LawRetrieveResponse)
+async def post_law_retrieve(payload: LawRetrieveRequest) -> LawRetrieveResponse:
+    case = load_case(payload.case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    response = await run_law_retrieve(case, payload)
+    if response.new_law_cards:
+        existing = {card.id: card for card in case.law_cards}
+        for card in response.new_law_cards:
+            existing[card.id] = card
+        case.law_cards = list(existing.values())
+    if response.new_edges:
+        existing_keys = {(edge.source, edge.target, edge.edge_type.value) for edge in case.edges}
+        for edge in response.new_edges:
+            key = (edge.source, edge.target, edge.edge_type.value)
+            if key not in existing_keys:
+                existing_keys.add(key)
+                case.edges.append(edge)
+    if response.updated_workspace_state is not None:
+        case.workspace_state = response.updated_workspace_state
+    save_case(case, set_current=True)
+    return response
 
 
 
