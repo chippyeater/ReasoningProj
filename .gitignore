@@ -1,11 +1,66 @@
+# ============================================================
+# .gitignore — logicWeaver
+# 原则：源码 / prompt / schema 示例 / 测试 fixture 必须入库；
+#      依赖、构建产物、各类缓存、runtime 数据一律不入库。
+# ============================================================
+
+# ---------- 密钥 / 本地环境变量 ----------
 .env
 .env.*
 !.env.example
 
-frontend/node_modules/
-frontend/dist/
-frontend/tsconfig.tsbuildinfo
+# ---------- 依赖 ----------
+node_modules/
 
-backend/app/__pycache__/
+# ---------- 构建产物 ----------
+dist/
+*.tsbuildinfo
+
+# ---------- Python 缓存 / 字节码 ----------
+__pycache__/
+*.py[cod]
+
+# ---------- Python 工具缓存 ----------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+htmlcov/
+.coverage
+.coverage.*
+
+# ---------- 前端工具缓存 ----------
+.vite/
+.turbo/
+.parcel-cache/
+
+# ---------- 虚拟环境 ----------
+.venv/
+venv/
+env/
+
+# ---------- 运行时日志 ----------
 backend/logs/
-*.pyc
+
+# ---------- runtime 数据（case 数据、法条语料均为本地 live data，不入 git）----------
+backend/data/
+
+# ---------- 历史数据存档（领域迁移时归档的旧 case）----------
+archive/
+
+# ---------- WorkBuddy / Agent 本地配置与记忆 ----------
+.workbuddy/
+.claude/
+CLAUDE.md
+
+# ---------- 编辑器 / 系统 ----------
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 其它实验项目（与 logicWeaver 无关，已暂停）----------
+# Codex prompt / memory 基础设施实验，非本仓库源码
+analysis_outputs/
+experiment/
