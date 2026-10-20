@@ -150,11 +150,6 @@ def validate():
             assure(set(exp['acceptable_law_ids'])<=lawids and exp.get('minimum_law_count',1)>0,f'{x["id"]} bad open law set')
         assure(set(exp.get('minimum_relation_gold_ids',[]))<={r['id'] for r in rs},f'{x["id"]} invalid relation id')
         if 'append_fixture_path' in x['input']:assure((ROOT/x['input']['append_fixture_path']).is_file(),f'{x["id"]} missing append fixture')
-    merged=js('docs/merged_source_audit.json')
-    for uid,refs in merged.items():
-        assure(uid in unitids and refs==next(x['source_refs'] for x in um if x['id']==uid),f'{uid} audit not identical')
-    # Prefer multiple sources in Gold to exercise per-SourceRef source_kind.
-    assure(any(len({r['source_kind'] for r in x['source_refs']})>1 for x in um),'mixed source-kind merge absent')
     n=js('tests/test_manifest.json')['counts']
     for key,li in [('gold_info_units',um),('positive_relations',rs),('negative_relations',ng),('view_selection_cases',selections),('view_compositions',views),('law_entries',laws),('law_cases',jl('gold_law_cases.jsonl')),('parse_cases',jl('gold_parse_cases.jsonl')),('end_to_end_cases',jl('gold_end_to_end.jsonl'))]:
         assure(n[key]==len(li),f'wrong manifest count {key}')

@@ -9,7 +9,7 @@
 - `gold/gold_issues.json`：争议问题；`gold_info_units.jsonl`：16 个必要信息单元；`gold_relations.jsonl` 与 `negative_relations.jsonl`：9 个应成立、10 个禁止误建关系。
 - `gold/gold_parse_cases.jsonl`：7 个解析场景；`gold_view_selection.jsonl`：10 个视图选择任务；`gold_view_cases.jsonl`：6 个布局参考；`gold_end_to_end.jsonl`：7 个完整流程场景。
 - `gold/verified_laws.json`：15 条法条 Gold；`gold_law_cases.jsonl`：13 个法律检索用例；`gold/evaluation_rubric.json`：评分指标。
-- `docs/schema_contract.ts`：目标结构化数据契约；`docs/annotation_review.md`：必要节点、去重和争议边界；`docs/merged_source_audit.json`：现行多来源节点的原文校核；`docs/law_corpus_review.md`：法条收录依据和适用前提。
+- `docs/schema_contract.ts`：目标结构化数据契约；`docs/annotation_review.md`：必要节点、去重和争议边界；`docs/law_corpus_review.md`：法条收录依据和适用前提。
 - `tests/validate_eval.py`：固定 TXT、来源偏移、关系和任务引用的静态完整性检查；`test_eval_data.py`：当前数据契约单元测试；`score_predictions.py`：基于人工语义对齐的抽取评分；`score_view_selection.py`、`score_law_retrieval.py`：视图选择和法规检索评分。
 - `tests/alignment_template.jsonl`：16 个 Gold ID 与预测 ID 的人工映射模板；`tests/test_manifest.json`：当前评测范围和数量；`tests/check_docx_parsing.py`：基于后端解析实现的 DOCX 检查，需在后端解析接口稳定后对齐。
 
