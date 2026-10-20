@@ -52,7 +52,7 @@ def validate():
             assure(docs[fid]['source_kind']==s['source_kind'],f'{uid} incorrect source kind')
             q=s['quote'];p=s['start'];end=s['end']
             assure(set(s)=={'file_id','source_kind','quote','start','end'},f'{uid} malformed source_ref')
-            assure(isinstance(p,int) and isinstance(end,int) and 0<=p<end<=len(raw[fid]),f'{uid} invalid slice')
+            assure(type(p) is int and type(end) is int and 0<=p<end<=len(raw[fid]),f'{uid} invalid slice')
             assure(raw[fid][p:end]==q,f'{uid} quote mismatch: {repr(raw[fid][p:end])}')
     types={x['id']:x['type'] for x in um}
     allowed={'actor_of','target_of','about','support','contradict','occur_at'}
@@ -67,7 +67,7 @@ def validate():
         assure(r['certainty'] in {'explicit','inferred'},f'{r["id"]} bad certainty')
         if kind in ('actor_of','target_of'):
             assure(types[a]=='event' and types[b]=='entity',f'{r["id"]} wrong actor/target types')
-        if kind=='occur_at':assure(types[a]=='event' and types[b]=='state',f'{r["id"]} wrong time relation types')
+        if kind=='occur_at':assure(types[a]=='event' and types[b]=='state' and next(u for u in um if u['id']==b)['subtype']=='temporal',f'{r["id"]} wrong time relation types')
         if kind=='contradict':assure(types[a]=='statement' and types[b]=='statement',f'{r["id"]} bad contradict')
         if kind=='about':assure(types[a]=='statement',f'{r["id"]} bad about source')
         if kind=='support':assure(types[b]=='statement',f'{r["id"]} bad support target type')
@@ -124,6 +124,7 @@ def validate():
     # Same law IDs and exact clause text must be served by the actual runtime corpus.
     repo_root=ROOT.parents[1]   # evals/case_a -> repository root
     runtime_path=repo_root/'backend'/'data'/'laws.json'
+    assure(runtime_path.is_file(),'missing v0.2 runtime laws.json')
     if runtime_path.is_file():
         runtime=json.loads(runtime_path.read_text(encoding='utf-8'))
         assert_unique(runtime,'runtime laws')
@@ -132,7 +133,9 @@ def validate():
             r=runtime_by_id.get(entry['id'])
             assure(r is not None, f'{entry["id"]} missing in backend laws.json')
             assure(all(r.get(k)==entry[k] for k in ('title','article_no','text','source_url')),f'{entry["id"]} runtime law mismatch')
-            assure(r.get('doc_type') in {'law','judicial_interpretation'},f'{entry["id"]} missing doc_type')
+        for entry in runtime:
+            assure(set(entry)=={'id','title','article_no','text','source_url','effective_status','verified_at'},f'{entry["id"]} invalid LawEntry fields')
+            assure(entry['effective_status'] in {'effective','unknown'},f'{entry["id"]} invalid effective_status')
     for x in jl('gold_law_cases.jsonl'):
         expected=x['expected']
         allids=sum((expected.get(k,[]) for k in ('required_law_ids','acceptable_law_ids','forbidden_law_ids','required_any_of_law_ids','preferred_law_ids')),[])

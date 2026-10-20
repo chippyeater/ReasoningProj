@@ -1,8 +1,8 @@
-# Backend dependencies for Reasoning Interface Generator
+# LogicWeaver v0.2 runtime and HTTP test dependencies
 fastapi==0.116.1
 uvicorn==0.32.1
 pydantic==2.10.3
 httpx==0.28.1
 pypdf==5.4.0
 python-docx==1.1.2
-Pillow==11.1.0
+python-multipart==0.0.22

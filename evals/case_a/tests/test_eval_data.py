@@ -1,5 +1,9 @@
+import json
+from pathlib import Path
+import tempfile
 import unittest
 from validate_eval import validate, jl, js
+from score_law_retrieval import evaluate
 
 class TestDataset(unittest.TestCase):
     def test_full_dataset_integrity(self):
@@ -35,5 +39,24 @@ class TestDataset(unittest.TestCase):
     def test_vacancy_support_is_not_prohibited(self):
         forbidden={(x['source_id'],x['target_id'],x['relation_type']) for x in jl('negative_relations.jsonl')}
         self.assertNotIn(('U035','U036','support'),forbidden)
+
+    def test_law_scoring_consumes_v02_matches(self):
+        case=next(x for x in jl('gold_law_cases.jsonl') if x['id']=='L006')
+        prediction={'id':'L006','matches':[{
+            'law_id':'LAW-SC-0067','issue':case['input']['issue'],
+            'related_info_unit_ids':case['input']['selected_info_unit_ids'],
+            'relevance_reason':'候选法律依据，适用条件需另行复核'}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'prediction.jsonl'
+            path.write_text(json.dumps(prediction,ensure_ascii=False)+'\n',encoding='utf-8')
+            result=evaluate(path)['results'][0]
+            self.assertTrue(result['id_checks_pass'])
+            self.assertEqual(result['corpus_exactness_checks'],[True])
+
+    def test_law_scoring_rejects_noncontract_prediction_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'prediction.jsonl'
+            path.write_text(json.dumps({'id':'L006','matches':[],'unexpected':True})+'\n',encoding='utf-8')
+            with self.assertRaises(ValueError):evaluate(path)
 
 if __name__=='__main__':unittest.main()

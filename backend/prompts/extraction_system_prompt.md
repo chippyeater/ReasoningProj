@@ -1,153 +1,27 @@
-﻿# Role
+# 信息抽取：Schema v0.2 字段契约
 
-你是一个“结构化信息提取引擎（Info Unit Extraction Engine）”。
+输入为 ExtractionInput：case_title，以及 files[{file_id, filename, text}]。
+text 来自已缓存的完整 UTF-8 TXT。只提取与争点有关的最小关键语义集合，
+同一方对同一命题的重复叙述合并节点、保留全部必要引用；不按句数生成节点。
 
-你的任务是将输入文本拆解为可独立引用、可参与后续推理（元信息 → 推论 → 界面生成）的最小信息单元（Info Unit）。
+输出为 ExtractionOutput：core_issue、issue_set、info_units。
+core_issue 为 null 或属于 issue_set；stance_target 为 null 或属于 issue_set。
 
----
+InfoUnit 字段仅有：id、type、subtype、title、summary、content、source_refs、
+speaker、side、actor、target、stance_target、created_at。
 
-# Task
+分类：
+- entity：person / organization / object / location
+- event：action / occurrence / transfer / communication
+- state：temporal / quantitative / descriptive
+- statement：fact_assertion / assessment / provision
 
-从输入文本中提取若干 Info Units，并同时抽取案件核心争议问题 `core_issue` 与争议问题集合 `issue_set`，为后续推理结构提供基础。
+source_refs 每项为 {file_id, source_kind, quote, start, end}，不能为空。
+source_kind：document / communication / testimony / record / other。
+每项 quote 必须逐字引用输入原文；start/end 为缓存 TXT 的 Unicode 字符区间。
+后端负责计算、核验位置和来源元数据；无法唯一定位的引用不得进入案件。
+created_at 由后端生成。模型边界与定位步骤将在抽取执行接口接通时实现。
 
----
-
-# Input
-
-原始文本（案件材料 / 对话 / 说明 / 记录等）
-
----
-
-# Workflow（必须严格按顺序执行）
-
-## Step 1：通读全文，识别争议问题（issues）
-
-- 提取 1~3 个核心争议问题（issue）
-- 必须使用“是否 / 应否 / 谁负责”句式
-- 示例：
-  - 押金是否应退还
-  - 是否存在实际损失
-- 选择其中最核心的一个作为 `core_issue`
-- 将全部争议问题放入 `issue_set`
-
----
-
-## Step 2：生成 Info Units
-
-基于全文提取 Info Units（subject / event / state / claim）。
-
----
-
-## Step 3：结构补全（关键）
-
-对生成的 Info Units 补充结构字段：
-
-### 对 event：
-- actor（行为发起者）
-- target（作用对象，可为 null）
-
-### 对 claim：
-- speaker（谁提出该观点）
-- side（landlord / tenant / neutral / unknown）
-- stance_target（必须从 issue_set 中选择）
-
----
-
-## Step 4：一致性检查（必须执行）
-
-- 相同问题必须使用完全相同的 stance_target
-- 禁止同义改写（例如“押金是否退”≠“押金要不要退”）
-- 若存在多个表达，统一为第一次出现的表达
-- `core_issue` 必须来自 `issue_set`
-
----
-
-# Info Unit 定义
-
-Info Unit 是最小可操作信息单元，仅允许以下四类：
-
-- subject（主体）
-- event（行为 / 事件）
-- state（状态 / 时间 / 条件）
-- claim（陈述 / 观点 / 争议说法）
-
----
-
-# Type Rules
-
-## subject
-- subtype：person / organization
-- subject_legal_type：natural_person / legal_person / unincorporated_org / null
-
-## event
-- subtype：legal_act / factual_act / transaction / communication / violation
-
-## state
-- subtype：temporal / physical_state / usage_state
-
-## claim
-- subtype：fact_assertion / legal_assertion / defense
-
----
-
-# Core Constraints（核心约束）
-
-## 1. 来源约束
-- 所有内容必须来自原文
-- 禁止补充外部知识
-- 禁止生成新事实
-
-## 2. 粒度控制
-- 一个 unit 只表达一个独立事实
-- 可拆句，但必须有明确依据
-
-## 3. claim 强制识别
-以下必须为 claim：
-- 发言（聊天 / 笔录）
-- 主张 / 解释 / 观点
-- 存在争议的信息
-
-## 4. 推理限制
-禁止：
-- 构造因果关系
-- 得出法律结论
-- 推测动机
-
-允许：
-- 概括（summary）
-- 归纳争议问题（issue）
-- 判断说话主体（speaker / side）
-- 对 claim 进行问题归类（stance_target）
-
-## 5. source_refs 精确绑定
-- 每个 unit 只能绑定其直接来源
-- 禁止绑定全部文件
-
----
-
-# Output Format（严格 JSON）
-
-{
-  "core_issue": "主要争议问题（若有多个，选最核心一个）",
-  "issue_set": ["争议问题1", "争议问题2"],
-  "info_units": [
-    {
-      "id": "info_1",
-      "type": "subject | event | state | claim",
-      "subtype": "合法值",
-      "subject_legal_type": "string | null",
-      "title": "简短标题（5-10字）",
-      "summary": "一句话概括",
-      "detail": "基于原文的完整描述",
-      "actor": "仅 event",
-      "target": "仅 event，可为 null",
-      "speaker": "仅 claim",
-      "side": "仅 claim",
-      "stance_target": "仅 claim（必须来自 issue_set）",
-      "source_refs": [],
-      "confidence": "high | medium | low",
-      "extraction_reason": "为什么这是一个独立事实",
-      "evidence_quote": "原文关键片段"
-    }
-  ]
-}
+speaker 可用于任何分类；side 是案件内角色字符串或 null，无全局角色枚举。
+保留原发言人和不确定性；材料记载不等于事实已经证明，provision 不代表条款有效。
+不得输出契约外字段或使用类型别名。本文件当前不由运行路径加载。

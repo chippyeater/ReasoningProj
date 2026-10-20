@@ -1,47 +1,75 @@
-"""独立运行：验证真实 DOCX 经当前 backend/app/case_service.py 解析所得文本。
+"""v0.2 actual upload/cache checks against unchanged Gold parse cases.
 
-需要安装后端依赖，并将原始 DOCX 放在 fixtures/raw/。
-目前仅检查解析器内容及失败状态，不能代替完整上传/解析文本持久化集成测试。
-运行: python evals/case_a/tests/check_docx_parsing.py
+Run from the repository root using backend/.venv/Scripts/python.exe.
+This is not a historical baseline or a model evaluation.
 """
-import sys,hashlib,json,unittest
+import hashlib
+import json
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[1]; REPO=ROOT.parents[1]
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
 
-class TestRawDocxParsing(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        backend=REPO/"backend"
-        if not backend.is_dir():
-            raise RuntimeError(f"未找到后端目录 {backend}，需将 evals/ 放到 ReasoningProj 仓库根目录下")
-        sys.path.insert(0,str(backend))
-        try:
-            from app.case_service import _extract_content,_guess_parse_status
-            from app.schemas import FileType
-        except Exception as exc:
-            raise RuntimeError(f"加载实际后端解析器失败，请安装后端依赖: {exc}") from exc
-        cls.extract=_extract_content; cls.status=_guess_parse_status; cls.filetype=FileType
-        cls.cases=[json.loads(line) for line in (ROOT/"gold/gold_parse_cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip() and '"stage":"parse"' in line]
+ROOT = Path(__file__).resolve().parents[1]
+REPO = ROOT.parents[1]
+sys.path.insert(0, str(REPO / "backend"))
 
-    def find_docx(self,name):
-        path=ROOT/"fixtures/raw"/name
-        if path.is_file():return path
-        self.fail(f"缺少原始 DOCX: {name}。请放入 fixtures/raw/")
+from fastapi.testclient import TestClient
+from app import case_store, file_parsers
+from app.main import app
 
-    def test_five_docx_content_matches_gold(self):
-        for case in self.cases:
-            if case["id"] not in {"P001","P002","P003","P004","P005"}:continue
-            name=case["input"]["filename"]; p=self.find_docx(name)
-            with self.subTest(name=name):
-                content=self.extract(name,None,p.read_bytes())
-                self.assertFalse(content.startswith("["),"解析返回错误/占位内容")
-                self.assertEqual(hashlib.sha256(content.encode("utf8")).hexdigest(),case["expected"]["text_sha256"],"与固定Gold文本不一致；请定位段落与换行差异，不要自动覆盖来源位置")
-                self.assertEqual(len(content),case["expected"]["text_length"])
 
-    def test_corrupt_docx_not_reported_success(self):
-        content=self.extract('broken.docx',None,b'not a docx file')
-        status=self.status(self.filetype.docx,content)
-        status_value=getattr(status,'value',str(status))
-        self.assertNotEqual(status_value,'parsed',"已知风险：DOCX解析失败时不能返回parsed状态")
+class TestV02GoldParsing(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.override = patch.object(case_store, "DATA_DIR", Path(self.temp.name))
+        self.override.start()
+        self.addCleanup(self.override.stop)
+        self.client = TestClient(app)
+        self.cases = [json.loads(line) for line in
+                      (ROOT / "gold/gold_parse_cases.jsonl").read_text(encoding="utf-8").splitlines()
+                      if line.strip()]
 
-if __name__=='__main__':unittest.main()
+    def test_five_actual_docx_uploads_match_fixed_gold_and_cache(self):
+        cases = [c for c in self.cases if c["id"] in {"P001", "P002", "P003", "P004", "P005"}]
+        self.assertEqual(len(cases), 5, "Must actually run all five Gold DOCX cases")
+        for case in cases:
+            with self.subTest(case=case["id"]):
+                raw = (ROOT / case["input"]["raw_file_path"]).read_bytes()
+                response = self.client.post("/api/cases", data={"case_title": "案件 A"},
+                                            files={"files": (case["input"]["filename"], raw)})
+                self.assertEqual(response.status_code, 201, response.text)
+                saved = response.json()["case"]
+                file = saved["files"][0]
+                self.assertEqual(file["parse_status"], "parsed")
+                directory = Path(self.temp.name) / saved["case_id"]
+                self.assertEqual((directory / file["original_path"]).read_bytes(), raw)
+                cached = (directory / file["parsed_text_path"]).read_bytes()
+                self.assertEqual(hashlib.sha256(cached).hexdigest(), case["expected"]["text_sha256"])
+                self.assertEqual(len(cached.decode("utf-8")), case["expected"]["text_length"])
+                with patch.object(file_parsers, "parse_text", side_effect=AssertionError("must use TXT")):
+                    for _ in range(2):
+                        context = self.client.get(f"/api/cases/{saved['case_id']}/extraction-input")
+                        self.assertEqual(context.status_code, 200, context.text)
+                        self.assertEqual(context.json()["files"][0]["text"], cached.decode("utf-8"))
+
+    def test_empty_and_image_match_gold_failure_contract(self):
+        for cid, filename, raw in [("P006", "empty.txt", b""), ("P007", "unreadable.png", b"image")]:
+            expected = next(c["expected"] for c in self.cases if c["id"] == cid)
+            with self.subTest(case=cid):
+                response = self.client.post("/api/cases", data={"case_title": "异常输入"},
+                                            files={"files": (filename, raw)})
+                self.assertEqual(response.status_code, 201, response.text)
+                saved = response.json()["case"]
+                file = saved["files"][0]
+                self.assertEqual(file["parse_status"], expected["parse_status"])
+                self.assertIsNone(file["parsed_text_path"])
+                self.assertTrue(file["error_message"])
+                response = self.client.get(f"/api/cases/{saved['case_id']}/extraction-input")
+                self.assertEqual(response.status_code, 422, response.text)
+
+
+if __name__ == "__main__":
+    unittest.main()

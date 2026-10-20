@@ -1,183 +1,148 @@
-"""FastAPI application entrypoint."""
+"""FastAPI entrypoint for the v0.2 upload and cached-document contract."""
+from typing import Annotated
 
-import json
-from datetime import datetime
-
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from starlette.datastructures import UploadFile as StarletteUploadFile
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+from starlette.datastructures import UploadFile
 
+from app.api_models import (
+    CaseResponse, CasesResponse, ExtractionRunInput, RelationRunInput, UpdateCaseInput,
+)
 from app.case_service import (
-    create_case_from_uploads,
-    create_empty_case,
-    generate_inference_with_llm,
-    run_law_retrieve,
-    route_task,
-    run_extraction_agent,
-    run_interaction_agent,
-    track_interaction_event,
-    run_qa_agent,
-    run_reasoning_agent,
-    run_relation_agent,
-    update_card,
-    update_workspace,
-    upsert_case_from_payload,
+    append_files_to_case, build_extraction_input, create_case_from_uploads, now_iso,
 )
 from app.case_store import (
-    clear_case,
-    clear_current_case,
-    list_cases,
-    load_case,
-    load_current_case,
-    save_case,
-    set_current_case,
+    clear_case, clear_current_case, list_cases, load_case, load_current_case,
+    read_parsed_document, save_case, set_current_case,
 )
+from app.errors import AppError
 from app.schemas import (
-    CaseData,
-    ExtractionRequest,
-    ExtractionResponse,
-    GenerateInferenceRequest,
-    GenerateInferenceResponse,
-    GetCaseResponse,
-    InteractionRequest,
-    InteractionResponse,
-    InteractionTrackRequest,
-    InteractionTrackResponse,
-    LawRetrieveRequest,
-    LawRetrieveResponse,
-    ListCasesResponse,
-    QARequest,
-    QAResponse,
-    ReasoningRequest,
-    ReasoningResponse,
-    RelationRequest,
-    RelationResponse,
-    RouteRequest,
-    RouteResponse,
-    UpdateCardRequest,
-    UpdateCaseRequest,
-    UpdateWorkspaceRequest,
-    UpsertCaseResponse,
+    CaseData, ExtractionInput, LawRetrieveInput, ParsedDocument, ReasoningInput, UploadRequest, WorkspaceState,
 )
 
+app = FastAPI(title="LogicWeaver API", version="0.2")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-class UpsertCasePayload(BaseModel):
-    case: CaseData
+
+@app.exception_handler(AppError)
+async def application_error(request: Request, exc: AppError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": {"code": exc.code, "message": str(exc)}})
 
 
-app = FastAPI(title="Reasoning Interface Generator API")
+@app.exception_handler(OSError)
+async def storage_error(request: Request, exc: OSError) -> JSONResponse:
+    return JSONResponse(status_code=500, content={"detail": {
+        "code": "storage_error", "message": "Unable to read or persist case artifacts"}})
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+@app.exception_handler(ValidationError)
+async def contract_error(request: Request, exc: ValidationError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": {
+        "code": "invalid_contract", "message": str(exc)}})
+
+
+def require_case(case_id: str) -> CaseData:
+    case = load_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
 
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "schema_version": "0.2"}
 
 
-@app.get("/api/cases", response_model=ListCasesResponse)
-async def list_cases_api() -> ListCasesResponse:
-    current_case = load_current_case()
-    current_id = current_case.case_id if current_case is not None else None
-    return ListCasesResponse(cases=list_cases(), current_case_id=current_id)
+@app.get("/api/cases", response_model=CasesResponse)
+async def get_cases() -> CasesResponse:
+    current = load_current_case()
+    return CasesResponse(cases=list_cases(), current_case_id=current.case_id if current else None)
 
 
-@app.get("/api/case", response_model=GetCaseResponse)
-async def get_current_case() -> GetCaseResponse:
-    return GetCaseResponse(case=load_current_case())
+@app.get("/api/case", response_model=CaseResponse)
+async def get_current_case() -> CaseResponse:
+    return CaseResponse(case=load_current_case())
 
 
-@app.get("/api/cases/{case_id}", response_model=GetCaseResponse)
-async def get_case_by_id(case_id: str) -> GetCaseResponse:
-    case = load_case(case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-    return GetCaseResponse(case=case)
+@app.get("/api/cases/{case_id}", response_model=CaseResponse)
+async def get_case(case_id: str) -> CaseResponse:
+    return CaseResponse(case=require_case(case_id))
 
 
-@app.post("/api/cases", response_model=UpsertCaseResponse)
-# 异步接口，FastAPI会await这个函数的执行结果，request是完整http请求对象，包含了请求的所有信息
-# -> UpsertCaseResponse是这个接口的返回类型
-async def create_or_upsert_case(request: Request) -> UpsertCaseResponse:
-    content_type = request.headers.get("content-type", "").lower()
-
-    # 分支 A：multipart/form-data 表单上传类型
-    if "multipart/form-data" in content_type:
-        form = await request.form()  # 解析表单数据，form是一个包含了表单字段和文件的对象，可以通过form.get()获取字段值，通过form.multi_items()获取所有字段和文件
-        case_title = str(form.get("case_title", "未命名案件"))
-        files = [item for _, item in form.multi_items() if isinstance(item, (UploadFile, StarletteUploadFile))]
-        case = await create_case_from_uploads(case_title=case_title, files=files)  # 根据上传的文件创建案件，case是一个案件对象，包含了案件的所有信息
-        save_case(case, set_current=True)  # 将案件保存到存储中，并设置为当前案件
-        return UpsertCaseResponse(success=True, case=case)
-
-    # 分支 B：application/json 类型的请求体，直接解析为JSON对象
-    payload_raw = await request.json()
-    if isinstance(payload_raw, dict) and "case" in payload_raw:
-        payload = UpsertCasePayload.model_validate(payload_raw)
-        existing = load_case(payload.case.case_id)
-        case = upsert_case_from_payload(existing, payload.case)
-        save_case(case, set_current=True)
-        return UpsertCaseResponse(success=True, case=case)
-
-    # 默认分支：如果不是上述两种情况，尝试从JSON中提取case_title和case_id来创建一个空案件
-    case_title = str(payload_raw.get("case_title", "未命名案件")) if isinstance(payload_raw, dict) else "未命名案件"
-    case_id = payload_raw.get("case_id") if isinstance(payload_raw, dict) else None
-    case = create_empty_case(case_title=case_title, case_id=case_id)
-    save_case(case, set_current=True)
-    return UpsertCaseResponse(success=True, case=case)
+def require_multipart(request: Request) -> None:
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "multipart/form-data":
+        raise AppError("unsupported_media_type", "Expected multipart/form-data", 415)
 
 
+@app.post("/api/cases", response_model=CaseResponse, status_code=201)
+async def upload_case(request: Request) -> CaseResponse:
+    require_multipart(request)
+    async with request.form() as form:
+        if set(form) - {"case_title", "files"} or len(form.getlist("case_title")) != 1:
+            raise AppError("invalid_upload", "Expected one case_title and one or more files")
+        payload = UploadRequest(case_title=form.get("case_title"), files=form.getlist("files"))
+        case = await create_case_from_uploads(payload.case_title, payload.files)
+    return CaseResponse(case=case)
 
-@app.post("/api/cases/{case_id}/files", response_model=UpsertCaseResponse)
-async def append_files(case_id: str, request: Request) -> UpsertCaseResponse:
-    content_type = request.headers.get("content-type", "").lower()
-    if "multipart/form-data" not in content_type:
-        raise HTTPException(status_code=400, detail="Expected multipart/form-data")
 
-    case = load_case(case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
+@app.post("/api/cases/{case_id}/files", response_model=CaseResponse)
+async def append_case_files(case_id: str, request: Request) -> CaseResponse:
+    require_multipart(request)
+    case = require_case(case_id)
+    async with request.form() as form:
+        files = form.getlist("files")
+        if set(form) != {"files"} or not files or any(not isinstance(f, UploadFile) for f in files):
+            raise AppError("invalid_upload", "Expected one or more files fields")
+        case = await append_files_to_case(case, files)
+    return CaseResponse(case=case)
 
-    form = await request.form()
-    files = [item for _, item in form.multi_items() if isinstance(item, (UploadFile, StarletteUploadFile))]
-    if not files:
-        raise HTTPException(status_code=400, detail="No files uploaded")
 
-    # Append new files to existing case and re-run extraction.
-    from app.case_service import append_files_to_case
+@app.get("/api/cases/{case_id}/files/{file_id}/text", response_model=ParsedDocument)
+async def get_parsed_text(case_id: str, file_id: str) -> ParsedDocument:
+    case = require_case(case_id)
+    file = next((f for f in case.files if f.file_id == file_id), None)
+    if file is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    return read_parsed_document(case_id, file)
 
-    case = await append_files_to_case(case, files)
-    save_case(case, set_current=True)
-    return UpsertCaseResponse(success=True, case=case)
 
-@app.post("/api/cases/{case_id}/select", response_model=GetCaseResponse)
-async def select_case(case_id: str) -> GetCaseResponse:
+@app.get("/api/cases/{case_id}/extraction-input", response_model=ExtractionInput)
+async def get_extraction_input(case_id: str, file_id: Annotated[list[str] | None, Query()] = None) -> ExtractionInput:
+    return build_extraction_input(require_case(case_id), file_id)
+
+
+@app.post("/api/cases/{case_id}/select", response_model=CaseResponse)
+async def select_case(case_id: str) -> CaseResponse:
     if not set_current_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
-    return GetCaseResponse(case=load_current_case())
+    return CaseResponse(case=require_case(case_id))
 
 
-@app.patch("/api/cases/{case_id}", response_model=UpsertCaseResponse)
-async def patch_case(case_id: str, payload: UpdateCaseRequest) -> UpsertCaseResponse:
-    case = load_case(case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
+@app.patch("/api/cases/{case_id}", response_model=CaseResponse)
+async def update_case(case_id: str, payload: UpdateCaseInput) -> CaseResponse:
+    case = require_case(case_id)
+    case.case_title = payload.case_title
+    case.updated_at = now_iso()
+    save_case(case)
+    return CaseResponse(case=case)
 
-    title = payload.case_title.strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="case_title is required")
 
-    case.case_title = title
-    case.updated_at = datetime.utcnow()
-    save_case(case, set_current=True)
-    return UpsertCaseResponse(success=True, case=case)
+@app.patch("/api/cases/{case_id}/workspace", response_model=CaseResponse)
+async def update_workspace(case_id: str, payload: WorkspaceState) -> CaseResponse:
+    case = require_case(case_id)
+    case.workspace_state = payload
+    case.updated_at = now_iso()
+    save_case(case)
+    return CaseResponse(case=case)
+
+
+@app.delete("/api/cases/{case_id}")
+async def delete_case(case_id: str) -> dict:
+    require_case(case_id)
+    clear_case(case_id)
+    return {"status": "deleted", "case_id": case_id}
 
 
 @app.delete("/api/case")
@@ -186,161 +151,29 @@ async def delete_current_case() -> dict:
     return {"status": "cleared"}
 
 
-@app.delete("/api/cases/{case_id}")
-async def delete_case(case_id: str) -> dict:
-    clear_case(case_id)
-    return {"status": "deleted", "case_id": case_id}
+def pipeline_unavailable(stage: str) -> None:
+    raise AppError("pipeline_not_implemented", f"v0.2 {stage} execution is not connected", 501)
 
 
-@app.patch("/api/cases/{case_id}/cards/{card_id}", response_model=UpsertCaseResponse)
-async def patch_card(case_id: str, card_id: str, payload: UpdateCardRequest) -> UpsertCaseResponse:
-    case = load_case(case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    case, updated = update_card(case, card_id, payload)
-    if not updated:
-        raise HTTPException(status_code=404, detail="Card not found")
-
-    save_case(case, set_current=True)
-    return UpsertCaseResponse(success=True, case=case)
+@app.post("/api/extraction/run", status_code=501)
+async def extraction_run(payload: ExtractionRunInput) -> None:
+    build_extraction_input(require_case(payload.case_id), payload.file_ids)
+    pipeline_unavailable("extraction")
 
 
-@app.patch("/api/cases/{case_id}/workspace", response_model=UpsertCaseResponse)
-async def patch_workspace(case_id: str, payload: UpdateWorkspaceRequest) -> UpsertCaseResponse:
-    case = load_case(case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    case = update_workspace(case, payload)
-    save_case(case, set_current=True)
-    return UpsertCaseResponse(success=True, case=case)
+@app.post("/api/relation/run", status_code=501)
+async def relation_run(payload: RelationRunInput) -> None:
+    require_case(payload.case_id)
+    pipeline_unavailable("relation")
 
 
-@app.post("/api/inference/generate", response_model=GenerateInferenceResponse)
-async def post_generate_inference(payload: GenerateInferenceRequest) -> GenerateInferenceResponse:
-    case = load_case(payload.case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    new_cards, new_edges, workspace, gen_message = await generate_inference_with_llm(case, payload)
-    case.inference_cards.extend(new_cards)
-    case.edges.extend(new_edges)
-    case.workspace_state = workspace
-    save_case(case, set_current=True)
-
-    return GenerateInferenceResponse(
-        success=True,
-        new_inference_cards=new_cards,
-        new_edges=new_edges,
-        updated_workspace_state=workspace,
-        message=gen_message,
-    )
+@app.post("/api/reasoning/run", status_code=501)
+async def reasoning_run(payload: ReasoningInput) -> None:
+    require_case(payload.case_id)
+    pipeline_unavailable("view selection and composition")
 
 
-
-@app.post("/api/law/retrieve", response_model=LawRetrieveResponse)
-async def post_law_retrieve(payload: LawRetrieveRequest) -> LawRetrieveResponse:
-    case = load_case(payload.case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    response = await run_law_retrieve(case, payload)
-    if response.new_law_cards:
-        existing = {card.id: card for card in case.law_cards}
-        for card in response.new_law_cards:
-            existing[card.id] = card
-        case.law_cards = list(existing.values())
-    if response.new_edges:
-        existing_keys = {(edge.source, edge.target, edge.edge_type.value) for edge in case.edges}
-        for edge in response.new_edges:
-            key = (edge.source, edge.target, edge.edge_type.value)
-            if key not in existing_keys:
-                existing_keys.add(key)
-                case.edges.append(edge)
-    if response.updated_workspace_state is not None:
-        case.workspace_state = response.updated_workspace_state
-    save_case(case, set_current=True)
-    return response
-
-
-
-
-@app.post("/api/router/route", response_model=RouteResponse)
-async def post_route(payload: RouteRequest) -> RouteResponse:
-    case = load_current_case()
-    if case is None:
-        raise HTTPException(status_code=404, detail="No active case")
-
-    response = await route_task(case, payload)
-    save_case(case, set_current=True)
-    return response
-
-
-@app.post("/api/extraction/run", response_model=ExtractionResponse)
-async def post_extraction(payload: ExtractionRequest) -> ExtractionResponse:
-    case = load_case(payload.case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    units = await run_extraction_agent(case, payload)
-    save_case(case, set_current=True)
-    return ExtractionResponse(success=True, info_units=units, message="extraction-complete")
-
-
-@app.post("/api/relation/run", response_model=RelationResponse)
-async def post_relation(payload: RelationRequest) -> RelationResponse:
-    case = load_case(payload.case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    relations, edges = await run_relation_agent(case, payload)
-    save_case(case, set_current=True)
-    return RelationResponse(success=True, relations=relations, new_edges=edges, message="relation-complete")
-
-
-@app.post("/api/reasoning/run", response_model=ReasoningResponse)
-async def post_reasoning(payload: ReasoningRequest) -> ReasoningResponse:
-    case = load_case(payload.case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    response = await run_reasoning_agent(case, payload)
-    save_case(case, set_current=True)
-    return response
-
-
-@app.post("/api/qa/ask", response_model=QAResponse)
-async def post_qa(payload: QARequest) -> QAResponse:
-    case = load_case(payload.case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    response = await run_qa_agent(case, payload)
-    save_case(case, set_current=True)
-    return response
-
-
-@app.post("/api/interaction/act", response_model=InteractionResponse)
-async def post_interaction(payload: InteractionRequest) -> InteractionResponse:
-    case = load_case(payload.case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    response = await run_interaction_agent(case, payload)
-    save_case(case, set_current=True)
-    return response
-
-
-
-@app.post("/api/interaction/track", response_model=InteractionTrackResponse)
-async def post_interaction_track(payload: InteractionTrackRequest) -> InteractionTrackResponse:
-    case = load_case(payload.case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    run_id = await track_interaction_event(case, payload)
-    save_case(case, set_current=True)
-    return InteractionTrackResponse(success=True, run_id=run_id, message="tracked")
-
-
+@app.post("/api/law/retrieve", status_code=501)
+async def law_retrieve(payload: LawRetrieveInput) -> None:
+    require_case(payload.case_id)
+    pipeline_unavailable("law retrieval")
