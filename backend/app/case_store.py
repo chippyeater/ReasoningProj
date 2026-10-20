@@ -98,7 +98,8 @@ def save_case(case: CaseData, set_current: bool = True) -> Path:
     return target
 
 
-def load_case(case_id: str) -> CaseData | None:
+def load_case_snapshot(case_id: str) -> CaseData | None:
+    """Read the strict snapshot, allowing a pipeline to audit artifact failures."""
     target = case_dir(case_id) / "case.json"
     if not target.exists():
         return None
@@ -108,7 +109,13 @@ def load_case(case_id: str) -> CaseData | None:
         raise AppError("invalid_case_data", f"{case_id}: stored snapshot is not valid v0.2 data", 409) from exc
     if case.case_id != case_id:
         raise AppError("case_id_mismatch", "Stored case_id differs from the requested case", 409)
-    _validate_artifacts(case)
+    return case
+
+
+def load_case(case_id: str) -> CaseData | None:
+    case = load_case_snapshot(case_id)
+    if case is not None:
+        _validate_artifacts(case)
     return case
 
 

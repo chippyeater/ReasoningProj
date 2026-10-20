@@ -1,7 +1,6 @@
 import asyncio
 import io
 import json
-from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -41,6 +40,7 @@ class TestV02Uploads(IsolatedCaseTest):
         first_path = self.data_dir / before["case_id"] / before["files"][0]["parsed_text_path"]
         first_text = first_path.read_bytes()
         response = self.client.post(f"/api/cases/{before['case_id']}/files",
+                                    data={"source_kinds": json.dumps({"second.docx": "testimony"})},
                                     files={"files": ("second.docx", docx_bytes("新增段落"))})
         self.assertEqual(response.status_code, 200, response.text)
         after = response.json()["case"]
@@ -52,7 +52,8 @@ class TestV02Uploads(IsolatedCaseTest):
         self.assertEqual(reopened.json()["case"], after)
 
     def test_multiple_files_share_one_case_and_report_each_result(self):
-        response = self.client.post("/api/cases", data={"case_title": "混合输入"}, files=[
+        response = self.client.post("/api/cases", data={"case_title": "混合输入", "source_kinds": json.dumps({
+            "valid.txt": "document", "broken.docx": "testimony", "scan.png": "record"})}, files=[
             ("files", ("valid.txt", b"valid")), ("files", ("broken.docx", b"not-docx")),
             ("files", ("scan.png", b"no-ocr"))])
         self.assertEqual(response.status_code, 201, response.text)
@@ -164,7 +165,6 @@ class TestV02Uploads(IsolatedCaseTest):
         path = self.data_dir / case["case_id"] / "case.json"
         before = path.read_bytes()
         inputs = {
-            "/api/extraction/run": {"case_id": case["case_id"]},
             "/api/relation/run": {"case_id": case["case_id"]},
             "/api/reasoning/run": {"case_id": case["case_id"], "question": "争点", "selected_info_unit_ids": [], "selected_relation_ids": []},
             "/api/law/retrieve": {"case_id": case["case_id"], "issue": "争点", "selected_info_unit_ids": [], "max_results": 5},
@@ -196,7 +196,7 @@ class TestV02Uploads(IsolatedCaseTest):
             real_write(path, raw)
         with patch.object(case_service, "atomic_write", side_effect=failing_write):
             with self.assertRaises(PermissionError):
-                asyncio.run(append_files_to_case(stored, [UploadFile(io.BytesIO(b"new"), filename="new.txt")]))
+                asyncio.run(append_files_to_case(stored, [UploadFile(io.BytesIO(b"new"), filename="new.txt")], {"new.txt": "document"}))
         after = {str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
         self.assertEqual(after, before)
         self.assertEqual(len(stored.files), 1)
@@ -208,12 +208,12 @@ class TestV02Uploads(IsolatedCaseTest):
         broken.read = unreadable
         with self.assertRaises(OSError):
             asyncio.run(case_service.create_case_from_uploads("case", [
-                UploadFile(io.BytesIO(b"text"), filename="first.txt"), broken]))
+                UploadFile(io.BytesIO(b"text"), filename="first.txt"), broken], {"first.txt": "document", "bad.txt": "record"}))
         self.assertEqual(list(self.data_dir.iterdir()), [])
 
     def test_storage_failure_returns_500_without_fake_success(self):
         with patch.object(case_service, "atomic_write", side_effect=PermissionError("denied")):
-            response = self.client.post("/api/cases", data={"case_title": "case"}, files={"files": ("a.txt", b"text")})
+            response = self.client.post("/api/cases", data={"case_title": "case", "source_kinds": '{"a.txt":"document"}'}, files={"files": ("a.txt", b"text")})
         self.assertEqual(response.status_code, 500, response.text)
         self.assertEqual(response.json()["detail"]["code"], "storage_error")
 
@@ -228,6 +228,7 @@ class TestV02Uploads(IsolatedCaseTest):
             original_write(path, raw)
         with patch.object(case_store, 'atomic_write', side_effect=failing_pointer):
             response = self.client.post(f"/api/cases/{first['case_id']}/files",
+                                        data={"source_kinds": '{"new.txt":"document"}'},
                                         files={'files': ('new.txt', b'new content')})
         self.assertEqual(response.status_code, 500, response.text)
         after = {str(p.relative_to(self.data_dir)): p.read_bytes()

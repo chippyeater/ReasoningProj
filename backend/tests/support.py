@@ -41,8 +41,9 @@ class IsolatedCaseTest(unittest.TestCase):
         self.addCleanup(override.stop)
         self.client = TestClient(app)
 
-    def upload(self, filename="material.txt", raw="甲方付款😀\n乙方收款".encode("utf-8")):
-        response = self.client.post("/api/cases", data={"case_title": "测试案件"},
+    def upload(self, filename="material.txt", raw="甲方付款😀\n乙方收款".encode("utf-8"), source_kind="document"):
+        response = self.client.post("/api/cases", data={"case_title": "测试案件",
+                                    "source_kinds": json.dumps({filename: source_kind}, ensure_ascii=False)},
                                     files={"files": (filename, raw)})
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()["case"]

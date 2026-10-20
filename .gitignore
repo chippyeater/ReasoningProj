@@ -64,3 +64,4 @@ desktop.ini
 # Codex prompt / memory 基础设施实验，非本仓库源码
 analysis_outputs/
 experiment/
+evals/case_a/results/

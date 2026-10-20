@@ -31,6 +31,8 @@ class TestV02GoldParsing(unittest.TestCase):
         self.cases = [json.loads(line) for line in
                       (ROOT / "gold/gold_parse_cases.jsonl").read_text(encoding="utf-8").splitlines()
                       if line.strip()]
+        self.source_kinds = {r["filename"]: r["source_kind"] for r in json.loads(
+            (ROOT / "fixtures/file_manifest.json").read_text(encoding="utf-8"))["files"]}
 
     def test_five_actual_docx_uploads_match_fixed_gold_and_cache(self):
         cases = [c for c in self.cases if c["id"] in {"P001", "P002", "P003", "P004", "P005"}]
@@ -38,7 +40,8 @@ class TestV02GoldParsing(unittest.TestCase):
         for case in cases:
             with self.subTest(case=case["id"]):
                 raw = (ROOT / case["input"]["raw_file_path"]).read_bytes()
-                response = self.client.post("/api/cases", data={"case_title": "案件 A"},
+                filename = case["input"]["filename"]
+                response = self.client.post("/api/cases", data={"case_title": "案件 A", "source_kinds": json.dumps({filename: self.source_kinds[filename]})},
                                             files={"files": (case["input"]["filename"], raw)})
                 self.assertEqual(response.status_code, 201, response.text)
                 saved = response.json()["case"]
@@ -59,7 +62,7 @@ class TestV02GoldParsing(unittest.TestCase):
         for cid, filename, raw in [("P006", "empty.txt", b""), ("P007", "unreadable.png", b"image")]:
             expected = next(c["expected"] for c in self.cases if c["id"] == cid)
             with self.subTest(case=cid):
-                response = self.client.post("/api/cases", data={"case_title": "异常输入"},
+                response = self.client.post("/api/cases", data={"case_title": "异常输入", "source_kinds": json.dumps({filename: "other"})},
                                             files={"files": (filename, raw)})
                 self.assertEqual(response.status_code, 201, response.text)
                 saved = response.json()["case"]

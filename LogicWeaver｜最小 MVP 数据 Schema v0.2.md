@@ -28,6 +28,8 @@
 type UploadRequest = {
   case_title: string;
   files: File[];
+  // multipart 中传 JSON 字符串，按本批原始文件名精确绑定；同批文件名须唯一。
+  source_kinds: Record<string, SourceKind>;
 };
 ```
 
@@ -51,6 +53,7 @@ type CaseFile = {
   file_id: string;
   filename: string;
   file_type: FileType;
+  source_kind: SourceKind; // 上传方明确提供，持久化后填充并校验 SourceRef
   file_size: number;
 
   original_path: string;
@@ -63,7 +66,11 @@ type CaseFile = {
 };
 ```
 
-**新增核心字段：** `parsed_text_path`。
+**新增核心字段：** `parsed_text_path`。Extraction 阶段经确认补充必填 `source_kind`，不由模型或扩展名推断。
+
+创建案件和追加文件上传均要求 multipart `source_kinds` 参数（JSON 对象），按原始文件名精确绑定，不按顺序绑定。
+缺失、非法枚举、额外键、重复键、同批重复文件名或无法一一对应时拒绝上传，不使用默认类型。
+同名文件可分批上传，保存后按各自唯一 `file_id` 关联来源；不新增来源编辑接口或独立元数据文件。
 
 推荐目录：
 

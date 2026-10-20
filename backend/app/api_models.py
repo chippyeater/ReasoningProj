@@ -17,7 +17,6 @@ class UpdateCaseInput(ContractModel):
 
 class ExtractionRunInput(ContractModel):
     case_id: Text
-    file_ids: list[Text] | None = None
 
 
 class RelationRunInput(ContractModel):

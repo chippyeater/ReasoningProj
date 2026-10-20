@@ -1,4 +1,5 @@
 """FastAPI entrypoint for the v0.2 upload and cached-document contract."""
+import json
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -14,12 +15,13 @@ from app.case_service import (
     append_files_to_case, build_extraction_input, create_case_from_uploads, now_iso,
 )
 from app.case_store import (
-    clear_case, clear_current_case, list_cases, load_case, load_current_case,
+    clear_case, clear_current_case, list_cases, load_case, load_case_snapshot, load_current_case,
     read_parsed_document, save_case, set_current_case,
 )
 from app.errors import AppError
+from app.extraction_service import run_extraction
 from app.schemas import (
-    CaseData, ExtractionInput, LawRetrieveInput, ParsedDocument, ReasoningInput, UploadRequest, WorkspaceState,
+    CaseData, ExtractionInput, ExtractionOutput, LawRetrieveInput, ParsedDocument, ReasoningInput, UploadRequest, WorkspaceState,
 )
 
 app = FastAPI(title="LogicWeaver API", version="0.2")
@@ -28,7 +30,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.exception_handler(AppError)
 async def application_error(request: Request, exc: AppError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"detail": {"code": exc.code, "message": str(exc)}})
+    return JSONResponse(status_code=exc.status_code, content={"detail": {"code": exc.code, "message": str(exc), **exc.details}})
 
 
 @app.exception_handler(OSError)
@@ -76,14 +78,35 @@ def require_multipart(request: Request) -> None:
         raise AppError("unsupported_media_type", "Expected multipart/form-data", 415)
 
 
+def source_kinds_from_form(form) -> dict:
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate source_kinds filename")
+            result[key] = value
+        return result
+    values = form.getlist("source_kinds")
+    if len(values) != 1 or not isinstance(values[0], str):
+        raise AppError("invalid_source_metadata", "Provide one source_kinds JSON object keyed by exact filename")
+    try:
+        kinds = json.loads(values[0], object_pairs_hook=unique_keys)
+        if not isinstance(kinds, dict):
+            raise ValueError("Expected a filename-to-source-kind object")
+    except ValueError as exc:
+        raise AppError("invalid_source_metadata", "source_kinds must be a JSON object with unique filename keys") from exc
+    return kinds
+
+
 @app.post("/api/cases", response_model=CaseResponse, status_code=201)
 async def upload_case(request: Request) -> CaseResponse:
     require_multipart(request)
     async with request.form() as form:
-        if set(form) - {"case_title", "files"} or len(form.getlist("case_title")) != 1:
+        if set(form) - {"case_title", "files", "source_kinds"} or len(form.getlist("case_title")) != 1:
             raise AppError("invalid_upload", "Expected one case_title and one or more files")
-        payload = UploadRequest(case_title=form.get("case_title"), files=form.getlist("files"))
-        case = await create_case_from_uploads(payload.case_title, payload.files)
+        payload = UploadRequest(case_title=form.get("case_title"), files=form.getlist("files"),
+                                source_kinds=source_kinds_from_form(form))
+        case = await create_case_from_uploads(payload.case_title, payload.files, payload.source_kinds)
     return CaseResponse(case=case)
 
 
@@ -93,9 +116,9 @@ async def append_case_files(case_id: str, request: Request) -> CaseResponse:
     case = require_case(case_id)
     async with request.form() as form:
         files = form.getlist("files")
-        if set(form) != {"files"} or not files or any(not isinstance(f, UploadFile) for f in files):
+        if set(form) != {"files", "source_kinds"} or not files or any(not isinstance(f, UploadFile) for f in files):
             raise AppError("invalid_upload", "Expected one or more files fields")
-        case = await append_files_to_case(case, files)
+        case = await append_files_to_case(case, files, source_kinds_from_form(form))
     return CaseResponse(case=case)
 
 
@@ -155,10 +178,12 @@ def pipeline_unavailable(stage: str) -> None:
     raise AppError("pipeline_not_implemented", f"v0.2 {stage} execution is not connected", 501)
 
 
-@app.post("/api/extraction/run", status_code=501)
-async def extraction_run(payload: ExtractionRunInput) -> None:
-    build_extraction_input(require_case(payload.case_id), payload.file_ids)
-    pipeline_unavailable("extraction")
+@app.post("/api/extraction/run", response_model=ExtractionOutput)
+async def extraction_run(payload: ExtractionRunInput) -> ExtractionOutput:
+    case = load_case_snapshot(payload.case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return await run_extraction(case)
 
 
 @app.post("/api/relation/run", status_code=501)

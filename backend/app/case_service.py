@@ -7,13 +7,14 @@ from pathlib import Path
 from uuid import uuid4
 
 from starlette.datastructures import UploadFile
+from pydantic import TypeAdapter
 
 from app import file_parsers
 from app.case_store import artifact_path, atomic_write, read_parsed_document, save_case, write_json
 from app.errors import AppError
 from app.schemas import (
     CaseData, CaseFile, ExtractionFile, ExtractionInput, ParseStatus,
-    PipelineStage, RelationInput, RunStatus, StageRun, Viewport, WorkspaceState,
+    PipelineStage, RelationInput, RunStatus, SourceKind, StageRun, Text, Viewport, WorkspaceState,
 )
 
 
@@ -34,9 +35,18 @@ def create_empty_case(case_title: str) -> CaseData:
         created_at=now, updated_at=now)
 
 
-async def append_files_to_case(case: CaseData, uploads: Sequence[UploadFile]) -> CaseData:
+async def append_files_to_case(case: CaseData, uploads: Sequence[UploadFile],
+                               source_kinds: dict[str, SourceKind]) -> CaseData:
     if not uploads:
         raise AppError("no_uploads", "At least one file is required")
+    kinds = TypeAdapter(dict[Text, SourceKind]).validate_python(source_kinds)
+    names = [u.filename for u in uploads]
+    if any(not name or not name.strip() for name in names):
+        raise AppError("missing_filename", "Every uploaded file requires a filename")
+    if len(names) != len(set(names)):
+        raise AppError("duplicate_upload_filename", "Filenames must be unique within one upload batch")
+    if set(names) != kinds.keys():
+        raise AppError("source_metadata_mismatch", "source_kinds keys must exactly match this batch's filenames")
     candidate = case.model_copy(deep=True)
     created: list[Path] = []
     try:
@@ -72,7 +82,7 @@ async def append_files_to_case(case: CaseData, uploads: Sequence[UploadFile]) ->
                 atomic_write(text_target, text.encode("utf-8"))
             now = now_iso()
             file = CaseFile(
-                file_id=file_id, filename=filename, file_type=file_type, file_size=len(raw),
+                file_id=file_id, filename=filename, file_type=file_type, source_kind=kinds[filename], file_size=len(raw),
                 original_path=original, parsed_text_path=text_path, parse_status=status,
                 error_message=error_message, uploaded_at=now)
             run_id = f"run-{uuid4().hex}"
@@ -108,8 +118,9 @@ async def append_files_to_case(case: CaseData, uploads: Sequence[UploadFile]) ->
     return candidate
 
 
-async def create_case_from_uploads(case_title: str, files: Sequence[UploadFile]) -> CaseData:
-    return await append_files_to_case(create_empty_case(case_title), files)
+async def create_case_from_uploads(case_title: str, files: Sequence[UploadFile],
+                                  source_kinds: dict[str, SourceKind]) -> CaseData:
+    return await append_files_to_case(create_empty_case(case_title), files, source_kinds)
 
 
 def build_extraction_input(case: CaseData, file_ids: list[str] | None = None) -> ExtractionInput:

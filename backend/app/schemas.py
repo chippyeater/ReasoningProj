@@ -20,9 +20,18 @@ Text = Annotated[str, Field(min_length=1, pattern=r"\S")]
 Index = Annotated[StrictInt, Field(ge=0)]
 
 
+class SourceKind(str, Enum):
+    document = "document"
+    communication = "communication"
+    testimony = "testimony"
+    record = "record"
+    other = "other"
+
+
 class UploadRequest(ContractModel):
     case_title: Text
     files: Annotated[list[UploadFile], Field(min_length=1)]
+    source_kinds: dict[Text, SourceKind]
 
 
 def unique(values: list[str], field: str) -> None:
@@ -57,6 +66,7 @@ class CaseFile(ContractModel):
     file_id: Text
     filename: Text
     file_type: FileType
+    source_kind: SourceKind
     file_size: Index
     original_path: Text
     parsed_text_path: Text | None
@@ -118,12 +128,15 @@ class InfoUnitSubtype(str, Enum):
     provision = "provision"
 
 
-class SourceKind(str, Enum):
-    document = "document"
-    communication = "communication"
-    testimony = "testimony"
-    record = "record"
-    other = "other"
+def check_info_classification(info_type: InfoUnitType, subtype: InfoUnitSubtype) -> None:
+    allowed = {
+        "entity": {"person", "organization", "object", "location"},
+        "event": {"action", "occurrence", "transfer", "communication"},
+        "state": {"temporal", "quantitative", "descriptive"},
+        "statement": {"fact_assertion", "assessment", "provision"},
+    }
+    if subtype.value not in allowed[info_type.value]:
+        raise ValueError("subtype does not belong to type")
 
 
 class SourceRef(ContractModel):
@@ -157,14 +170,7 @@ class InfoUnit(ContractModel):
 
     @model_validator(mode="after")
     def check_classification(self) -> InfoUnit:
-        allowed = {
-            "entity": {"person", "organization", "object", "location"},
-            "event": {"action", "occurrence", "transfer", "communication"},
-            "state": {"temporal", "quantitative", "descriptive"},
-            "statement": {"fact_assertion", "assessment", "provision"},
-        }
-        if self.subtype.value not in allowed[self.type.value]:
-            raise ValueError("subtype does not belong to type")
+        check_info_classification(self.type, self.subtype)
         return self
 
 
@@ -515,6 +521,8 @@ class CaseData(ContractModel):
             for ref in u.source_refs:
                 if ref.file_id not in files or files[ref.file_id].parse_status != ParseStatus.parsed:
                     raise ValueError(f"{u.id}: source must refer to a parsed case file")
+                if ref.source_kind != files[ref.file_id].source_kind:
+                    raise ValueError(f"{u.id}: source kind differs from uploaded file metadata")
         check_relations(self.info_units, self.relations)
         unit_ids = {u.id for u in self.info_units}
         for view in self.reasoning_views:

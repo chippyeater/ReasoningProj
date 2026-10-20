@@ -48,7 +48,21 @@ python evals/case_a/tests/score_law_retrieval.py --predictions /path/to/law_pred
 
 法规预测记录必须为 `{id, matches: LawMatch[]}`，每个 match 仅含 `law_id`、`issue`、`related_info_unit_ids`、`relevance_reason`。
 条文与来源从被引用的运行库条目核对，不要求模型复制原文。运行库已使用 v0.2 `LawEntry` 字段；Gold 自身的标注元数据保持不变。
-抽取、关系、推理和法条执行接口目前明确返回 501。这里的静态契约测试及真实上传测试通过不代表模型能力通过评测。
+Extraction 已接通；关系、推理和法条执行接口仍明确返回 501。静态契约测试及真实上传测试通过不代表模型能力通过评测。
+
+真实 Extraction 评测（会把五份材料的完整 TXT 发送到已配置模型，需具备相应授权）：
+
+```powershell
+& .\backend\.venv\Scripts\python.exe evals/case_a/tests/run_extraction_eval.py --output evals/case_a/results/extraction_YYYYMMDD
+```
+
+脚本通过实际上传解析服务创建隔离案件，按 `file_manifest.json` 的已标注来源类型填写 multipart 对应的文件元数据，运行完整 Extraction 服务。
+不会将 Gold 答案发给模型。`prediction.json` 保留应用正式 ID；`prediction_for_scoring.json` 仅为现有评分器把引用文件 ID 映射回 fixture ID，业务 Schema 不变。
+语义对齐需要审阅完整预测后另行填写 alignment；请求成功不等于关键内容覆盖率合格。
+
+2026-10-20 已完成指定 Azure `gpt-5-mini` 的真实两阶段调用：最新 14 个节点，核心语义对齐 10/16（62.5%），
+16 处引文机械校验通过，但遗漏、重复、混合命题和来源归属仍未达到阶段质量标准。
+详见 [当前实施、逐条评分及错误案例](results/extraction_20261020_v6/review.md)。Gold 未修改，历史失败运行保留。
 
 条号和原文准确并不等于法律适用成立；违约金调整、押金性质及实际损失认定需要结合事实和法律条件进行专业复核。假设场景中的补充 TXT 是测试数据，不是案件证据。当前也未覆盖用户手动编辑节点的功能。
 
