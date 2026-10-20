@@ -1,0 +1,9 @@
+{
+  "core_issue": "提前退租后押金是否应退还",
+  "issue_set": [
+    "提前退租后押金是否应退还",
+    "出租人是否存在实际经济损失",
+    "双方是否协商改变押金退还安排"
+  ],
+  "review_status": "draft_expert_review_required"
+}

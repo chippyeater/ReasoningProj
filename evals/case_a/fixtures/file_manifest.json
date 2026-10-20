@@ -1,0 +1,78 @@
+{
+  "case_id": "case-4325561f",
+  "case_title": "MVP案件",
+  "source_log_url": "https://github.com/chippyeater/ReasoningProj/blob/main/backend/data/case-4325561f/llm_logs/20260331T141925321170Z_extraction_success_99f43f.json",
+  "origin": "2026-03-31 extraction request_snapshot.files[].content; not direct DOCX byte-level verification",
+  "files": [
+    {
+      "file_id": "file-06b00bee7b",
+      "filename": "李某笔录.docx",
+      "file_type": "docx",
+      "file_size": null,
+      "original_path": "upload_files/file-06b00bee7b.docx",
+      "parsed_text_path": "parsed/file-06b00bee7b.txt",
+      "fixture_text_path": "fixtures/parsed/file-06b00bee7b.txt",
+      "parse_status": "parsed",
+      "error_message": null,
+      "text_sha256": "bf078aff9224eeab6a7e499d761c6a4b7018879af3df7da9aa4e6b3583b81f9d",
+      "chars": 170,
+      "source_kind": "testimony"
+    },
+    {
+      "file_id": "file-16d4ace3c7",
+      "filename": "聊天记录（节选）.docx",
+      "file_type": "docx",
+      "file_size": null,
+      "original_path": "upload_files/file-16d4ace3c7.docx",
+      "parsed_text_path": "parsed/file-16d4ace3c7.txt",
+      "fixture_text_path": "fixtures/parsed/file-16d4ace3c7.txt",
+      "parse_status": "parsed",
+      "error_message": null,
+      "text_sha256": "06705e197980a5ba7aa4a6129fb7a976e52080e40e38c1fc0a9d80d2a0f7b7b4",
+      "chars": 229,
+      "source_kind": "communication"
+    },
+    {
+      "file_id": "file-e256bb1ee8",
+      "filename": "张某笔录.docx",
+      "file_type": "docx",
+      "file_size": null,
+      "original_path": "upload_files/file-e256bb1ee8.docx",
+      "parsed_text_path": "parsed/file-e256bb1ee8.txt",
+      "fixture_text_path": "fixtures/parsed/file-e256bb1ee8.txt",
+      "parse_status": "parsed",
+      "error_message": null,
+      "text_sha256": "76e3db737794a41f78a7d8c13cab4d1526310a224b8b31fdb3309d1c71ac64fb",
+      "chars": 180,
+      "source_kind": "testimony"
+    },
+    {
+      "file_id": "file-31ebd1366e",
+      "filename": "转账记录.docx",
+      "file_type": "docx",
+      "file_size": null,
+      "original_path": "upload_files/file-31ebd1366e.docx",
+      "parsed_text_path": "parsed/file-31ebd1366e.txt",
+      "fixture_text_path": "fixtures/parsed/file-31ebd1366e.txt",
+      "parse_status": "parsed",
+      "error_message": null,
+      "text_sha256": "158923aae89e45b7bdecea4c973f317eb4636f9484805597cbf60a038a082706",
+      "chars": 63,
+      "source_kind": "record"
+    },
+    {
+      "file_id": "file-3a4acd1eac",
+      "filename": "租房合同.docx",
+      "file_type": "docx",
+      "file_size": null,
+      "original_path": "upload_files/file-3a4acd1eac.docx",
+      "parsed_text_path": "parsed/file-3a4acd1eac.txt",
+      "fixture_text_path": "fixtures/parsed/file-3a4acd1eac.txt",
+      "parse_status": "parsed",
+      "error_message": null,
+      "text_sha256": "40dc9152e80193833776b57fc4d0040b96838fe8428222fc9a688d52e54eaa25",
+      "chars": 242,
+      "source_kind": "document"
+    }
+  ]
+}

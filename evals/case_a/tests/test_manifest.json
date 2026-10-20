@@ -1,0 +1,40 @@
+{
+  "case_id": "case-4325561f",
+  "approved_schema": "LogicWeaver 最小 MVP 数据 Schema v0.2（目标，代码待迁移）",
+  "source": "GitHub commit main / extraction log",
+  "source_log_url": "https://github.com/chippyeater/ReasoningProj/blob/main/backend/data/case-4325561f/llm_logs/20260331T141925321170Z_extraction_success_99f43f.json",
+  "legal_text_reference_url": "https://www.court.gov.cn/zixun/xiangqing/233181.html",
+  "created_at": "2026-10-15",
+  "evaluation_status": "v1.4_verified_law_corpus_aligned_runtime_pending",
+  "counts": {
+    "gold_info_units": 16,
+    "positive_relations": 9,
+    "negative_relations": 10,
+    "view_selection_cases": 10,
+    "view_compositions": 6,
+    "law_entries": 15,
+    "law_cases": 13,
+    "parse_cases": 7,
+    "end_to_end_cases": 7
+  },
+  "non_goal": [
+    "最终司法判断准确率",
+    "跨案件类型泛化",
+    "用户节点编辑能力",
+    "测试用例即为真实法律裁判标准"
+  ],
+  "revision": {
+    "previous_units": 37,
+    "current_units": 16,
+    "method": "select core argumentative objects; consolidate repeated same-speaker claims; preserve multi-source quote location",
+    "schema_change": "InfoUnit.source_kind -> SourceRef.source_kind",
+    "selection_policy": "constrained vs flexible vs open; broad user requests scored by chosen view contents",
+    "loss_support": "N007 removed: unverified vacancy can be contextual support for possible rent loss, not independent proof",
+    "law_corpus": "SPC interpretation art 63,64,65,67 added; art 61 not core for early vacancy without rental nonpayment",
+    "law_id_policy": "runtime backend/data/laws.json IDs equal Gold IDs; correct misnumbered prior backend law texts",
+    "previous_law_entries": 11,
+    "current_law_entries": 15,
+    "previous_law_cases": 8,
+    "current_law_cases": 13
+  }
+}
