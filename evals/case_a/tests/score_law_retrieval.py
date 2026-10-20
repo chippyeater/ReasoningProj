@@ -1,4 +1,4 @@
-"""对案件 A 有限法规库检索输出的可机械验证部分打分。兼容 JSONL。"""
+"""对案件 A 有限法规库检索输出的可机械验证部分打分。输入格式为 JSONL。"""
 import argparse,json,pathlib
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 

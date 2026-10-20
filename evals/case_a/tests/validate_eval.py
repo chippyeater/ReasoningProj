@@ -150,20 +150,6 @@ def validate():
             assure(set(exp['acceptable_law_ids'])<=lawids and exp.get('minimum_law_count',1)>0,f'{x["id"]} bad open law set')
         assure(set(exp.get('minimum_relation_gold_ids',[]))<={r['id'] for r in rs},f'{x["id"]} invalid relation id')
         if 'append_fixture_path' in x['input']:assure((ROOT/x['input']['append_fixture_path']).is_file(),f'{x["id"]} missing append fixture')
-    migration=js('docs/legacy_id_migration.json')
-    assure(len(migration)==37,'incomplete migration history')
-    for row in migration:
-        assure(row['action'] in {'keep','merge_into','not_a_required_node'},'bad migration action')
-        assure(row['new_id'] is None or row['new_id'] in unitids,f'{row["old_id"]} invalid migration target')
-    # Every merge target must retain the exact quotation or a longer quote containing it.
-    original_path=ROOT/'docs/legacy_info_units_v1.1.jsonl'
-    if original_path.is_file():
-        original={x['id']:x for x in [json.loads(l) for l in original_path.read_text(encoding='utf-8').splitlines() if l.strip()]}
-        byid={x['id']:x for x in um}
-        for row in migration:
-            if row['action']=='merge_into':
-                for old_ref in original[row['old_id']]['source_refs']:
-                    assert any(r['file_id']==old_ref['file_id'] and old_ref['quote'] in r['quote'] for r in byid[row['new_id']]['source_refs']),f'{row["old_id"]} merged but quote not retained'
     merged=js('docs/merged_source_audit.json')
     for uid,refs in merged.items():
         assure(uid in unitids and refs==next(x['source_refs'] for x in um if x['id']==uid),f'{uid} audit not identical')

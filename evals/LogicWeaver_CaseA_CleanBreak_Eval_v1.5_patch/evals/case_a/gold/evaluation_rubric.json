@@ -1,0 +1,85 @@
+{
+  "version": "1.5",
+  "stage_metrics": {
+    "parse": {
+      "checks": [
+        "text_exact_sha256",
+        "status_correct",
+        "persisted_path_exists"
+      ],
+      "gate": "所有5份基础材料解析成功；错误输入不得伪成功",
+      "execution_note": "validate_eval.py 验证固定 TXT 和来源定位；check_docx_parsing.py 检查实际 DOCX 解析，上传落盘、parsed_text_path 缓存复用和失败状态需按新后端接口开展集成测试。"
+    },
+    "extraction": {
+      "checks": [
+        "core_semantic_recall",
+        "core_semantic_precision_reviewed",
+        "valid_source_refs",
+        "type_subtype_validity",
+        "claim_attribution",
+        "duplicate_or_redundant_node_count",
+        "irrelevant_node_count",
+        "unsupported_node_count"
+      ],
+      "gate": "关键案情覆盖率>=90%，所有展示引用100%可验证；人工复核重复/无关/无依据节点；目标不限定提取条数，禁止把同一人重复陈述当独立证据。"
+    },
+    "relation": {
+      "checks": [
+        "positive_recall",
+        "negative_false_positive_count",
+        "endpoint_integrity",
+        "relation_type_validity"
+      ],
+      "gate": "10条明确禁止关系不得直接生成；不得从重复表述制造多余关系，模型失败不得伪装成功"
+    },
+    "view_selection": {
+      "checks": [
+        "constrained_view_accuracy",
+        "flexible_view_acceptance",
+        "open_view_content_validity"
+      ],
+      "gate": "仅明确要求或明显对应某种交互组织方式的任务检查是否命中指定视图；多种合理选择的任务只检查允许集合；宽泛概览类不纳入视图类型准确率，而是校验所选视图Schema、任务相关性、案情覆盖、来源及禁止断言。"
+    },
+    "view_composition": {
+      "checks": [
+        "schema_valid",
+        "reference_integrity",
+        "must_include_coverage",
+        "forbidden_assertion_count"
+      ],
+      "gate": "引用100%有效，所有演示参考视图的关键节点覆盖且无虚假断言"
+    },
+    "law_retrieval": {
+      "checks": [
+        "closed_corpus_id_validity",
+        "article_number",
+        "text_exact",
+        "official_source",
+        "query_relevance",
+        "conditional_applicability",
+        "runtime_gold_law_id_text_consistency",
+        "article_61_prerequisite_guard",
+        "article_65_30pct_not_formula",
+        "article_67_deposit_not_earnest"
+      ],
+      "gate": "条号定向检索必须匹配确切法条ID和真实原文；开放式议题检索允许返回法规库内多个相关候选，不预设某一条必定唯一正确；误引条号、伪造法条及强行判定适用均不合格。 司法解释第64、65条仅在违约金相关前提成立时使用；第67条提示押金不当然适用定金罚则；第61条在本案不设为必选候选。"
+    },
+    "end_to_end": {
+      "checks": [
+        "task_completion",
+        "save_reload",
+        "error_handling"
+      ],
+      "gate": "主链路、缺失证据、新增证据、坏输出四类任务通过"
+    }
+  },
+  "review_requirements": {
+    "legal_application": "expert_review_required",
+    "relation_semantics": "human_review_required",
+    "semantic_matching": "human_review_or_explainable_semantic_judge",
+    "original_docx": "compare_to_raw_files_when_available",
+    "gold_unit_granularity": "human_review_required; semantic minimality not inferable from counts alone",
+    "vacancy_and_loss": "房屋短期空置可能支持租金收益损失的可能性；并非自动证明损失数额、因果关系或押金应当全扣。不将U035对U036的support设为必错或必须建立。",
+    "new_law_clauses": "最高人民法院正式司法解释第63、64、65、67条已逐项核对原文；是否在本案真正适用仍需专业审查。"
+  }
+}

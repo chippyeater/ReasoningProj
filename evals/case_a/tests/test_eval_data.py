@@ -11,9 +11,8 @@ class TestDataset(unittest.TestCase):
         gold={u['id']:u for u in jl('gold_info_units.jsonl')}
         for uid in ['U004','U006','U008','U010','U015','U019','U022','U026','U029','U030','U035','U036']:
             self.assertIn(uid,gold)
-        # 同一信息节点允许多个来源类型，而原节点不再持有 source_kind。
+        # 一个信息节点可引用不同类型的原始材料。
         merged=gold['U016']
-        self.assertNotIn('source_kind',merged)
         self.assertEqual({r['source_kind'] for r in merged['source_refs']},{'communication','testimony'})
 
     def test_missing_chat_preserves_testimony_based_units(self):

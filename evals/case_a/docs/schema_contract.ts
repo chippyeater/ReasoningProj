@@ -1,4 +1,4 @@
-/* LogicWeaver 目标 MVP Schema v0.2：source_kind 移至每条 SourceRef，非当前仓库已实现的 API。 */
+/* LogicWeaver MVP Schema v0.2：评测集与新实现共同遵守的数据契约。 */
 export type InfoUnitType = 'entity' | 'event' | 'state' | 'statement';
 /* subtype 仅用于结构分类；不表达真实性和法律效力。 */
 export type InfoUnitSubtype = 'person' | 'organization' | 'object' | 'location' | 'action' | 'occurrence' | 'transfer' | 'communication' | 'temporal' | 'quantitative' | 'descriptive' | 'fact_assertion' | 'assessment' | 'provision';

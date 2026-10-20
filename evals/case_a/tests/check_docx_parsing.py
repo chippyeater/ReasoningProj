@@ -1,6 +1,6 @@
 """独立运行：验证真实 DOCX 经当前 backend/app/case_service.py 解析所得文本。
 
-需要本地安装后端依赖、将原始 DOCX 放在 fixtures/raw/ 或 docs/。
+需要安装后端依赖，并将原始 DOCX 放在 fixtures/raw/。
 目前仅检查解析器内容及失败状态，不能代替完整上传/解析文本持久化集成测试。
 运行: python evals/case_a/tests/check_docx_parsing.py
 """
@@ -24,10 +24,9 @@ class TestRawDocxParsing(unittest.TestCase):
         cls.cases=[json.loads(line) for line in (ROOT/"gold/gold_parse_cases.jsonl").read_text(encoding="utf-8").splitlines() if line.strip() and '"stage":"parse"' in line]
 
     def find_docx(self,name):
-        for folder in (ROOT/"fixtures/raw",ROOT/"docs"):
-            p=folder/name
-            if p.is_file():return p
-        self.fail(f"缺少原始 DOCX: {name}。请放入 fixtures/raw/（推荐）或 docs/")
+        path=ROOT/"fixtures/raw"/name
+        if path.is_file():return path
+        self.fail(f"缺少原始 DOCX: {name}。请放入 fixtures/raw/")
 
     def test_five_docx_content_matches_gold(self):
         for case in self.cases:

@@ -1,5 +1,5 @@
 {
-  "version": "1.4",
+  "version": "1.5",
   "stage_metrics": {
     "parse": {
       "checks": [
@@ -8,7 +8,7 @@
         "persisted_path_exists"
       ],
       "gate": "所有5份基础材料解析成功；错误输入不得伪成功",
-      "execution_note": "当前gold_parse_cases提供预期结果；validate_eval.py只校验静态TXT及哈希。新增tests/check_docx_parsing.py需本地原DOCX与后端依赖才能真正运行解析器单元测试，仍需后端迁移后另测parsed_text_path持久化。"
+      "execution_note": "validate_eval.py 验证固定 TXT 和来源定位；check_docx_parsing.py 检查实际 DOCX 解析，上传落盘、parsed_text_path 缓存复用和失败状态需按新后端接口开展集成测试。"
     },
     "extraction": {
       "checks": [
@@ -30,7 +30,7 @@
         "endpoint_integrity",
         "relation_type_validity"
       ],
-      "gate": "10条明确禁止关系不得直接生成；不得从重复表述制造多余关系，错误/回退不能伪成功"
+      "gate": "10条明确禁止关系不得直接生成；不得从重复表述制造多余关系，模型失败不得伪装成功"
     },
     "view_selection": {
       "checks": [
