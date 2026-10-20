@@ -1,13 +1,14 @@
 {
   "case_id": "case-4325561f",
   "approved_schema": "LogicWeaver 最小 MVP 数据 Schema v0.2",
+  "gold_version": "1.7",
   "source": "GitHub commit main / extraction log",
   "source_log_url": "https://github.com/chippyeater/ReasoningProj/blob/main/backend/data/case-4325561f/llm_logs/20260331T141925321170Z_extraction_success_99f43f.json",
   "legal_text_reference_url": "https://www.court.gov.cn/zixun/xiangqing/233181.html",
   "created_at": "2026-10-15",
   "evaluation_status": "current_gold_validated_runtime_not_tested",
   "counts": {
-    "gold_info_units": 16,
+    "gold_info_units": 17,
     "positive_relations": 9,
     "negative_relations": 10,
     "view_selection_cases": 10,
@@ -24,11 +25,13 @@
     "测试用例即为真实法律裁判标准"
   ],
   "evaluation_policy": {
-    "info_units": "16个案件 A 关键语义节点，非模型输出数量上限；跨文档重复表述用一个 InfoUnit 的多个 SourceRef 表达",
+    "info_units": "案件A关键任务型信息单元，数量为当前17条Gold，并非模型输出上限；依据核心争点下的独立推理用途而不是逐句原子拆分。",
     "source_refs": "SourceRef.source_kind + UTF-8 文本字符偏移必须一致",
     "views": "constrained / flexible / open 三种视图选择评测模式",
     "relations": "空置与潜在损失的关联需要推理解释，不得直接等于具体损失或全额没收押金",
     "laws": "使用正式条文；司法解释第63、64、65、67条附条件检索；第61条非本案核心必选",
-    "runtime": "静态评测集通过校验不等于模型运行或应用端到端通过测试"
+    "runtime": "静态评测集通过校验不等于模型运行或应用端到端通过测试",
+    "unit_granularity": "相关条件/互斥规则、同一方整体立场、同一状态多次陈述允许作为一个节点；独立事实需分别核查时才拆分。U026入住与U027新合同分别核查。",
+    "scoring": "一对一Gold匹配用于同一Gold版本及哈希下的覆盖诊断，必须结合信息完整性、组织价值、过度拆分/合并及来源责任人工评审，不得仅以节点数或匹配率判断质量；旧评分不可直接与新版比较。"
   }
 }

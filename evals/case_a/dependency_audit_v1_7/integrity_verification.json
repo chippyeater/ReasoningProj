@@ -1,0 +1,27 @@
+{
+  "initial_files": 347,
+  "unchanged_initial_files": 340,
+  "modified_this_session": [
+    "evals/case_a/docs/annotation_review.md",
+    "evals/case_a/README.md",
+    "evals/case_a/tests/alignment_template.jsonl",
+    "evals/case_a/tests/run_extraction_eval.py",
+    "evals/case_a/tests/score_predictions.py",
+    "evals/case_a/tests/test_manifest.json",
+    "evals/case_a/tests/validate_eval.py"
+  ],
+  "deleted_initial_files": [],
+  "unexpected_changes": [],
+  "historical_files_unchanged": 301,
+  "gold_files_unchanged": 11,
+  "fixed_txt_files_unchanged": 5,
+  "raw_docx_files_unchanged": 5,
+  "fixture_manifest_unchanged": true,
+  "law_gold_and_runtime_unchanged": true,
+  "prompt_unchanged_from_initial_state": true,
+  "gold_units": 17,
+  "gold_source_refs": 27,
+  "syntax_check": "passed for all current evaluation Python scripts",
+  "git_diff_check_exit_code": 0,
+  "scope_note": "Initial working tree already contained user changes in Prompt, formal Gold, docs, manifest, alignment template and test_eval_data.py. Gold/Prompt/test_eval_data.py were not edited by this session."
+}

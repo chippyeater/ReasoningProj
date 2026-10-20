@@ -4,6 +4,7 @@ import hashlib
 import pathlib
 import re
 from collections import Counter
+from gold_basis import current_gold_basis
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 def jl(name):
@@ -16,6 +17,18 @@ def assert_unique(xs,what):
     ids=[x['id'] for x in xs]
     assure(len(set(ids))==len(ids),f'{what} duplicate ids: {list(k for k,v in Counter(ids).items() if v>1)}')
 
+def validate_task_references(value, namespaces, where):
+    """Include nested task inputs/expectations, not just example payloads."""
+    if isinstance(value,dict):
+        for key,child in value.items():
+            if key in namespaces:
+                refs=[child] if isinstance(child,str) else child
+                assure(isinstance(refs,list) and all(isinstance(i,str) for i in refs),f'{where}.{key}: invalid ID list')
+                assure(set(refs)<=namespaces[key],f'{where}.{key}: unknown references {set(refs)-namespaces[key]}')
+            validate_task_references(child,namespaces,f'{where}.{key}')
+    elif isinstance(value,list):
+        for index,child in enumerate(value):validate_task_references(child,namespaces,f'{where}[{index}]')
+
 def validate():
     issues=js('gold/gold_issues.json')['issue_set']
     um=jl('gold_info_units.jsonl');rs=jl('gold_relations.jsonl');ng=jl('negative_relations.jsonl')
@@ -27,6 +40,7 @@ def validate():
     assert_unique(jl('gold_parse_cases.jsonl'),'parse cases')
     mf=js('fixtures/file_manifest.json')
     docs={x['file_id']:x for x in mf['files']}
+    assure(len(docs)==len(mf['files']),'duplicate fixture file IDs')
     raw={}
     for fid,file in docs.items():
         path=ROOT/file['fixture_text_path'];assure(path.is_file(),f'file missing {path}')
@@ -45,6 +59,8 @@ def validate():
         assure(u['side'] is None or (isinstance(u['side'],str) and bool(u['side'].strip())),f'{uid} illegal side')
         assure(u['source_refs'],f'{uid} no source')
         assure(all(u[k] for k in ('id','title','summary','content')),f'{uid} no content')
+        assure(all(isinstance(u[k],str) and u[k].strip() for k in ('id','title','summary','content','created_at')),f'{uid} non-string text')
+        assure(all(u[k] is None or isinstance(u[k],str) and u[k].strip() for k in ('speaker','side','actor','target')),f'{uid} invalid nullable text')
         assure(u['created_at'].endswith('Z'),f'{uid} wrong timestamp format')
         for s in u['source_refs']:
             fid=s['file_id'];assure(fid in docs,f'{uid} missing file {fid}')
@@ -156,6 +172,25 @@ def validate():
     n=js('tests/test_manifest.json')['counts']
     for key,li in [('gold_info_units',um),('positive_relations',rs),('negative_relations',ng),('view_selection_cases',selections),('view_compositions',views),('law_entries',laws),('law_cases',jl('gold_law_cases.jsonl')),('parse_cases',jl('gold_parse_cases.jsonl')),('end_to_end_cases',jl('gold_end_to_end.jsonl'))]:
         assure(n[key]==len(li),f'wrong manifest count {key}')
+    # New task expectations must reference the same current InfoUnit namespace.
+    namespaces={k:unitids for k in ('info_unit_id','selected_info_unit_ids','related_info_unit_ids',
+        'supporting_info_unit_ids','opposing_info_unit_ids','must_include_info_unit_ids',
+        'minimum_info_unit_gold_ids','forbidden_info_unit_gold_ids')}
+    namespaces.update({k:{r['id'] for r in rs} for k in ('selected_relation_ids','minimum_relation_gold_ids')})
+    namespaces.update({k:set(docs) for k in ('file_id','source_file_ids','forbidden_source_file_ids')})
+    for path in sorted((ROOT/'gold').glob('*.jsonl')):
+        validate_task_references(jl(path.name),namespaces,path.name)
+    basis=current_gold_basis()
+    template=[json.loads(line) for line in (ROOT/'tests/alignment_template.jsonl').read_text(encoding='utf-8').splitlines() if line.strip()]
+    ids=[x['gold_id'] for x in template]
+    assure(len(ids)==len(set(ids)) and set(ids)==unitids,'alignment template must cover each current Gold ID exactly once')
+    assure(all(x.get('gold_version')==basis['version'] and x.get('gold_basis_sha256')==basis['sha256'] for x in template),'stale alignment template version/hash')
+    readme=(ROOT/'README.md').read_text(encoding='utf-8')
+    annotation=(ROOT/'docs/annotation_review.md').read_text(encoding='utf-8')
+    for content,pattern,where in [(readme,r'包含 (\d+) 条','README'),(annotation,r'当前 Gold 共 \*\*(\d+) 条','annotation review')]:
+        match=re.search(pattern,content)
+        assure(match is not None and int(match[1])==len(um),f'{where}: Gold count inconsistent')
+    assure(f'v{basis["version"]}' in readme and f'v{basis["version"]}' in annotation,'documentation Gold version inconsistent')
     return n
 if __name__=='__main__':
     r=validate()

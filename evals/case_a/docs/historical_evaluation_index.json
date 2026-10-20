@@ -1,0 +1,291 @@
+{
+  "scope": "All existing local results directories; archival metadata only, never loaded as alternative runtime Gold.",
+  "current_gold_version": "1.7",
+  "historical_version_identity": "historical-16 / rubric-1.5",
+  "version_evidence": {
+    "git_head": "52623de3df9be520cb392f51f1a578eeb9725593",
+    "files": {
+      "evaluation_rubric.json": {
+        "sha256": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804",
+        "version": "1.5"
+      },
+      "gold_info_units.jsonl": {
+        "sha256": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "version": null
+      }
+    }
+  },
+  "policy": "Historical scores and proposition-splitting reviews remain unchanged. They do not define v1.7 acceptance and cannot be compared directly to v1.7 scores.",
+  "runs": [
+    {
+      "directory": "results/extraction_20261020",
+      "run_label": "extraction_20261020",
+      "gold_version_label": "historical-16 / rubric-1.5",
+      "info_unit_version_note": "InfoUnit JSONL has no standalone version; content identity is established by SHA-256, not inferred from run labels.",
+      "gold_info_units": 16,
+      "rubric_version": "1.5",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "evaluation_rubric.json": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020/run_report.json"
+      ],
+      "scores": [],
+      "comparable_to_current_gold": false,
+      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+    },
+    {
+      "directory": "results/extraction_20261020_first_only_5875b93d",
+      "run_label": "v7.1",
+      "gold_version_label": "historical-16 / rubric-1.5",
+      "info_unit_version_note": "InfoUnit JSONL has no standalone version; content identity is established by SHA-256, not inferred from run labels.",
+      "gold_info_units": 16,
+      "rubric_version": "1.5",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "evaluation_rubric.json": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020_first_only_5875b93d/protected_before.json"
+      ],
+      "scores": [
+        {
+          "path": "results/extraction_20261020_first_only_5875b93d/baseline_score_recomputed.json",
+          "gold_units": 16,
+          "predicted_units": 12,
+          "reviewed_matches": 9,
+          "gold_coverage": 0.5625,
+          "sha256": "2afbe8438e6a056e06590c91dc7660536c81a1585953d5b108219c82f6fadf30"
+        },
+        {
+          "path": "results/extraction_20261020_first_only_5875b93d/extraction_score.json",
+          "gold_units": 16,
+          "predicted_units": 16,
+          "reviewed_matches": 11,
+          "gold_coverage": 0.6875,
+          "sha256": "75805e4bcefc4ed796457eeb7b946d3855698747230e08a4979fd95f01a7f5b1"
+        }
+      ],
+      "comparable_to_current_gold": false,
+      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+    },
+    {
+      "directory": "results/extraction_20261020_first_only_e5b00709",
+      "run_label": "v7",
+      "gold_version_label": "historical-16 / rubric-1.5",
+      "info_unit_version_note": "InfoUnit JSONL has no standalone version; content identity is established by SHA-256, not inferred from run labels.",
+      "gold_info_units": 16,
+      "rubric_version": "1.5",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "evaluation_rubric.json": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020_first_only_e5b00709/protected_before.json"
+      ],
+      "scores": [
+        {
+          "path": "results/extraction_20261020_first_only_e5b00709/baseline_score_recomputed.json",
+          "gold_units": 16,
+          "predicted_units": 15,
+          "reviewed_matches": 10,
+          "gold_coverage": 0.625,
+          "sha256": "a6f59d084db678876d754da9e0dc410a84922c5d5853132edd5bc1971dc16dff"
+        },
+        {
+          "path": "results/extraction_20261020_first_only_e5b00709/diagnostic_extraction_score.json",
+          "gold_units": 16,
+          "predicted_units": 12,
+          "reviewed_matches": 9,
+          "gold_coverage": 0.5625,
+          "sha256": "2afbe8438e6a056e06590c91dc7660536c81a1585953d5b108219c82f6fadf30"
+        }
+      ],
+      "comparable_to_current_gold": false,
+      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+    },
+    {
+      "directory": "results/extraction_20261020_live",
+      "run_label": "extraction_20261020_live",
+      "gold_version_label": "historical-16 / rubric-1.5",
+      "info_unit_version_note": "InfoUnit JSONL has no standalone version; content identity is established by SHA-256, not inferred from run labels.",
+      "gold_info_units": 16,
+      "rubric_version": "1.5",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "evaluation_rubric.json": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020_live/run_report.json"
+      ],
+      "scores": [
+        {
+          "path": "results/extraction_20261020_live/extraction_score.json",
+          "gold_units": 16,
+          "predicted_units": 7,
+          "reviewed_matches": 6,
+          "gold_coverage": 0.375,
+          "sha256": "302936c72968398e0bcd2dfa21f26605215307de9a9d45907428a6ef6c8c8d38"
+        }
+      ],
+      "comparable_to_current_gold": false,
+      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+    },
+    {
+      "directory": "results/extraction_20261020_v2",
+      "run_label": "extraction_20261020_v2",
+      "gold_version_label": "historical-16 / rubric-1.5",
+      "info_unit_version_note": "InfoUnit JSONL has no standalone version; content identity is established by SHA-256, not inferred from run labels.",
+      "gold_info_units": 16,
+      "rubric_version": "1.5",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "evaluation_rubric.json": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020_v2/review_findings.json",
+        "results/extraction_20261020_v2/run_report.json"
+      ],
+      "scores": [],
+      "comparable_to_current_gold": false,
+      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+    },
+    {
+      "directory": "results/extraction_20261020_v3",
+      "run_label": "extraction_20261020_v3",
+      "gold_version_label": "historical-16 / rubric-1.5",
+      "info_unit_version_note": "InfoUnit JSONL has no standalone version; content identity is established by SHA-256, not inferred from run labels.",
+      "gold_info_units": 16,
+      "rubric_version": "1.5",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "evaluation_rubric.json": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020_v3/review_findings.json",
+        "results/extraction_20261020_v3/run_report.json"
+      ],
+      "scores": [],
+      "comparable_to_current_gold": false,
+      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+    },
+    {
+      "directory": "results/extraction_20261020_v3_schema_fixed",
+      "run_label": "extraction_20261020_v3_schema_fixed",
+      "gold_version_label": "historical-16 / rubric-1.5",
+      "info_unit_version_note": "InfoUnit JSONL has no standalone version; content identity is established by SHA-256, not inferred from run labels.",
+      "gold_info_units": 16,
+      "rubric_version": "1.5",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "evaluation_rubric.json": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020_v3_schema_fixed/review_findings.json",
+        "results/extraction_20261020_v3_schema_fixed/run_report.json"
+      ],
+      "scores": [],
+      "comparable_to_current_gold": false,
+      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+    },
+    {
+      "directory": "results/extraction_20261020_v4",
+      "run_label": "extraction_20261020_v4",
+      "gold_version_label": "historical-16 / rubric-1.5",
+      "info_unit_version_note": "InfoUnit JSONL has no standalone version; content identity is established by SHA-256, not inferred from run labels.",
+      "gold_info_units": 16,
+      "rubric_version": "1.5",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "evaluation_rubric.json": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020_v4/run_report.json"
+      ],
+      "scores": [
+        {
+          "path": "results/extraction_20261020_v4/extraction_score.json",
+          "gold_units": 16,
+          "predicted_units": 17,
+          "reviewed_matches": 10,
+          "gold_coverage": 0.625,
+          "sha256": "4fa636dcfd21c17b35977cf3f4fdd1d232c6934b6cb7a6bb14e1deec37b1df11"
+        }
+      ],
+      "comparable_to_current_gold": false,
+      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+    },
+    {
+      "directory": "results/extraction_20261020_v5",
+      "run_label": "extraction_20261020_v5",
+      "gold_version_label": "historical-16 / rubric-1.5",
+      "info_unit_version_note": "InfoUnit JSONL has no standalone version; content identity is established by SHA-256, not inferred from run labels.",
+      "gold_info_units": 16,
+      "rubric_version": "1.5",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "evaluation_rubric.json": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020_v5/run_report.json"
+      ],
+      "scores": [
+        {
+          "path": "results/extraction_20261020_v5/extraction_score.json",
+          "gold_units": 16,
+          "predicted_units": 14,
+          "reviewed_matches": 10,
+          "gold_coverage": 0.625,
+          "sha256": "e501d1d38c6f3cd8fb6b5f4bbf5768a0e97834c131610ba5bced65afdad0ecf0"
+        }
+      ],
+      "comparable_to_current_gold": false,
+      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+    },
+    {
+      "directory": "results/extraction_20261020_v6",
+      "run_label": "v6",
+      "gold_version_label": "historical-16 / rubric-1.5",
+      "info_unit_version_note": "InfoUnit JSONL has no standalone version; content identity is established by SHA-256, not inferred from run labels.",
+      "gold_info_units": 16,
+      "rubric_version": "1.5",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+        "evaluation_rubric.json": "34b6a72c59e49e77e79c62eb6e7dc91102085d38e0b8c2b65034bddc23e3a804"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020_v6/first_round_evaluation/protected_before.json",
+        "results/extraction_20261020_v6/run_report.json"
+      ],
+      "scores": [
+        {
+          "path": "results/extraction_20261020_v6/extraction_score.json",
+          "gold_units": 16,
+          "predicted_units": 14,
+          "reviewed_matches": 10,
+          "gold_coverage": 0.625,
+          "sha256": "73bf7f2cf3530b90ccbd887eba96add0a91628fd71e965dea45142075dfa662f"
+        },
+        {
+          "path": "results/extraction_20261020_v6/first_round_evaluation/extraction_score.json",
+          "gold_units": 16,
+          "predicted_units": 15,
+          "reviewed_matches": 10,
+          "gold_coverage": 0.625,
+          "sha256": "a6f59d084db678876d754da9e0dc410a84922c5d5853132edd5bc1971dc16dff"
+        },
+        {
+          "path": "results/extraction_20261020_v6/first_round_evaluation/final_score_recomputed.json",
+          "gold_units": 16,
+          "predicted_units": 14,
+          "reviewed_matches": 10,
+          "gold_coverage": 0.625,
+          "sha256": "73bf7f2cf3530b90ccbd887eba96add0a91628fd71e965dea45142075dfa662f"
+        }
+      ],
+      "comparable_to_current_gold": false,
+      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+    }
+  ]
+}

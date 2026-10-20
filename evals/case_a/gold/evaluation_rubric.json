@@ -1,5 +1,5 @@
 {
-  "version": "1.5",
+  "version": "1.7",
   "stage_metrics": {
     "parse": {
       "checks": [
@@ -14,6 +14,9 @@
       "checks": [
         "core_semantic_recall",
         "core_semantic_precision_reviewed",
+        "issue_oriented_utility_review",
+        "under_split_or_over_split_review",
+        "semantic_content_completeness",
         "valid_source_refs",
         "type_subtype_validity",
         "claim_attribution",
@@ -21,7 +24,7 @@
         "irrelevant_node_count",
         "unsupported_node_count"
       ],
-      "gate": "关键案情覆盖率>=90%，所有展示引用100%可验证；人工复核重复/无关/无依据节点；目标不限定提取条数，禁止把同一人重复陈述当独立证据。"
+      "gate": "覆盖重要案件信息、引文100%可定位，人工复核每个节点对核心及相关争点的作用、遗漏、冗余、误合并及过度拆分；核心覆盖率>=90%为参考门槛而非唯一通过标准。允许同一节点容纳互斥条款、同一方整体立场和同一状态的多源说法，不按句数或节点总数作硬性评定。"
     },
     "relation": {
       "checks": [
@@ -78,8 +81,9 @@
     "relation_semantics": "human_review_required",
     "semantic_matching": "human_review_or_explainable_semantic_judge",
     "original_docx": "compare_to_raw_files_when_available",
-    "gold_unit_granularity": "human_review_required; semantic minimality not inferable from counts alone",
+    "gold_unit_granularity": "优先围绕核心争点组织最小有用推理单元；独立审核需要不同证明材料/判断路径的事实时拆分。两条条件互斥规则、同一方完整立场、同一状态的来源时序差异可保留同节点；仅语义不同、日期不同并非必拆条件。",
     "vacancy_and_loss": "房屋短期空置可能支持租金收益损失的可能性；并非自动证明损失数额、因果关系或押金应当全扣。不将U035对U036的support设为必错或必须建立。",
-    "new_law_clauses": "最高人民法院正式司法解释第63、64、65、67条已逐项核对原文；是否在本案真正适用仍需专业审查。"
+    "new_law_clauses": "最高人民法院正式司法解释第63、64、65、67条已逐项核对原文；是否在本案真正适用仍需专业审查。",
+    "gold_one_to_one_diagnostic": "score_predictions.py的单预测对单Gold用于诊断性覆盖率；无法替代语义有用性、拆并质量、完整来源和证据关系的人工复核。Gold版本变化时旧分数不可与新分数直接比较，需重新对齐评分。"
   }
 }

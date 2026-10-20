@@ -1,20 +1,31 @@
-import json
-from pathlib import Path
-import tempfile
 import unittest
 from validate_eval import validate, jl, js
-from score_law_retrieval import evaluate
 
 class TestDataset(unittest.TestCase):
     def test_full_dataset_integrity(self):
         counts=validate()
-        self.assertEqual(counts['gold_info_units'],16) # 案件 A 精简参考集，非系统输出上限
+        self.assertEqual(counts['gold_info_units'],17) # 案件 A 精简参考集，非系统输出上限
         self.assertEqual(counts['negative_relations'],10)
 
     def test_all_keys_cover_core_dispute(self):
         gold={u['id']:u for u in jl('gold_info_units.jsonl')}
-        for uid in ['U004','U006','U008','U010','U015','U019','U022','U026','U029','U030','U035','U036']:
+        for uid in ['U004','U006','U008','U010','U015','U019','U022','U026','U027','U029','U030','U035','U036']:
             self.assertIn(uid,gold)
+
+    def test_issue_oriented_grouping_and_independent_new_lease(self):
+        gold={u['id']:u for u in jl('gold_info_units.jsonl')}
+        self.assertEqual(len(gold['U008']['source_refs']),2)
+        self.assertIn('退还',gold['U008']['content'])
+        self.assertIn('不予退还',gold['U008']['content'])
+        self.assertEqual(len(gold['U015']['source_refs']),1)
+        self.assertNotIn('看情况再说',gold['U015']['content'])
+        self.assertEqual(gold['U019']['type'],'statement')
+        self.assertEqual(gold['U035']['speaker'],'李某')
+        self.assertEqual(len(gold['U035']['source_refs']),2)
+        self.assertIn('3月8日',gold['U026']['content'])
+        self.assertNotIn('签订',gold['U026']['content'])
+        self.assertIn('合同',gold['U027']['content'])
+        self.assertIsNone(gold['U027']['actor'])
 
     def test_missing_chat_preserves_testimony_based_units(self):
         e=next(x for x in jl('gold_end_to_end.jsonl') if x['id']=='E2E003')
@@ -39,24 +50,5 @@ class TestDataset(unittest.TestCase):
     def test_vacancy_support_is_not_prohibited(self):
         forbidden={(x['source_id'],x['target_id'],x['relation_type']) for x in jl('negative_relations.jsonl')}
         self.assertNotIn(('U035','U036','support'),forbidden)
-
-    def test_law_scoring_consumes_v02_matches(self):
-        case=next(x for x in jl('gold_law_cases.jsonl') if x['id']=='L006')
-        prediction={'id':'L006','matches':[{
-            'law_id':'LAW-SC-0067','issue':case['input']['issue'],
-            'related_info_unit_ids':case['input']['selected_info_unit_ids'],
-            'relevance_reason':'候选法律依据，适用条件需另行复核'}]}
-        with tempfile.TemporaryDirectory() as directory:
-            path=Path(directory)/'prediction.jsonl'
-            path.write_text(json.dumps(prediction,ensure_ascii=False)+'\n',encoding='utf-8')
-            result=evaluate(path)['results'][0]
-            self.assertTrue(result['id_checks_pass'])
-            self.assertEqual(result['corpus_exactness_checks'],[True])
-
-    def test_law_scoring_rejects_noncontract_prediction_fields(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path=Path(directory)/'prediction.jsonl'
-            path.write_text(json.dumps({'id':'L006','matches':[],'unexpected':True})+'\n',encoding='utf-8')
-            with self.assertRaises(ValueError):evaluate(path)
 
 if __name__=='__main__':unittest.main()

@@ -1,0 +1,49 @@
+{
+  "executed_at": "2026-10-20T14:38:24.851034+00:00",
+  "model_calls": 0,
+  "commands": [
+    {
+      "command": [
+        "D:\\VSCode\\VSProj\\logicWeaver\\backend\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "evals/case_a/tests/validate_eval.py"
+      ],
+      "exit_code": 0,
+      "stdout": "PASS: JSONL / schema / file hashes / spans / relations / view references / laws / scenario IDs\n  gold_info_units: 17\n  positive_relations: 9\n  negative_relations: 10\n  view_selection_cases: 10\n  view_compositions: 6\n  law_entries: 15\n  law_cases: 13\n  parse_cases: 7\n  end_to_end_cases: 7\nNOTE: semantic/legal expert review is not automated by this script.\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "D:\\VSCode\\VSProj\\logicWeaver\\backend\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "evals/case_a/tests",
+        "-p",
+        "test_*.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "test_all_keys_cover_core_dispute (test_eval_data.TestDataset.test_all_keys_cover_core_dispute) ... ok\ntest_full_dataset_integrity (test_eval_data.TestDataset.test_full_dataset_integrity) ... ok\ntest_issue_oriented_grouping_and_independent_new_lease (test_eval_data.TestDataset.test_issue_oriented_grouping_and_independent_new_lease) ... ok\ntest_missing_chat_preserves_testimony_based_units (test_eval_data.TestDataset.test_missing_chat_preserves_testimony_based_units) ... ok\ntest_open_question_does_not_require_fixed_view (test_eval_data.TestDataset.test_open_question_does_not_require_fixed_view) ... ok\ntest_spc_interpretation_clauses_and_case_scope (test_eval_data.TestDataset.test_spc_interpretation_clauses_and_case_scope) ... ok\ntest_vacancy_support_is_not_prohibited (test_eval_data.TestDataset.test_vacancy_support_is_not_prohibited) ... ok\ntest_all_reference_view_payloads (test_schema_contract.TestGoldSchemaContract.test_all_reference_view_payloads) ... ok\ntest_extraction_and_relation_models (test_schema_contract.TestGoldSchemaContract.test_extraction_and_relation_models) ... ok\ntest_nested_task_input_and_expectation_stale_ids_are_rejected (test_schema_contract.TestGoldSchemaContract.test_nested_task_input_and_expectation_stale_ids_are_rejected) ... ok\ntest_all_current_gold_including_independent_lease_and_composites (test_scoring.TestCurrentGoldScoring.test_all_current_gold_including_independent_lease_and_composites) ... ok\ntest_duplicate_or_unknown_gold_rows_are_rejected (test_scoring.TestCurrentGoldScoring.test_duplicate_or_unknown_gold_rows_are_rejected) ... ok\ntest_existing_score_is_not_overwritten (test_scoring.TestCurrentGoldScoring.test_existing_score_is_not_overwritten) ... ok\ntest_invalid_sources_are_reported_without_changing_match_standard (test_scoring.TestCurrentGoldScoring.test_invalid_sources_are_reported_without_changing_match_standard) ... ok\ntest_law_scorer_accepts_current_new_lease_reference (test_scoring.TestCurrentGoldScoring.test_law_scorer_accepts_current_new_lease_reference) ... ok\ntest_missing_new_gold_row_is_rejected (test_scoring.TestCurrentGoldScoring.test_missing_new_gold_row_is_rejected) ... ok\ntest_old_version_or_stale_basis_is_rejected (test_scoring.TestCurrentGoldScoring.test_old_version_or_stale_basis_is_rejected) ... ok\ntest_one_prediction_cannot_score_both_move_in_and_new_lease (test_scoring.TestCurrentGoldScoring.test_one_prediction_cannot_score_both_move_in_and_new_lease) ... ok\ntest_saved_historical_prediction_can_be_read_with_current_review (test_scoring.TestCurrentGoldScoring.test_saved_historical_prediction_can_be_read_with_current_review) ... ok\ntest_unreviewed_template_cannot_be_presented_as_score (test_scoring.TestCurrentGoldScoring.test_unreviewed_template_cannot_be_presented_as_score) ... ok\ntest_view_selector_reads_current_tasks_without_fixed_order (test_scoring.TestCurrentGoldScoring.test_view_selector_reads_current_tasks_without_fixed_order) ... ok\n\n----------------------------------------------------------------------\nRan 21 tests in 4.198s\n\nOK\n"
+    },
+    {
+      "command": [
+        "D:\\VSCode\\VSProj\\logicWeaver\\backend\\.venv\\Scripts\\python.exe",
+        "-X",
+        "utf8",
+        "-B",
+        "evals/case_a/tests/check_docx_parsing.py"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "..\n----------------------------------------------------------------------\nRan 2 tests in 0.780s\n\nOK\n"
+    }
+  ]
+}

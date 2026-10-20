@@ -12,6 +12,7 @@ import io
 import json
 from pathlib import Path
 import sys
+from gold_basis import current_gold_basis
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parents[1] / "backend"))
@@ -24,7 +25,10 @@ from app.extraction_service import run_extraction
 
 
 async def run(output: Path) -> dict:
+    if output.exists() and any(output.iterdir()):
+        raise ValueError('Evaluation output must be empty; preserve historical runs')
     output.mkdir(parents=True, exist_ok=True)
+    gold_basis = current_gold_basis()
     manifest = json.loads((ROOT / "fixtures/file_manifest.json").read_text(encoding="utf-8"))
     gold_hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (ROOT / "gold").iterdir() if p.is_file()}
     case_store.DATA_DIR = output / "runtime"
@@ -33,7 +37,8 @@ async def run(output: Path) -> dict:
     source_kinds = {f["filename"]: f["source_kind"] for f in manifest["files"]}
     case = await create_case_from_uploads(manifest["case_title"], uploads, source_kinds)
     report = {"case_id": case.case_id, "model": None, "provider": None,
-              "input_file_count": len(case.files), "gold_hashes": gold_hashes}
+              "input_file_count": len(case.files), "gold_hashes": gold_hashes,
+              "gold_basis": gold_basis}
     try:
         config = llm_client.load_config()
         report.update(model=config.model, provider=config.provider)
