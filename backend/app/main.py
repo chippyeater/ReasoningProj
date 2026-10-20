@@ -1,6 +1,5 @@
 """FastAPI application entrypoint."""
 
-import json
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -9,10 +8,13 @@ from pydantic import BaseModel
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.case_service import (
+    ReasoningStageDisabledError,
+    RelationStageDisabledError,
+    RelationStageError,
+    build_timeline,
     create_case_from_uploads,
     create_empty_case,
     generate_inference_with_llm,
-    run_law_retrieve,
     route_task,
     run_extraction_agent,
     run_interaction_agent,
@@ -24,6 +26,7 @@ from app.case_service import (
     update_workspace,
     upsert_case_from_payload,
 )
+from app.extraction import ExtractionStageError
 from app.case_store import (
     clear_case,
     clear_current_case,
@@ -40,17 +43,17 @@ from app.schemas import (
     GenerateInferenceRequest,
     GenerateInferenceResponse,
     GetCaseResponse,
+    GetTimelineResponse,
     InteractionRequest,
     InteractionResponse,
     InteractionTrackRequest,
     InteractionTrackResponse,
-    LawRetrieveRequest,
-    LawRetrieveResponse,
     ListCasesResponse,
     QARequest,
     QAResponse,
     ReasoningRequest,
     ReasoningResponse,
+    ReferenceIntegrityError,
     RelationRequest,
     RelationResponse,
     RouteRequest,
@@ -102,6 +105,19 @@ async def get_case_by_id(case_id: str) -> GetCaseResponse:
     return GetCaseResponse(case=case)
 
 
+@app.get("/api/cases/{case_id}/timeline", response_model=GetTimelineResponse)
+async def get_case_timeline(case_id: str) -> GetTimelineResponse:
+    """Timeline runtime projection。
+
+    只读：不写回 CaseData、不生成 inference card、不调用 LLM、
+    不经过 disabled 的 generate_inference_with_llm。
+    """
+    case = load_case(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return GetTimelineResponse(success=True, timeline=build_timeline(case))
+
+
 @app.post("/api/cases", response_model=UpsertCaseResponse)
 # 异步接口，FastAPI会await这个函数的执行结果，request是完整http请求对象，包含了请求的所有信息
 # -> UpsertCaseResponse是这个接口的返回类型
@@ -132,7 +148,6 @@ async def create_or_upsert_case(request: Request) -> UpsertCaseResponse:
     case = create_empty_case(case_title=case_title, case_id=case_id)
     save_case(case, set_current=True)
     return UpsertCaseResponse(success=True, case=case)
-
 
 
 @app.post("/api/cases/{case_id}/files", response_model=UpsertCaseResponse)
@@ -223,9 +238,22 @@ async def post_generate_inference(payload: GenerateInferenceRequest) -> Generate
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    new_cards, new_edges, workspace, gen_message = await generate_inference_with_llm(case, payload)
+    try:
+        new_cards, new_edges, workspace, gen_message = await generate_inference_with_llm(case, payload)
+    except ReasoningStageDisabledError as exc:
+        # reasoning/inference 显式 disabled（Phase 1c clean-break），持久化 audit 后返回 501。
+        save_case(case, set_current=True)
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "status": "disabled",
+                "stage": exc.stage,
+                "phase": exc.phase,
+                "reason": exc.reason,
+            },
+        )
+
     case.inference_cards.extend(new_cards)
-    case.edges.extend(new_edges)
     case.workspace_state = workspace
     save_case(case, set_current=True)
 
@@ -236,34 +264,6 @@ async def post_generate_inference(payload: GenerateInferenceRequest) -> Generate
         updated_workspace_state=workspace,
         message=gen_message,
     )
-
-
-
-@app.post("/api/law/retrieve", response_model=LawRetrieveResponse)
-async def post_law_retrieve(payload: LawRetrieveRequest) -> LawRetrieveResponse:
-    case = load_case(payload.case_id)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    response = await run_law_retrieve(case, payload)
-    if response.new_law_cards:
-        existing = {card.id: card for card in case.law_cards}
-        for card in response.new_law_cards:
-            existing[card.id] = card
-        case.law_cards = list(existing.values())
-    if response.new_edges:
-        existing_keys = {(edge.source, edge.target, edge.edge_type.value) for edge in case.edges}
-        for edge in response.new_edges:
-            key = (edge.source, edge.target, edge.edge_type.value)
-            if key not in existing_keys:
-                existing_keys.add(key)
-                case.edges.append(edge)
-    if response.updated_workspace_state is not None:
-        case.workspace_state = response.updated_workspace_state
-    save_case(case, set_current=True)
-    return response
-
-
 
 
 @app.post("/api/router/route", response_model=RouteResponse)
@@ -283,9 +283,45 @@ async def post_extraction(payload: ExtractionRequest) -> ExtractionResponse:
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    units = await run_extraction_agent(case, payload)
+    try:
+        entities = await run_extraction_agent(case, payload)
+    except ReferenceIntegrityError as exc:
+        # 非法引用显式报错（422），不静默删除、不 fallback 到空。
+        save_case(case, set_current=True)
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "status": "error",
+                "stage": "extraction",
+                "phase": "phase2",
+                "reason": str(exc),
+                "invalid_refs": exc.invalid_refs,
+            },
+        )
+    except ExtractionStageError as exc:
+        # LLM/provider/parser failure → 500，禁止静默 fallback 到空。
+        save_case(case, set_current=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "stage": exc.stage,
+                "phase": exc.phase,
+                "reason": exc.reason,
+            },
+        )
+
     save_case(case, set_current=True)
-    return ExtractionResponse(success=True, info_units=units, message="extraction-complete")
+    return ExtractionResponse(
+        success=True,
+        persons=entities["persons"],
+        events=entities["events"],
+        locations=entities["locations"],
+        objects=entities["objects"],
+        claims=entities["claims"],
+        evidences=entities["evidences"],
+        message="extraction-complete",
+    )
 
 
 @app.post("/api/relation/run", response_model=RelationResponse)
@@ -294,9 +330,40 @@ async def post_relation(payload: RelationRequest) -> RelationResponse:
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    relations, edges = await run_relation_agent(case, payload)
+    try:
+        semantic_relations, edges = await run_relation_agent(case, payload)
+    except RelationStageDisabledError as exc:
+        # disabled 态：持久化 audit 后返回 501，绝不伪装成 200 成功。
+        save_case(case, set_current=True)
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "status": "disabled",
+                "stage": exc.stage,
+                "phase": exc.phase,
+                "reason": exc.reason,
+            },
+        )
+    except RelationStageError as exc:
+        # error 态：LLM/provider/parser failure。禁止 fallback 到 []，返回 500。
+        save_case(case, set_current=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "stage": exc.stage,
+                "phase": exc.phase,
+                "reason": exc.reason,
+            },
+        )
+
     save_case(case, set_current=True)
-    return RelationResponse(success=True, relations=relations, new_edges=edges, message="relation-complete")
+    return RelationResponse(
+        success=True,
+        semantic_relations=semantic_relations,
+        new_edges=edges,
+        message="relation-complete",
+    )
 
 
 @app.post("/api/reasoning/run", response_model=ReasoningResponse)
@@ -305,7 +372,21 @@ async def post_reasoning(payload: ReasoningRequest) -> ReasoningResponse:
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    response = await run_reasoning_agent(case, payload)
+    try:
+        response = await run_reasoning_agent(case, payload)
+    except ReasoningStageDisabledError as exc:
+        # reasoning 显式 disabled（Phase 1c clean-break），持久化 audit 后返回 501。
+        save_case(case, set_current=True)
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "status": "disabled",
+                "stage": exc.stage,
+                "phase": exc.phase,
+                "reason": exc.reason,
+            },
+        )
+
     save_case(case, set_current=True)
     return response
 
@@ -330,7 +411,6 @@ async def post_interaction(payload: InteractionRequest) -> InteractionResponse:
     response = await run_interaction_agent(case, payload)
     save_case(case, set_current=True)
     return response
-
 
 
 @app.post("/api/interaction/track", response_model=InteractionTrackResponse)

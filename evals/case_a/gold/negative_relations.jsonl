@@ -1,0 +1,10 @@
+{"id": "N001", "source_id": "U016", "target_id": "U010", "relation_type": "support", "expected": false, "reason": "找到接租人的陈述不能证明此前押金已经真实到账。"}
+{"id": "N002", "source_id": "U026", "target_id": "U029", "relation_type": "support", "expected": false, "reason": "张某关于入住的单方陈述不能独立证明房东没有经济损失；同源内容不是独立佐证。"}
+{"id": "N003", "source_id": "U035", "target_id": "U029", "relation_type": "contradict", "expected": false, "reason": "空置几天与没有经济损失并不必然相互排斥。"}
+{"id": "N004", "source_id": "U015", "target_id": "U019", "relation_type": "contradict", "expected": false, "reason": "提出有条件协商与后来拒退不构成无需检查条件和合意就成立的严格矛盾。"}
+{"id": "N005", "source_id": "U010", "target_id": "U008", "relation_type": "support", "expected": false, "reason": "押金转账文字记录并不证实押金条款的法律效力。"}
+{"id": "N006", "source_id": "U016", "target_id": "U015", "relation_type": "support", "expected": false, "reason": "找到愿意接续租住者，不足以直接证明已达成确定的部分退款约定。"}
+{"id": "N008", "source_id": "U026", "target_id": "U036", "relation_type": "contradict", "expected": false, "reason": "即使3月8日入住，也可能存在此前数日空置或其他损失，不能直接否认其损失主张。"}
+{"id": "N010", "source_id": "U019", "target_id": "U036", "relation_type": "support", "expected": false, "reason": "违约或拒退押金的立场不构成实际经济损失的直接证据。"}
+{"id": "N011", "source_id": "U012", "target_id": "U022", "relation_type": "contradict", "expected": false, "reason": "2月25日说可能提前搬走，与后来陈述3月5日搬走并不矛盾。"}
+{"id": "N012", "source_id": "U004", "target_id": "U019", "relation_type": "support", "expected": false, "reason": "租期较长本身不能单独证明合同条款是否有效或应直接全额扣押金。"}

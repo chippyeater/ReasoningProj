@@ -108,6 +108,8 @@ Step 4：为每张卡片指定展示策略
 
 Step 5：输出完整 layout_plan
 
+Step 6：输出针对用户问题的解答，分逻辑步骤输出reasoning_steps
+
 ---
 
 # Output Format
@@ -134,6 +136,11 @@ Step 5：输出完整 layout_plan
       }
     ]
   }
+  "reasoning_steps": [
+    "逻辑步骤1的逻辑简述",
+    "逻辑步骤2的逻辑简述",
+    "..."
+  ],
 }
 
 ---

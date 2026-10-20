@@ -1,64 +1,72 @@
 ﻿<!DOCTYPE html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<html lang="zh-CN" data-page-node-id="5m7NJKaIEJAHUv1ZRct9xw">
+  <head data-page-node-id="afOcXAHb0xJV7lLaBqK72l">
+    <meta charset="UTF-8" data-page-node-id="SMs9HqEK2EnPNWwAhZ3P7Z">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="ireIeF4XuBu0yDyk5HyF5k">
     <title>推理视图 MVP</title>
-    <link rel="stylesheet" href="./index.css">
+    <link rel="stylesheet" href="./index.css" data-page-node-id="ILXfC09cQt4IcnMmmWW7Qh">
   </head>
-  <body>
-    <div class="app">
-      <header class="top">
-        <div class="brand">推理视图 MVP</div>
-        <div class="case-title" id="caseTitle">当前案件：未加载</div>
-        <div class="top-actions">
-          <label class="btn primary" for="fileInput">上传材料</label>
-          <input id="fileInput" class="hidden" type="file" multiple>
-          <button class="btn" id="relationBtn">生成关系</button>
-          <button class="btn" id="fitBtn">适配视图</button>
-          <button class="btn" id="reloadBtn">刷新案件</button>
+  <body data-page-node-id="V1Y1mbZXYUPVmdj6tnu9Ud">
+    <div class="app" data-page-node-id="1WwcEr8yClSuBN4ggHGvFF">
+      <header class="top" data-page-node-id="aWgCo7zRHPGprCD9VfMrWU">
+        <div class="brand" data-page-node-id="wNjofRmU6l34DbqL3U5T28">推理视图 MVP</div>
+        <div class="case-title" id="caseTitle" data-page-node-id="Fx8En6dFb9XwUqoZAtSHbA">当前案件：未加载</div>
+        <div class="top-actions" data-page-node-id="IvuuHZkaiV2GuNlV3tvIev">
+          <label class="btn primary" for="fileInput" data-page-node-id="D8cnICzPBYH4OjOIB22Kip">上传材料</label>
+          <input id="fileInput" class="hidden" type="file" multiple data-page-node-id="OwG0mVeOVXNNcYrAgBdPDf">
+          <button class="btn" id="relationBtn" data-page-node-id="eiBlVACglIRHsSsRgL5ZH7">生成关系</button>
+          <button class="btn" id="timelineBtn" data-page-node-id="tlBtn0001">时间线</button>
+          <button class="btn" id="fitBtn" data-page-node-id="SOW75ndOA4vhVGf5wM1GBu">适配视图</button>
+          <button class="btn" id="reloadBtn" data-page-node-id="8LIwkNzP9E4F0AEcmSaWOM">刷新案件</button>
         </div>
       </header>
 
-      <aside class="sidebar">
-        <section class="section" style="flex:1;display:flex;flex-direction:column">
-          <div class="title">材料</div>
-          <div class="upload-zone" id="uploadZone">
-            <strong>拖入材料或 <span>点击选择</span></strong>
-            <div class="muted">支持多文件上传。上传后会自动追加到当前案件，没有案件则自动新建。</div>
+      <aside class="sidebar" data-page-node-id="IxGGLLmhsKEd5x58nBDhVz">
+        <section class="section" style="flex:1;display:flex;flex-direction:column" data-page-node-id="wYsT5vPZzLecBwBqQXxV5s">
+          <div class="title" data-page-node-id="xbOcDJGuwxYYJUfqk6PCJt">材料</div>
+          <div class="upload-zone" id="uploadZone" data-page-node-id="2d8FyRQD0sH4E8Y3TnXtDa">
+            <strong data-page-node-id="OzzFIRlXjPje8N5h9RtkSF">拖入材料或 <span data-page-node-id="jrO6TPZNF3gqlfrQGJbQsm">点击选择</span></strong>
+            <div class="muted" data-page-node-id="UOsQ7TARKerpQk7jP6ZfU2">支持多文件上传。上传后会自动追加到当前案件，没有案件则自动新建。</div>
           </div>
-          <div class="list" id="fileList"></div>
+          <div class="list" id="fileList" data-page-node-id="wM89ypwYGye0KEE0ebwdsd"></div>
         </section>
 
-        <section class="section" style="flex:1;display:flex;flex-direction:column">
-          <div class="title">当前选择</div>
-          <div class="list" id="selectionList"></div>
+        <section class="section" style="flex:1;display:flex;flex-direction:column" data-page-node-id="sUPwevJysHXbLVbAIONyNx">
+          <div class="title" data-page-node-id="wTsL9ukRev1Gj2se35hDNk">当前选择</div>
+          <div class="list" id="selectionList" data-page-node-id="ds4UsAiZHCXyWXBGjG74h1"></div>
         </section>
       </aside>
 
-      <main class="canvas-wrap" id="wrap">
-        <div class="content" id="content">
-          <div class="grid"></div>
-          <svg id="svg">
-            <defs>
-              <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                <polygon points="0 0,10 3.5,0 7" fill="rgba(255,255,255,.32)"></polygon>
+      <main class="canvas-wrap" id="wrap" data-page-node-id="Y6QXMxVEH1jjiwWs151EH0">
+        <div class="content" id="content" data-page-node-id="0aT4fC0vwizTkABFdGkhhp">
+          <div class="grid" data-page-node-id="GW6l2tGEAibvtjS9eWUVi9"></div>
+          <svg id="svg" data-page-node-id="vtSmBmZB9gepP2BJSLsDbU">
+            <defs data-page-node-id="0D9n1yMHu0qvMcxJidJRTw">
+              <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" data-page-node-id="pHWnrryywIqfJ2gjnUOijQ">
+                <polygon points="0 0,10 3.5,0 7" fill="rgba(255,255,255,.32)" data-page-node-id="H1azY5I6W6UexeIm8x9HXB"></polygon>
               </marker>
             </defs>
-            <g id="links"></g>
+            <g id="links" data-page-node-id="yLlxbWX60BWPehsg9oaJlF"></g>
           </svg>
-          <div class="nodes" id="nodes"></div>
+          <div class="nodes" id="nodes" data-page-node-id="7nJ4DKDn2xoakIoGUcwVhF"></div>
         </div>
-        <div class="empty" id="empty">
-          <h2>先拿到一份案件</h2>
-          <p>这不是组件演示页。它只保留一条真链路：上传材料，读取当前案件，渲染卡片与边，生成冲突卡，再由你完成冲突裁决。</p>
+        <div class="empty" id="empty" data-page-node-id="Lwss6qRW7pi70uOHATETd6">
+          <h2 data-page-node-id="w8nDYvgcaweqqsbWjqTxhe">先拿到一份案件</h2>
+          <p data-page-node-id="2qm0PSinn1RTbEaHa2Mb0l">这不是组件演示页。它只保留一条真链路：上传材料，读取当前案件，渲染卡片与边，生成冲突卡，再由你完成冲突裁决。</p>
+        </div>
+        <div class="timeline-panel hidden" id="timelinePanel" data-page-node-id="tlPanel001">
+          <div class="timeline-panel-head">
+            <div class="title">时间线</div>
+            <button class="btn" id="timelineCloseBtn" data-page-node-id="tlClose001">关闭</button>
+          </div>
+          <div class="timeline-panel-body" id="timelineBody" data-page-node-id="tlBody001"></div>
         </div>
       </main>
 
-      <footer class="bottom">
-        <div class="status" id="status">等待案件加载</div>
-        <input class="input" id="prompt" type="text" placeholder="输入：生成冲突视图 / 找待验证点 / 生成推论">
-        <button class="btn primary" id="sendBtn">发送</button>
+      <footer class="bottom" data-page-node-id="ohhGSwoWE8CQCDCq1BzvEm">
+        <div class="status" id="status" data-page-node-id="1XbpIVGee1GqBdik2sqE2l">等待案件加载</div>
+        <input class="input" id="prompt" type="text" placeholder="输入：生成冲突视图 / 找待验证点 / 生成推论" data-page-node-id="8q6zDhlV06KotpfSwi2rBx">
+        <button class="btn primary" id="sendBtn" data-page-node-id="IJZajESO0PqRShrfeZr1xj">发送</button>
       </footer>
     </div>
 

@@ -1,10 +1,56 @@
-﻿from __future__ import annotations
+﻿"""Schema 定义。
+
+本阶段（Phase 1b — Core Info Model Migration）已从旧的统一 InfoUnit 模型
+迁移到 6 个 type-specific 模型：
+
+- Person
+- Event（time 是结构化 EventTime，非独立 type）
+- Location
+- Object
+- Claim
+- Evidence
+
+extraction 输出不再有统一的 title/subtype/legal_type/side/stance_target，
+也不再有 InfoUnitType/SubjectSubtype/EventSubtype/StateSubtype/ClaimSubtype
+这组嵌套枚举。每个 type 只携带它需要的字段。
+
+Reference 校验（服务层）：
+- 校验通过 `CaseData.entity_by_id(ref)` 查找 + 实例类型判断完成。
+- ID 前缀（person-/event-/...）只是命名约定，不作为真实性判断依据。
+- 校验不通过时返回非法 id 列表，service 层记录日志但不抛错。
+
+字段约束：
+- Claim.claimant_ref 可为 None；claimant 无法解析时填 claimant_text 作 provenance。
+- 只有 source 明确表示存在一个 entity（人物 / 物件 / 地点 / 事件 / 材料）时才创建该 entity。
+- 不得从 Claim / 事件描述自动升级为 ownership / possession / 同一身份 等事实关系。
+
+旧字段一律删除，不提供 compatibility layer。
+"""
+
+from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
+
+
+def _utcnow() -> datetime:
+    """Server 侧时间戳默认工厂（naive UTC，与 case_service._now 保持一致）。"""
+    return datetime.utcnow()
+
+
+class ReferenceIntegrityError(Exception):
+    """Core entity ref 完整性被破坏时抛出。
+
+    build_structural_edges / extraction reference validation 遇到 dangling ref
+    或类型不匹配时抛出，不允许静默 skip。
+    """
+
+    def __init__(self, message: str = "", invalid_refs: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.invalid_refs = invalid_refs or []
 
 
 class FileType(str, Enum):
@@ -23,11 +69,9 @@ class FileParseStatus(str, Enum):
     failed = "failed"
 
 
-
 class CardType(str, Enum):
     meta = "meta"
     inference = "inference"
-    law = "law"
 
 
 class DisplayLevel(int, Enum):
@@ -42,12 +86,10 @@ class CardStatus(str, Enum):
     archived = "archived"
 
 
-
 class InferenceType(str, Enum):
     hypothesis = "hypothesis"
     conclusion = "conclusion"
     conflict = "conflict"
-    timeline = "timeline"
     missing_evidence = "missing_evidence"
     risk = "risk"
     other = "other"
@@ -60,19 +102,35 @@ class InferenceDecision(str, Enum):
     pending = "pending"
 
 
-class EdgeType(str, Enum):
-    relates_to = "relates_to"
+class GraphEdgeType(str, Enum):
+    """Runtime projection 的边类型（Phase 1c）。
+
+    覆盖两类：
+    - structural（deterministic，从 core entity refs 投影，0 LLM token）：
+      claimed_by / involved_in / about / occurs_in / involves_object
+    - semantic（LLM 抽取，从 SemanticRelation 投影）：
+      supports / contradicts（与 SemanticRelationType 共享 string value）
+    """
+
+    claimed_by = "claimed_by"
+    involved_in = "involved_in"
+    about = "about"
+    occurs_in = "occurs_in"
+    involves_object = "involves_object"
     supports = "supports"
-    opposes = "opposes"
-    derives = "derives"
-    mentions = "mentions"
-    conflicts_with = "conflicts_with"
-    missing_for = "missing_for"
-    cites = "cites"
-    belongs_to = "belongs_to"
-    grounded_in = "grounded_in"
-    applies_to = "applies_to"
-    retrieved_for = "retrieved_for"
+    contradicts = "contradicts"
+
+
+class SemanticRelationType(str, Enum):
+    """Semantic relation 类型（仅 LLM 抽取的语义关系，Phase 1c）。
+
+    与 GraphEdgeType 的 supports/contradicts 共享 string value，但二者是独立枚举：
+    SemanticRelation.relation_type 在类型层就不可能接受 claimed_by/involved_in 等
+    structural edge type。
+    """
+
+    supports = "supports"
+    contradicts = "contradicts"
 
 
 class ViewMode(str, Enum):
@@ -87,98 +145,12 @@ class ConfidenceLevel(str, Enum):
     low = "low"
 
 
-class CertaintyLevel(str, Enum):
-    explicit = "explicit"
-    inferred = "inferred"
-
-
 class RouterTask(str, Enum):
     extraction = "extraction"
     relation = "relation"
     reasoning = "reasoning"
-    law_retrieve = "law_retrieve"
     qa = "qa"
     interaction = "interaction"
-
-
-class InfoUnitType(str, Enum):
-    subject = "subject"
-    event = "event"
-    state = "state"
-    claim = "claim"
-
-
-class SubjectSubtype(str, Enum):
-    person = "person"
-    organization = "organization"
-
-
-class EventSubtype(str, Enum):
-    legal_act = "legal_act"
-    factual_act = "factual_act"
-    transaction = "transaction"
-    communication = "communication"
-    violation = "violation"
-
-
-class StateSubtype(str, Enum):
-    temporal = "temporal"
-    physical_state = "physical_state"
-    usage_state = "usage_state"
-
-
-class ClaimSubtype(str, Enum):
-    fact_assertion = "fact_assertion"
-    legal_assertion = "legal_assertion"
-    defense = "defense"
-
-
-class ClaimSide(str, Enum):
-    landlord = "landlord"
-    tenant = "tenant"
-    neutral = "neutral"
-    unknown = "unknown"
-
-
-class SubjectLegalType(str, Enum):
-    natural_person = "natural_person"
-    legal_person = "legal_person"
-    unincorporated_org = "unincorporated_org"
-
-
-class NormSourceType(str, Enum):
-    statute = "statute"
-    judicial_interpretation = "judicial_interpretation"
-    local_regulation = "local_regulation"
-    guideline = "guideline"
-    case_rule = "case_rule"
-    other = "other"
-
-
-class NormLevel(str, Enum):
-    constitution = "constitution"
-    law = "law"
-    administrative_regulation = "administrative_regulation"
-    local_regulation = "local_regulation"
-    judicial_interpretation = "judicial_interpretation"
-    normative_document = "normative_document"
-    other = "other"
-
-
-class InfoUnitSubtype(str, Enum):
-    person = SubjectSubtype.person.value
-    organization = SubjectSubtype.organization.value
-    legal_act = EventSubtype.legal_act.value
-    factual_act = EventSubtype.factual_act.value
-    transaction = EventSubtype.transaction.value
-    communication = EventSubtype.communication.value
-    violation = EventSubtype.violation.value
-    temporal = StateSubtype.temporal.value
-    physical_state = StateSubtype.physical_state.value
-    usage_state = StateSubtype.usage_state.value
-    fact_assertion = ClaimSubtype.fact_assertion.value
-    legal_assertion = ClaimSubtype.legal_assertion.value
-    defense = ClaimSubtype.defense.value
 
 
 class RecommendedView(str, Enum):
@@ -225,13 +197,6 @@ class HypothesisLinkTone(str, Enum):
     negative = "negative"
 
 
-class TimeGranularity(str, Enum):
-    mixed = "mixed"
-    day = "day"
-    month = "month"
-    year = "year"
-
-
 class TimePrecision(str, Enum):
     year = "year"
     month = "month"
@@ -240,43 +205,12 @@ class TimePrecision(str, Enum):
     unknown = "unknown"
 
 
-class TimelineEventType(str, Enum):
-    action = "action"
-    agreement = "agreement"
-    payment = "payment"
-    communication = "communication"
-    delivery = "delivery"
-    conflict = "conflict"
-    statement = "statement"
-    filing = "filing"
-    judgment = "judgment"
-    other = "other"
-
-
 class TimelinePreviewType(str, Enum):
+    """HypothesisMetaNode.preview_type 仍在复用，暂保留。"""
+
     document = "document"
     image = "image"
     none = "none"
-
-
-class TimelineConflictStatus(str, Enum):
-    none = "none"
-    possible_conflict = "possible_conflict"
-    conflicted = "conflicted"
-
-
-class TimelineLayoutMode(str, Enum):
-    fixed_five_point = "fixed_five_point"
-
-
-class TimelineZoomBehavior(str, Enum):
-    expand_detail_on_zoom = "expand_detail_on_zoom"
-
-
-class TimelinePointEmphasis(str, Enum):
-    normal = "normal"
-    muted = "muted"
-    focused = "focused"
 
 
 class LayoutSectionType(str, Enum):
@@ -305,6 +239,7 @@ class LayoutCardRole(str, Enum):
     state = "state"
     summary = "summary"
 
+
 class IntentType(str, Enum):
     qa = "qa"
     search = "search"
@@ -324,6 +259,182 @@ class UIActionType(str, Enum):
     open_view = "open_view"
     rearrange = "rearrange"
     create_node = "create_node"
+
+
+# ---------------------------------------------------------------------------
+# Core Info Model — Phase 1b 新 schema
+# ---------------------------------------------------------------------------
+
+EventTimePrecision = Literal["exact", "approximate", "unknown"]
+
+
+class EventTime(BaseModel):
+    """Event / Claim 共用的时间属性。结构化对象，不作为独立 InfoUnit type。
+
+    字段语义：
+
+    - `label`：source 中用户可读的时间表达，忠实原文，**不要求机器可排序**。
+    - `sort_value`：canonical temporal key。`!= None` 表示"可以直接机器比较的
+      absolute canonical time"，格式统一为 `YYYY-MM-DDTHH:MM`。
+      仅在 source / extraction context 足以可靠得到**完整年月日 + 时间**时生成；
+      不得复制 `label`，不得猜测 source 中不存在的年 / 月 / 日 / 相对时间锚点。
+      无法可靠规范化时必须为 `null`，该情况下该项不参与时间排序。
+      （partial key 如 `MM-DDTHH:MM`、`HH:MM` 一律不使用；relative time
+      resolution 与 partial temporal ordering 不在本 contract 范围内。）
+    - `precision`：source 时间**陈述的确定程度**，取值 `exact / approximate / unknown`。
+      它**不**表示 year/month/day/hour/minute 粒度。
+    """
+
+    label: str
+    sort_value: str | None = None
+    precision: EventTimePrecision = "unknown"
+
+
+class Person(BaseModel):
+    id: str
+    name: str
+    # Phase 1c：仅 schema support。aliases 不生成 same_as edge，本阶段不实现
+    # 任何 LLM entity resolution / alias merge 行为（留给后续 Extraction / Entity
+    # Resolution contract 设计）。
+    aliases: list[str] = Field(default_factory=list)
+    description: str | None = None
+    source_refs: list[str] = Field(default_factory=list)
+    confidence: ConfidenceLevel = ConfidenceLevel.medium
+    evidence_quote: str = ""
+
+    # created_at / updated_at 带默认工厂：Extraction LLM 直接复用本模型输出，
+    # 无需在 LLM 契约中携带时间戳（server 侧统一补写）。
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class Location(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    source_refs: list[str] = Field(default_factory=list)
+    confidence: ConfidenceLevel = ConfidenceLevel.medium
+    evidence_quote: str = ""
+
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class Object(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    source_refs: list[str] = Field(default_factory=list)
+    confidence: ConfidenceLevel = ConfidenceLevel.medium
+    evidence_quote: str = ""
+
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class Event(BaseModel):
+    id: str
+    description: str
+    time: EventTime | None = None
+    # Phase 1c：actor_ref → participant_refs（一个 Event 可有多个参与者）。
+    participant_refs: list[str] = Field(default_factory=list)
+    location_ref: str | None = None
+    object_refs: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    confidence: ConfidenceLevel = ConfidenceLevel.medium
+    evidence_quote: str = ""
+
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class Claim(BaseModel):
+    """陈述/观点。
+
+    - source ≠ claimant：claimant_ref 指向 Person，但 source_refs 指向文件证据。
+    - claimant_ref 可为 None：source 只说"某人说了X"但未指名时，
+      用 claimant_text 保留原文 provenance，不做身份推断或自动匿名 Person 创建。
+
+    Claim 不是"低 confidence Event"：claimant 描述了某个事件，也不额外生成 Event。
+    Claim 描述内容可携带 proposition 的强类型结构化描述（time / participant_refs /
+    location_ref / object_refs）；这些字段全部可选——并非所有 Claim 都描述事件
+    （例如"这把刀是李明的"是合法 Claim，不需要 time）。
+
+    about_refs vs 强类型字段：
+    - about_refs：Claim 广义上涉及/谈论的实体（任意 kind）。
+    - participant_refs / location_ref / object_refs / time：对 proposition 的强类型结构化描述。
+    二者允许重叠，本轮不做收敛。
+    """
+
+    id: str
+    # Phase 1c：speaker_ref → claimant_ref。
+    claimant_ref: str | None = None
+    # Phase 1c：speaker_text → claimant_text。
+    claimant_text: str | None = None
+    proposition: str
+    about_refs: list[str] = Field(default_factory=list)
+
+    # proposition 内容的强类型结构化描述（均可选：Claim 不必描述事件）。
+    # 复用 EventTime（不新建时间类型）：label / sort_value / precision。
+    # Event.time 与 Claim.time 共用同一 contract。
+    time: EventTime | None = None
+    # 陈述内容涉及的人（不含仅作为说话者的 claimant，除非 claimant 本身也是 proposition 参与者）。
+    participant_refs: list[str] = Field(default_factory=list)
+    # 陈述内容涉及的地点。
+    location_ref: str | None = None
+    # 陈述内容涉及的物体。
+    object_refs: list[str] = Field(default_factory=list)
+
+    source_refs: list[str] = Field(default_factory=list)
+    confidence: ConfidenceLevel = ConfidenceLevel.medium
+    evidence_quote: str = ""
+
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class Evidence(BaseModel):
+    """材料/记录本身。只描述材料记录了什么，不代表内容真假。"""
+
+    id: str
+    description: str
+    about_refs: list[str] = Field(default_factory=list)
+    source_refs: list[str] = Field(default_factory=list)
+    confidence: ConfidenceLevel = ConfidenceLevel.medium
+    evidence_quote: str = ""
+
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
+# 所有 entity 类型的 union，供 CaseData 校验 reference 时遍历。
+CoreEntity = Person | Event | Location | Object | Claim | Evidence
+
+
+class ExtractionLLMResult(BaseModel):
+    """Phase 2：Extraction LLM 直接返回的 typed 输出契约。
+
+    只允许 6 类 entity 集合。`extra="forbid"` 显式拒绝 legacy 字段
+    （info_units / core_issue / issue_set 等），确保 pipeline 不再经过旧 schema。
+
+    LLM 侧只需输出每个 entity 的 id 与业务字段；created_at / updated_at 由
+    server 侧统一补写（见各 entity 的 default_factory）。
+    """
+
+    model_config = {"extra": "forbid"}
+
+    persons: list[Person] = Field(default_factory=list)
+    events: list[Event] = Field(default_factory=list)
+    locations: list[Location] = Field(default_factory=list)
+    objects: list[Object] = Field(default_factory=list)
+    claims: list[Claim] = Field(default_factory=list)
+    evidences: list[Evidence] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# 引用校验：在 service 层用 core_entity_by_id 表做跨实体校验，
+# 单独的 schema validator 只能看单 entity 内的 ref 格式（id 非空字符串）。
+# ---------------------------------------------------------------------------
 
 
 class CaseFile(BaseModel):
@@ -377,6 +488,8 @@ class CardBase(BaseModel):
     updated_at: datetime
 
 
+# MetaDetail 现在不再承载 info_type/info_subtype；保留 description/tags/attributes
+# 以便前端展示与未来扩展，但不参与本阶段 type 推断。
 class MetaDetail(BaseModel):
     name: str | None = None
     description: str | None = None
@@ -384,64 +497,45 @@ class MetaDetail(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+# 实体类型 tag，用于卡片渲染与前端 kindOf 判定。
+# 不携带"法律分类"语义，仅作 display tag。
+class MetaEntityKind(str, Enum):
+    person = "person"
+    event = "event"
+    location = "location"
+    object = "object"
+    claim = "claim"
+    evidence = "evidence"
+
+
 class MetaCard(CardBase):
+    """对应一个 core entity 的展示卡。
+
+    `entity_ref` 指向具体 entity id（person-xxx / event-xxx / claim-xxx ...），
+    `entity_kind` 仅供前端按 kind 渲染（person/event/...）。两字段必须一致。
+    """
+
     card_type: Literal[CardType.meta] = CardType.meta
-    info_type: InfoUnitType
-    info_subtype: InfoUnitSubtype
+    entity_kind: MetaEntityKind
+    entity_ref: str
 
     detail: MetaDetail = Field(default_factory=MetaDetail)
 
-
-class LawDetail(BaseModel):
-    source_type: NormSourceType = NormSourceType.other
-    norm_level: NormLevel = NormLevel.other
-    article_no: str | None = None
-    title_full: str = ""
-    effective_status: str | None = None
-    source_url: str | None = None
-    keywords: list[str] = Field(default_factory=list)
-    text: str | None = None
-    source_info_unit_ids: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _upgrade_legacy_payload(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        payload = dict(data)
-        payload.setdefault("source_type", payload.get("source_type") or "other")
-        payload.setdefault("norm_level", payload.get("norm_level") or "other")
-        payload.setdefault("title_full", payload.get("title_full") or payload.get("legal_type") or "")
-        payload.setdefault("keywords", payload.get("keywords") or [])
-        return payload
-
-
-class LawCard(CardBase):
-    card_type: Literal[CardType.law] = CardType.law
-    source_type: NormSourceType = NormSourceType.other
-    norm_level: NormLevel = NormLevel.other
-    detail: LawDetail
-
-    @model_validator(mode="before")
-    @classmethod
-    def _upgrade_legacy_payload(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        payload = dict(data)
-        raw_detail = payload.get("detail")
-        detail: dict[str, Any] = raw_detail if isinstance(raw_detail, dict) else {}
-        source_type = detail.get("source_type") or payload.get("source_type") or NormSourceType.other
-        norm_level = detail.get("norm_level") or payload.get("norm_level") or NormLevel.other
-        payload["source_type"] = source_type if isinstance(source_type, NormSourceType) else NormSourceType(str(source_type))
-        payload["norm_level"] = norm_level if isinstance(norm_level, NormLevel) else NormLevel(str(norm_level))
-        return payload
-
-
-class RecommendedResolution(BaseModel):
-    recommended_decision: InferenceDecision = InferenceDecision.pending
-    preferred_side: ClaimSide = ClaimSide.neutral
-    reason: str = ""
-    confidence: float | None = None
+    @model_validator(mode="after")
+    def _validate_entity_prefix(self) -> "MetaCard":
+        """entity_ref id 前缀应与 entity_kind 匹配，仅做格式提示，不强制。"""
+        expected_prefix = {
+            MetaEntityKind.person: "person-",
+            MetaEntityKind.event: "event-",
+            MetaEntityKind.location: "location-",
+            MetaEntityKind.object: "object-",
+            MetaEntityKind.claim: "claim-",
+            MetaEntityKind.evidence: "evidence-",
+        }.get(self.entity_kind, "")
+        if expected_prefix and not self.entity_ref.startswith(expected_prefix):
+            # 不抛错，只在 attributes 里记录；具体 entity 校验在 service 层。
+            self.detail.attributes.setdefault("entity_ref_prefix_hint", expected_prefix)
+        return self
 
 
 class ReasoningLayoutCard(BaseModel):
@@ -462,6 +556,18 @@ class ReasoningLayoutSection(BaseModel):
 
 class ReasoningLayoutPlan(BaseModel):
     sections: list[ReasoningLayoutSection] = Field(default_factory=list)
+
+
+# Phase 1b.1：删除 RecommendedResolution.preferred_side。
+# 旧 side 枚举（ClaimSide）已删除，立场归类应在 Relation 阶段（Phase 1c）由
+# entity-aware Relation 抽取完成；本阶段不允许在 schema 暴露任何 side/position 字段，
+# 也禁止 service 层用 "neutral"/"landlord"/"tenant" 等自由 str 充当 side。
+class RecommendedResolution(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    recommended_decision: InferenceDecision = InferenceDecision.pending
+    reason: str = ""
+    confidence: float | None = None
 
 
 class ConflictViewPayload(BaseModel):
@@ -528,73 +634,41 @@ class HypothesisViewPayload(BaseModel):
     selected_hypothesis_id: str | None = None
 
 
-class TimelineTimepoint(BaseModel):
-    id: str
-    time_label: str
-    time_sort_value: str = ""
-    time_precision: TimePrecision = TimePrecision.unknown
-    event_title: str
-    event_brief: str
-    event_ids: list[str] = Field(default_factory=list)
-    certainty: ConfidenceLevel = ConfidenceLevel.medium
-    is_key_event: bool = False
-    point_index: int | None = None
-    emphasis: TimelinePointEmphasis = TimelinePointEmphasis.normal
+# ---------------------------------------------------------------------------
+# Timeline View Model（runtime projection，不持久化、不建事实实体）
+#
+# Timeline 只消费 Core Entity（Event / Claim）的 time，通过 item_ref 回查。
+# 不复制 actors / location 文本 / summary / event_type 等 Core Entity 字段。
+# 不写入 CaseData：每次请求由 build_timeline(case) 现场投影。
+# ---------------------------------------------------------------------------
 
 
-class TimelineEvent(BaseModel):
-    id: str
-    timepoint_id: str
-    title: str
-    summary: str
-    detail: str
-    full_description: str
-    actors: list[str] = Field(default_factory=list)
-    location: str = ""
-    event_type: TimelineEventType = TimelineEventType.other
-    preview_type: TimelinePreviewType = TimelinePreviewType.none
-    related_info_unit_ids: list[str] = Field(default_factory=list)
-    source_excerpt: str = ""
-    askable_questions: list[str] = Field(default_factory=list)
-    importance: ConfidenceLevel = ConfidenceLevel.medium
-    time_conflict_status: TimelineConflictStatus = TimelineConflictStatus.none
-    primary_detail_info_unit_id: str | None = None
-    preview_url: str | None = None
+class TimelineItemType(str, Enum):
+    event = "event"
+    claim = "claim"
 
 
-class TimelineDetailCard(BaseModel):
-    event_id: str
-    title: str
-    detail: str
-    card_label: str = "元信息"
-    preview_type: TimelinePreviewType = TimelinePreviewType.none
-    preview_url: str | None = None
-    related_info_unit_ids: list[str] = Field(default_factory=list)
-    source_excerpt: str = ""
+class TimelineItem(BaseModel):
+    item_type: TimelineItemType
+    # 指向 Core Entity id（event-* / claim-*）。前端据此回查 CaseData。
+    item_ref: str
+    time: EventTime
 
 
-class TimelineViewPayload(BaseModel):
-    view_type: Literal[RecommendedView.timeline] = RecommendedView.timeline
-    timeline_title: str = ""
-    time_granularity: TimeGranularity = TimeGranularity.mixed
-    layout_mode: TimelineLayoutMode = TimelineLayoutMode.fixed_five_point
-    visible_point_count: int = 5
-    focused_timepoint_id: str | None = None
-    expanded_event_id: str | None = None
-    zoom_behavior: TimelineZoomBehavior = TimelineZoomBehavior.expand_detail_on_zoom
-    timepoints: list[TimelineTimepoint] = Field(default_factory=list)
-    events: list[TimelineEvent] = Field(default_factory=list)
-    detail_card: TimelineDetailCard | None = None
+class TimelineView(BaseModel):
+    case_id: str
+    # 已按确定性规则排序（见 case_service.build_timeline）。
+    items: list[TimelineItem] = Field(default_factory=list)
 
 
-ReasoningViewPayload = ConflictViewPayload | HypothesisViewPayload | TimelineViewPayload
+ReasoningViewPayload = ConflictViewPayload | HypothesisViewPayload
 _REASONING_VIEW_PAYLOAD_ADAPTER = TypeAdapter(ReasoningViewPayload)
 
 
 def parse_reasoning_view_payload(payload: Any) -> ReasoningViewPayload | None:
     if payload is None:
         return None
-    if isinstance(payload, (ConflictViewPayload, HypothesisViewPayload, TimelineViewPayload)):
+    if isinstance(payload, (ConflictViewPayload, HypothesisViewPayload)):
         return payload
     if not isinstance(payload, dict):
         return None
@@ -602,6 +676,7 @@ def parse_reasoning_view_payload(payload: Any) -> ReasoningViewPayload | None:
         return _REASONING_VIEW_PAYLOAD_ADAPTER.validate_python(payload)
     except Exception:
         return None
+
 
 class InferenceDetail(BaseModel):
     claim: str
@@ -615,7 +690,6 @@ class InferenceDetail(BaseModel):
     missing_card_ids: list[str] = Field(default_factory=list)
 
     confidence: float | None = None
-    legal_basis_ids: list[str] = Field(default_factory=list)
 
     @property
     def parsed_view_payload(self) -> ReasoningViewPayload | None:
@@ -632,6 +706,7 @@ class InferenceDetail(BaseModel):
         except Exception:
             return None
 
+
 class InferenceCard(CardBase):
     card_type: Literal[CardType.inference] = CardType.inference
     inference_type: InferenceType
@@ -641,10 +716,16 @@ class InferenceCard(CardBase):
 
 
 class GraphEdge(BaseModel):
+    """Runtime projection 的边（Phase 1c，不持久化）。
+
+    由 `build_structural_edges` / `build_semantic_edges` 在运行时从 core entity refs
+    与 semantic_relations 投影生成，不写入 CaseData。
+    """
+
     id: str
     source: str
     target: str
-    edge_type: EdgeType
+    edge_type: GraphEdgeType
 
     relation_type: str | None = None
     label: str | None = None
@@ -659,90 +740,24 @@ class GraphEdge(BaseModel):
         return self
 
 
-class InfoUnit(BaseModel):
-    id: str
-    type: InfoUnitType
-    subtype: InfoUnitSubtype
-    subject_legal_type: SubjectLegalType | None = None
-    title: str
-    summary: str
-    detail: str
-    actor: str | None = None
-    target: str | None = None
-    speaker: str | None = None
-    side: ClaimSide | None = None
-    stance_target: str | None = None
-    source_refs: list[str] = Field(default_factory=list)
-    confidence: ConfidenceLevel = ConfidenceLevel.medium
-    extraction_reason: str
-    evidence_quote: str
-    created_at: datetime
-    updated_at: datetime
+class SemanticRelation(BaseModel):
+    """语义关系（Phase 1c，持久化）。
 
-    @model_validator(mode="before")
-    @classmethod
-    def _upgrade_legacy_payload(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        payload = dict(data)
-        legacy = payload.pop("legal_type", None)
-        normalized = payload.get("subject_legal_type", legacy)
-        if isinstance(normalized, str):
-            normalized = normalized.strip().lower()
-            if normalized in {"", "none", "null", "n/a", "unknown"}:
-                normalized = None
-        payload["subject_legal_type"] = normalized
-        return payload
+    仅由 Relation stage 的 LLM 抽取产生，描述两个 information item 之间是否存在
+    supports / contradicts 语义关系。端点约束见 run_relation_agent。
 
-    @model_validator(mode="after")
-    def _validate_type_subtype(self) -> "InfoUnit":
-        allowed: dict[InfoUnitType, set[str]] = {
-            InfoUnitType.subject: {SubjectSubtype.person.value, SubjectSubtype.organization.value},
-            InfoUnitType.event: {
-                EventSubtype.legal_act.value,
-                EventSubtype.factual_act.value,
-                EventSubtype.transaction.value,
-                EventSubtype.communication.value,
-                EventSubtype.violation.value,
-            },
-            InfoUnitType.state: {
-                StateSubtype.temporal.value,
-                StateSubtype.physical_state.value,
-                StateSubtype.usage_state.value,
-            },
-            InfoUnitType.claim: {
-                ClaimSubtype.fact_assertion.value,
-                ClaimSubtype.legal_assertion.value,
-                ClaimSubtype.defense.value,
-            },
-        }
-        allowed_subtypes = allowed.get(self.type, set())
-        if self.subtype.value not in allowed_subtypes:
-            raise ValueError(
-                f"Invalid subtype '{self.subtype.value}' for type '{self.type.value}'. "
-                f"Allowed: {sorted(allowed_subtypes)}"
-            )
-        if self.type != InfoUnitType.subject and self.subject_legal_type is not None:
-            raise ValueError("subject_legal_type is only allowed when type is subject")
-        if self.type != InfoUnitType.event:
-            self.actor = None
-            self.target = None
-        if self.type != InfoUnitType.claim:
-            self.speaker = None
-            self.side = None
-            self.stance_target = None
-        return self
+    - relation_type: SemanticRelationType（类型层禁止 structural edge type）。
+    - detection_confidence: 模型对「这两个 item 之间存在该语义关系」的判断置信度，
+      不同于 Core Entity 的 confidence（extraction confidence）。
+    - rationale: 一句说明该关系为何成立。
+    """
 
-
-class RelationRecord(BaseModel):
     id: str
     source_id: str
     target_id: str
-    relation_type: str
-    confidence: ConfidenceLevel = ConfidenceLevel.medium
-    evidence_basis: str
-    rationale: str
-    certainty_level: CertaintyLevel = CertaintyLevel.explicit
+    relation_type: SemanticRelationType
+    detection_confidence: ConfidenceLevel = ConfidenceLevel.medium
+    rationale: str = ""
     created_at: datetime
 
 
@@ -778,22 +793,54 @@ class CaseData(BaseModel):
     updated_at: datetime
 
     files: list[CaseFile] = Field(default_factory=list)
-    info_units: list[InfoUnit] = Field(default_factory=list)
-    relations: list[RelationRecord] = Field(default_factory=list)
-    core_issue: str | None = None
-    issue_set: list[str] = Field(default_factory=list)
+
+    # 旧统一 info_units 替换为 6 个 entity 集合。
+    persons: list[Person] = Field(default_factory=list)
+    events: list[Event] = Field(default_factory=list)
+    locations: list[Location] = Field(default_factory=list)
+    objects: list[Object] = Field(default_factory=list)
+    claims: list[Claim] = Field(default_factory=list)
+    evidences: list[Evidence] = Field(default_factory=list)
+
+    # Phase 1c：semantic relations 持久化；structural GraphEdge 不持久化（runtime projection）。
+    semantic_relations: list[SemanticRelation] = Field(default_factory=list)
 
     meta_cards: list[MetaCard] = Field(default_factory=list)
     inference_cards: list[InferenceCard] = Field(default_factory=list)
-    law_cards: list[LawCard] = Field(default_factory=list)
-    edges: list[GraphEdge] = Field(default_factory=list)
 
     workspace_state: WorkspaceState = Field(default_factory=WorkspaceState)
     agent_runs: list[AgentRunLog] = Field(default_factory=list)
 
+    def entity_by_id(self, entity_id: str) -> CoreEntity | None:
+        for collection in (self.persons, self.events, self.locations, self.objects, self.claims, self.evidences):
+            for entity in collection:
+                if entity.id == entity_id:
+                    return entity
+        return None
+
+    def all_entities(self) -> list[CoreEntity]:
+        return [
+            *self.persons,
+            *self.events,
+            *self.locations,
+            *self.objects,
+            *self.claims,
+            *self.evidences,
+        ]
+
 
 class GetCaseResponse(BaseModel):
     case: CaseData | None = None
+
+
+class GetTimelineResponse(BaseModel):
+    """Timeline runtime projection 响应。
+
+    Timeline 不持久化：每次请求由 build_timeline(case) 现场投影。
+    """
+
+    success: bool = True
+    timeline: TimelineView | None = None
 
 
 class UpsertCaseResponse(BaseModel):
@@ -840,30 +887,6 @@ class GenerateInferenceResponse(BaseModel):
     message: str | None = None
 
 
-class LawRetrieveIntent(str, Enum):
-    support_conflict_resolution = "support_conflict_resolution"
-    retrieve_for_conclusion = "retrieve_for_conclusion"
-    validate_conflict_basis = "validate_conflict_basis"
-
-
-class LawRetrieveRequest(BaseModel):
-    case_id: str
-    conflict_card_id: str
-    selected_card_ids: list[str] = Field(default_factory=list)
-    intent: LawRetrieveIntent = LawRetrieveIntent.support_conflict_resolution
-    query_hint: str | None = None
-    max_results: int = 5
-
-
-class LawRetrieveResponse(BaseModel):
-    success: bool
-    conflict_card_id: str
-    new_law_cards: list[LawCard] = Field(default_factory=list)
-    new_edges: list[GraphEdge] = Field(default_factory=list)
-    updated_workspace_state: WorkspaceState | None = None
-    message: str | None = None
-
-
 class CaseListItem(BaseModel):
     case_id: str
     case_title: str
@@ -898,7 +921,12 @@ class ExtractionRequest(BaseModel):
 
 class ExtractionResponse(BaseModel):
     success: bool
-    info_units: list[InfoUnit] = Field(default_factory=list)
+    persons: list[Person] = Field(default_factory=list)
+    events: list[Event] = Field(default_factory=list)
+    locations: list[Location] = Field(default_factory=list)
+    objects: list[Object] = Field(default_factory=list)
+    claims: list[Claim] = Field(default_factory=list)
+    evidences: list[Evidence] = Field(default_factory=list)
     message: str | None = None
 
 
@@ -909,7 +937,7 @@ class RelationRequest(BaseModel):
 
 class RelationResponse(BaseModel):
     success: bool
-    relations: list[RelationRecord] = Field(default_factory=list)
+    semantic_relations: list[SemanticRelation] = Field(default_factory=list)
     new_edges: list[GraphEdge] = Field(default_factory=list)
     message: str | None = None
 
@@ -936,6 +964,7 @@ class ReasoningResponse(BaseModel):
     @property
     def parsed_view_payload(self) -> ReasoningViewPayload | None:
         return parse_reasoning_view_payload(self.view_payload)
+
 
 class QARequest(BaseModel):
     case_id: str
@@ -968,6 +997,7 @@ class InteractionResponse(BaseModel):
     ui_actions: list[UIAction] = Field(default_factory=list)
     assistant_message: str = ""
 
+
 class InteractionTrackRequest(BaseModel):
     case_id: str
     action: str
@@ -980,13 +1010,3 @@ class InteractionTrackResponse(BaseModel):
     success: bool
     run_id: str
     message: str | None = None
-
-
-
-
-
-
-
-
-
-

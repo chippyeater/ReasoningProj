@@ -1,16 +1,17 @@
+/* CSS变量定义 - 修改颜色主题时改这里 */
 :root {
-  --bg:#0f0c1a;
-  --panel:#13111f;
-  --card:#1a201d;
-  --card2:#1d242b;
-  --border:rgba(255,255,255,.1);
-  --text:#f5f7fb;
-  --sub:#9ca3af;
-  --accent:#ffb861;
-  --ok:#3ecf8e;
-  --warn:#f6c453;
-  --mute:#8892a0;
-  --line:rgba(255,255,255,.24)
+  --bg:#0f0c1a; /* 背景色 */
+  --panel:#13111f; /* 面板背景 */
+  --card:#1a201d; /* 卡片背景 */
+  --card2:#1d242b; /* 备用卡片背景 */
+  --border:rgba(255,255,255,.1); /* 边框色 */
+  --text:#f5f7fb; /* 主文字色 */
+  --sub:#9ca3af; /* 次要文字色 */
+  --accent:#ffb861; /* 强调色（如选中） */
+  --ok:#3ecf8e; /* 成功色 */
+  --warn:#f6c453; /* 警告色 */
+  --mute:#8892a0; /* 静音色 */
+  --line:rgba(255,255,255,.24) /* 线条色 */
 }
 * {
   box-sizing:border-box;
@@ -32,12 +33,14 @@ button,input {
 button {
   cursor:pointer
 }
+/* 整体布局 - app网格布局，修改页面结构时改这里 */
 .app {
   display:grid;
-  grid-template-columns:300px 1fr;
-  grid-template-rows:58px 1fr 64px;
+  grid-template-columns:300px 1fr; /* 侧边栏宽度300px，画布占余下 */
+  grid-template-rows:58px 1fr 64px; /* 顶部58px，画布占余下，底部64px */
   height:100%
 }
+/* 顶部栏样式 - .top区域，修改品牌或按钮样式时改这里 */
 .top {
   grid-column:1/-1;
   display:flex;
@@ -75,6 +78,7 @@ button {
   background:linear-gradient(90deg,rgba(255,184,97,.22),rgba(255,210,97,.06));
   border-color:rgba(255,184,97,.4)
 }
+/* 侧边栏样式 - .sidebar区域，修改面板布局时改这里 */
 .sidebar {
   background:rgba(19,17,31,.96);
   border-right:1px solid var(--border);
@@ -120,6 +124,7 @@ button {
   color:var(--sub);
   margin-top:6px
 }
+/* 画布区域样式 - .canvas-wrap，修改网格背景或交互时改这里 */
 .canvas-wrap {
   position:relative;
   overflow:hidden;
@@ -152,13 +157,20 @@ button {
   width:10000px;
   height:10000px;
   overflow:visible;
-  pointer-events:none
+  pointer-events:auto
 }
 .link {
   fill:none;
   stroke:var(--line);
   stroke-linecap:round
 }
+
+/* 允许对边进行交互（点击、悬停） */
+#svg g, #svg .link, #svg text, #svg image, #svg rect {
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* 卡片节点样式 - .node，修改卡片外观、大小、阴影时改这里 */
 .nodes .node {
   position:absolute;
   width:320px;
@@ -195,7 +207,7 @@ button {
 }
 .node.kind-legal.level-2 .head {
   gap:10px;
-  align-items:center
+  align-items:center /* 修改头部对齐时改这里 */
 }
 .node.kind-legal.level-2 .card-title {
   font-size:20px;
@@ -242,17 +254,18 @@ button {
 .node.level-1 {
   width:220px
 }
+/* 卡片内部结构样式 - .shell, .head等，修改卡片内容布局时改这里 */
 .shell {
   padding:18px
 }
 .head {
   display:flex;
   gap:12px;
-  align-items:flex-start
+  align-items:center /* 修改头部垂直对齐时改这里，默认flex-start导致偏上 */
 }
 .head-row {
   display:flex;
-  align-items:center;
+  align-items:center; /* 修改标题行对齐时改这里 */
   gap:10px
 }
 .head-badge {
@@ -303,57 +316,6 @@ button {
   line-height:1.35;
   pointer-events:none
 }
-.summary,.block {
-  margin-top:14px;
-  padding:12px 14px;
-  border-radius:14px;
-  background:rgba(0,0,0,.22);
-  border:1px solid rgba(255,255,255,.06)
-}
-.summary {
-  font-size:13px;
-  color:#e4e8ef
-}
-.block h4 {
-  font-size:12px;
-  color:var(--sub);
-  letter-spacing:.06em;
-  text-transform:uppercase;
-  margin-bottom:8px
-}
-.block ul {
-  list-style:none;
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-  font-size:13px
-}
-.chips,.actions {
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-  margin-top:12px
-}
-.chip {
-  border:1px solid rgba(255,255,255,.1);
-  border-radius:999px;
-  padding:5px 10px;
-  font-size:12px;
-  color:var(--sub);
-  background:rgba(255,255,255,.05)
-}
-.chip.pending {
-  border-color:rgba(246,196,83,.35);
-  color:#f7d68a
-}
-.chip.accepted {
-  border-color:rgba(62,207,142,.35);
-  color:#9be9c3
-}
-.chip.rejected {
-  border-color:rgba(156,163,175,.35);
-  color:#cad1da
-}
 .node.level-2 .detail,.node.level-1 .detail,.node.level-1 .summary,.node.level-1 .chips,.node.level-1 .actions,.node.level-1 .card-meta {
   display:none
 }
@@ -364,6 +326,7 @@ button {
   background:rgba(255,255,255,.05);
   color:var(--text)
 }
+/* 空状态样式 - .empty，修改无内容提示时改这里 */
 .empty {
   position:absolute;
   top:50%;
@@ -380,6 +343,7 @@ button {
   font-size:24px;
   margin-bottom:12px
 }
+/* 底部栏样式 - .bottom，修改输入框或状态栏时改这里 */
 .bottom {
   grid-column:1/-1;
   border-top:1px solid var(--border);
@@ -416,6 +380,7 @@ button {
   border-color:rgba(255,184,97,.4);
   box-shadow:0 0 0 3px rgba(255,184,97,.08)
 }
+/* 上传区域样式 - .upload-zone，修改拖拽上传样式时改这里 */
 .upload-zone {
   border:1px dashed rgba(255,184,97,.28);
   border-radius:18px;
@@ -449,6 +414,7 @@ button {
   overflow:hidden
 }
 
+/* 动画和过渡 - 修改卡片动画时改这里 */
 .nodes .node {
   transition: width .18s ease, transform .18s ease, opacity .18s ease;
 }
@@ -457,6 +423,7 @@ button {
   transition: box-shadow .18s ease, background .18s ease, opacity .18s ease;
 }
 
+/* 额外卡片尺寸和显示控制 - 修改不同level的显示时改这里 */
 .node.level-2 {
   width: 320px;
 }
@@ -480,6 +447,7 @@ button {
 .node.kind-conflict.level-1 .card-title {
   font-size: 16px;
   line-height: 1.2;
+  align-self: center; /* 修改冲突卡片标题对齐时改这里 */
 }
 
 .node.kind-conflict.level-1 .chips {
@@ -626,13 +594,23 @@ button {
   max-width: 100%;
 }
 
+.type-meta.level-1 .card {
+  background:linear-gradient(158.72deg,rgba(55, 65, 30, 0.889) 3.01%,rgba(37, 44, 23, 0.834) 103.3%);
+  border-radius:18px;
+  border:1px solid rgba(213,255,114,.12);
+  box-shadow: 0 0 0 1px rgba(213,255,114,.08), 0 24px 60px rgba(0,0,0,.34);
+  backdrop-filter: blur(2px);
+}
+
 .type-meta.level-2 {
   width:432px
 }
 .type-meta.level-2 .card {
-  background:linear-gradient(158.72deg,rgba(213,255,114,.1) 3.01%,rgba(213,255,114,.025) 103.3%);
-  border-radius:10px;
-  border:1px solid rgba(213,255,114,.12)
+  background:linear-gradient(158.72deg,rgba(55, 65, 30, 0.889) 3.01%,rgba(37, 44, 23, 0.834) 103.3%);
+  border-radius:18px;
+  border:1px solid rgba(213,255,114,.12);
+  box-shadow: 0 0 0 1px rgba(213,255,114,.08), 0 24px 60px rgba(0,0,0,.34);
+  backdrop-filter: blur(2px);
 }
 .type-meta.level-2 .shell {
   padding:24px 16px 18px
@@ -648,6 +626,13 @@ button {
   color:#A3A3A3;
   font-size:16px;
   line-height:1.19
+}
+.type-meta.level-3 .card{
+  background:linear-gradient(158.72deg,rgba(55, 65, 30, 0.889) 3.01%,rgba(37, 44, 23, 0.834) 103.3%);
+  border-radius:18px;
+  border:1px solid rgba(213,255,114,.12);
+  box-shadow: 0 0 0 1px rgba(213,255,114,.08), 0 24px 60px rgba(0,0,0,.34);
+  backdrop-filter: blur(2px);
 }
 .type-meta.selected .card {
   box-shadow:inset 0 0 17.4px #D5FF72,0 22px 60px rgba(0,0,0,.35)
@@ -702,6 +687,7 @@ button {
   border:1px solid rgba(174,166,255,.14);
 }
 .type-inference.level-3:not(.kind-conflict):not(.kind-missing) .shell {
+  /* 恢复为原始 level-3 内边距（更宽松的展示） */
   padding:30px 20px;
 }
 .type-inference.level-3:not(.kind-conflict):not(.kind-missing) .head {
@@ -711,9 +697,11 @@ button {
   width:100%;
 }
 .type-inference.level-3:not(.kind-conflict):not(.kind-missing) .card-title {
+  /* 恢复为原始 level-3 标题样式（更大字号以突出） */
   font-size:24px;
   line-height:1.2;
   font-weight:600;
+  align-self: center;
 }
 .type-inference.level-3:not(.kind-conflict):not(.kind-missing) .head-badge {
   border:1px solid rgba(174,166,255,.3);
@@ -755,6 +743,115 @@ button {
 }
 .type-inference.level-3:not(.kind-conflict):not(.kind-missing).selected .card {
   box-shadow:inset 0 0 17.4px #AEA6FF,0 22px 60px rgba(0,0,0,.35);
+}
+
+/* 假设卡片使用普通推理卡片的排版（与非冲突/非缺失的 level-3 保持一致） */
+.type-inference.kind-hypothesis.level-3 .card {
+  background:linear-gradient(158.72deg,rgba(174,166,255,.1) 3.01%,rgba(174,166,255,.025) 103.3%);
+  backdrop-filter:blur(21px);
+  border-radius:10px;
+  border:1px solid rgba(174,166,255,.14);
+}
+.type-inference.kind-hypothesis.level-3 .shell {
+  padding:30px 20px;
+}
+.type-inference.kind-hypothesis.level-3 .head {
+  align-items:center;
+}
+.type-inference.kind-hypothesis.level-3 .head-row {
+  width:100%;
+}
+.type-inference.kind-hypothesis.level-3 .card-title {
+  font-size:24px;
+  line-height:1.2;
+  font-weight:600;
+  align-self: center;
+}
+.type-inference.kind-hypothesis.level-3 .head-badge {
+  border:1px solid rgba(174,166,255,.3);
+  background:linear-gradient(158.72deg,rgba(255,255,255,.2) 3.01%,rgba(255,255,255,.05) 103.3%),linear-gradient(90deg,rgba(52,45,116,.5) 0%,rgba(100,92,174,0) 100%);
+  color:#FFFFFF;
+}
+.type-inference.kind-hypothesis.level-3 .icon {
+  color:#AEA6FF;
+}
+.type-inference.kind-hypothesis.level-3 .body {
+  margin-top:10px;
+}
+.type-inference.kind-hypothesis.level-3 .inference-body {
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  min-height:169px;
+}
+.type-inference.kind-hypothesis.level-3 .inference-detail {
+  padding-top:10px;
+  color:#A3A3A3;
+  font-size:16px;
+  line-height:1.19;
+}
+.type-inference.kind-hypothesis.level-3 .inference-steps {
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.type-inference.kind-hypothesis.level-3 .inference-steps span {
+  display:block;
+  padding:10px 12px;
+  border-radius:12px;
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.06);
+  color:#D7D3FF;
+  font-size:13px;
+  line-height:1.4;
+}
+.type-inference.kind-hypothesis.level-3.selected .card {
+  box-shadow:inset 0 0 17.4px #AEA6FF,0 22px 60px rgba(0,0,0,.35);
+}
+
+/* 同时确保假设卡在 level-1/2 的排版也与普通推理卡片对齐（更紧凑的显示） */
+.type-inference.kind-hypothesis.level-1 .shell,
+.type-inference.kind-hypothesis.level-2 .shell {
+  padding:18px;
+}
+.type-inference.kind-hypothesis.level-1 .card-title,
+.type-inference.kind-hypothesis.level-2 .card-title {
+  font-size:19px;
+  font-weight:700;
+  line-height:1.28;
+}
+.type-inference.kind-hypothesis.level-1 .body,
+.type-inference.kind-hypothesis.level-2 .body {
+  margin-top:14px;
+}
+
+/* 使 level-1 / level-2 使用与 level-3 相同的背景与选中发光效果 */
+.type-inference.level-1 .card,
+.type-inference.level-2 .card {
+  background: linear-gradient(158.72deg, rgba(174,166,255,.1) 3.01%, rgba(174,166,255,.025) 103.3%);
+  backdrop-filter: blur(21px);
+  border-radius: 10px;
+  border: 1px solid rgba(174,166,255,.14);
+}
+.type-inference.level-1.selected .card,
+.type-inference.level-2.selected .card {
+  box-shadow: inset 0 0 17.4px #AEA6FF, 0 22px 60px rgba(0,0,0,.35);
+}
+
+/* 保证 level-1/2/3 的内部间距与排版一致 */
+.type-inference.level-1 .shell,
+.type-inference.level-2 .shell {
+  padding: 18px;
+}
+.type-inference.level-1 .body,
+.type-inference.level-2 .body {
+  margin-top: 14px;
+}
+.type-inference.level-1 .card-title,
+.type-inference.level-2 .card-title {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.28;
 }
 
 
@@ -932,4 +1029,267 @@ button {
 
 .timeline-meta-card .timeline-detail-refs {
   margin-top: 14px;
+}
+
+/* ===== hypothesis board（三列布局，翻译自 TS 版 HypothesisBoard） ===== */
+.hb-root {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.hb-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.hb-meta-node {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.06);
+}
+.hb-meta-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+.hb-meta-detail {
+  font-size: 12px;
+  color: var(--sub);
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+.hb-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.hb-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hb-col-header {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .5px;
+  color: var(--sub);
+}
+.hb-col-header-support { color: #7ee0a3; }
+.hb-col-header-attack { color: #ff9a9a; }
+.hb-col-header-pending { color: var(--sub); margin-top: 12px; }
+.hb-empty {
+  font-size: 12px;
+  color: var(--sub);
+  opacity: .6;
+  margin: 0;
+}
+.hb-link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hb-link-item {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.06);
+}
+.hb-link-support { border-left: 3px solid #7ee0a3; }
+.hb-link-attack { border-left: 3px solid #ff9a9a; }
+.hb-link-pending { border-left: 3px solid var(--sub); }
+.hb-link-explanation {
+  font-size: 12px;
+  color: #d7dde7;
+  margin: 0;
+  line-height: 1.45;
+}
+.hb-link-certainty {
+  font-size: 11px;
+  color: var(--sub);
+  margin: 6px 0 0;
+}
+.hb-node-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hb-node {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(174,166,255,.06);
+  border: 1px solid rgba(174,166,255,.16);
+}
+.hb-node-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.hb-stage-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(174,166,255,.18);
+  color: #cfc9ff;
+}
+.hb-confidence-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.hb-confidence-high { background: rgba(126,224,163,.18); color: #7ee0a3; }
+.hb-confidence-medium { background: rgba(255,184,97,.18); color: #ffb861; }
+.hb-confidence-low { background: rgba(255,255,255,.1); color: var(--sub); }
+.hb-node-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px;
+  line-height: 1.4;
+}
+.hb-node-desc {
+  font-size: 12px;
+  color: var(--sub);
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+.hb-node-links {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hb-node-link-item {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+}
+.hb-link-rel {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: #cfc9ff;
+}
+.hb-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hb-groups-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sub);
+  margin: 0;
+}
+.hb-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.06);
+  font-size: 12px;
+}
+.hb-group-type {
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.hb-group-and .hb-group-type { background: rgba(126,224,163,.18); color: #7ee0a3; }
+.hb-group-attack .hb-group-type { background: rgba(255,154,154,.18); color: #ff9a9a; }
+.hb-group-status { color: var(--sub); }
+.hb-group-target { color: #cfc9ff; }
+
+@media (max-width: 900px) {
+  .hb-board { grid-template-columns: 1fr; }
+}
+
+/* Timeline runtime projection panel */
+
+.timeline-panel {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  max-height: 46%;
+  overflow: auto;
+  z-index: 60;
+  border-radius: 14px;
+  border: 1px solid rgba(213,255,114,.18);
+  background: rgba(18,20,16,.92);
+  box-shadow: 0 24px 60px rgba(0,0,0,.4);
+  padding: 16px 20px 22px;
+}
+
+.timeline-panel.hidden { display: none; }
+
+.timeline-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.timeline-panel-head .title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #D5FF72;
+}
+
+.timeline-panel-body { display: block; }
+
+.timeline-view.is-empty {
+  padding: 18px 4px;
+  color: #A3A3A3;
+  font-size: 13px;
+}
+
+.timeline-point-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+}
+
+.timeline-point-type {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,.18);
+  color: rgba(255,255,255,.85);
+}
+
+.timeline-point-type-claim {
+  border-color: rgba(0,218,207,.4);
+  color: #00DACF;
+}
+
+.timeline-point-type-event {
+  border-color: rgba(213,255,114,.4);
+  color: #D5FF72;
+}
+
+.timeline-point-index {
+  font-size: 11px;
+  color: #6E6E6E;
+}
+
+.timeline-point-precision {
+  margin-left: 4px;
+  font-size: 11px;
+  color: #A3A3A3;
+}
+
+.timeline-point-sub {
+  font-size: 12px;
+  color: #9E9E9E;
 }

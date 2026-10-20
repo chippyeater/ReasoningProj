@@ -116,6 +116,11 @@ This document reflects the current backend implementation in:
 - Request model: `GenerateInferenceRequest`
 - Response model: `GenerateInferenceResponse`
 
+### `POST /api/law/retrieve`
+- Purpose: retrieve relevant law cards for a conflict card
+- Request model: `LawRetrieveRequest`
+- Response model: `LawRetrieveResponse`
+
 ### `POST /api/router/route`
 - Purpose: route incoming user intent to a task
 - Request model: `RouteRequest`
@@ -160,14 +165,14 @@ This document reflects the current backend implementation in:
 - `CardType`: `meta | inference | law`
 - `DisplayLevel`: `1 | 2 | 3`
 - `CardStatus`: `active | hidden | archived`
-- `InferenceType`: `hypothesis | conclusion | conflict | missing_evidence | reasoning_step | evidence_chain | risk | other`
+- `InferenceType`: `hypothesis | conclusion | conflict | timeline | missing_evidence | risk | other`
 - `InferenceDecision`: `undecided | accepted | rejected | pending`
-- `EdgeType`: `relates_to | supports | opposes | derives | mentions | conflicts_with | missing_for | cites | belongs_to`
+- `EdgeType`: `relates_to | supports | opposes | derives | mentions | conflicts_with | missing_for | cites | belongs_to | grounded_in | applies_to | retrieved_for`
 - `ViewMode`: `panorama | reasoning | detail`
 - `ConfidenceLevel`: `high | medium | low`
 - `CertaintyLevel`: `explicit | inferred`
-- `RouterTask`: `extraction | relation | reasoning | qa | interaction`
-- `RecommendedView`: `timeline | conflict | hypothesis | evidence_chain`
+- `RouterTask`: `extraction | relation | reasoning | law_retrieve | qa | interaction`
+- `RecommendedView`: `timeline | conflict | hypothesis`
 - `IntentType`: `qa | search | reasoning | canvas_edit | view_switch`
 - `ResponseMode`: `text | canvas | mixed`
 - `UIActionType`: `highlight | open_view | rearrange | create_node`
