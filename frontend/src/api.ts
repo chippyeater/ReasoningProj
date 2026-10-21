@@ -64,6 +64,33 @@ export type InfoUnit = {
   created_at: string;
 };
 
+export type QuoteUnit = {
+  quote_id: string;
+  file_id: string;
+  start: number;
+  end: number;
+  text: string;
+  role: "text" | "temporal_context" | "message" | "record" | "group_boundary";
+  group_id: string | null;
+  message_id: string | null;
+  context_quote_ids: string[];
+};
+
+export type InfoUnitMutationInput = {
+  type: InfoUnitType;
+  subtype: InfoUnitSubtype | null;
+  title: string;
+  content: string;
+  speaker: string | null;
+  side: string | null;
+  actor: string | null;
+  target: string | null;
+  related_issue: string | null;
+};
+
+export type CreateInfoUnitInput = InfoUnitMutationInput & { evidence_ids: string[] };
+export type UpdateInfoUnitInput = InfoUnitMutationInput & { evidence_ids?: string[] };
+
 export type CaseFile = {
   file_id: string;
   filename: string;
@@ -480,11 +507,38 @@ export type QuestionViewData = {
 };
 
 async function readJson<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `API request failed: ${response.status}`);
+  const text = await response.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text) as unknown;
+    } catch {
+      if (response.ok) throw new Error("API returned invalid JSON");
+    }
   }
-  return (await response.json()) as T;
+  if (!response.ok) {
+    const envelope = data && typeof data === "object" ? data as Record<string, unknown> : null;
+    const detail = envelope?.detail;
+    if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      const value = detail as Record<string, unknown>;
+      const code = typeof value.code === "string" ? value.code : `http_${response.status}`;
+      const message = typeof value.message === "string" ? value.message : "Request validation failed";
+      const references = Array.isArray(value.references)
+        ? value.references.flatMap((item) => {
+            if (!item || typeof item !== "object") return [];
+            const ref = item as Record<string, unknown>;
+            const kind = typeof ref.kind === "string" ? ref.kind : "reference";
+            const id = typeof ref.id === "string" ? ref.id : "unknown";
+            const field = typeof ref.field === "string" ? `.${ref.field}` : "";
+            return [`${kind}:${id}${field}`];
+          })
+        : [];
+      throw new Error(`[${code}] ${message}${references.length ? ` (${references.join(", ")})` : ""}`);
+    }
+    const detailText = typeof detail === "string" ? detail : (detail ? JSON.stringify(detail) : text);
+    throw new Error(detailText || `API request failed: ${response.status}`);
+  }
+  return data as T;
 }
 
 export async function createCase(
@@ -535,6 +589,48 @@ export async function appendFilesToCase(caseId: string, files: File[], signal?: 
 export async function getCase(): Promise<CaseEnvelope> {
   const data = await readJson<CaseEnvelope>(await fetch(`${API_BASE}/api/case`));
   return { case: data.case ? normalizeCaseData(data.case) : null };
+}
+
+export async function getCaseById(caseId: string): Promise<{ case: CaseData }> {
+  const data = await readJson<{ case: CaseData }>(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}`));
+  return { case: normalizeCaseData(data.case) };
+}
+
+export async function listQuoteUnits(caseId: string): Promise<QuoteUnit[]> {
+  return readJson<QuoteUnit[]>(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/quote-units`));
+}
+
+export async function createInfoUnit(caseId: string, payload: CreateInfoUnitInput): Promise<{ case: CaseData }> {
+  const data = await readJson<{ case: CaseData }>(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/info-units`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }));
+  return { case: normalizeCaseData(data.case) };
+}
+
+export async function updateInfoUnit(
+  caseId: string,
+  infoUnitId: string,
+  payload: UpdateInfoUnitInput,
+): Promise<{ case: CaseData }> {
+  const data = await readJson<{ case: CaseData }>(await fetch(
+    `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/info-units/${encodeURIComponent(infoUnitId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  ));
+  return { case: normalizeCaseData(data.case) };
+}
+
+export async function deleteInfoUnit(caseId: string, infoUnitId: string): Promise<{ case: CaseData }> {
+  const data = await readJson<{ case: CaseData }>(await fetch(
+    `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/info-units/${encodeURIComponent(infoUnitId)}`,
+    { method: "DELETE" },
+  ));
+  return { case: normalizeCaseData(data.case) };
 }
 
 export async function listCases(): Promise<CaseListResponse> {

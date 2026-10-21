@@ -1,10 +1,14 @@
 ﻿import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   createCase,
+  createInfoUnit,
   appendFilesToCase,
   deleteCase,
+  deleteInfoUnit,
   getCase,
+  getCaseById,
   listCases,
+  listQuoteUnits,
   selectCase,
   generateInference,
   routeTask,
@@ -16,12 +20,17 @@ import {
   renameCase,
   updateCardPosition,
   updateCardDisplayLevel,
+  updateInfoUnit,
   updateWorkspaceState,
   trackInteraction,
   type CaseData,
   type CaseSummary,
   type InferenceCard,
+  type InfoUnit,
+  type InfoUnitSubtype,
   type InfoUnitType,
+  type InfoUnitMutationInput,
+  type QuoteUnit,
 } from "./api";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
@@ -116,6 +125,64 @@ type FileTreeItem = {
   source: "queued" | "parsed";
   subText: string;
 };
+
+type InfoUnitEditorState = {
+  mode: "create" | "edit";
+  infoUnitId: string | null;
+};
+
+type InfoUnitDraft = {
+  type: InfoUnitType;
+  subtype: InfoUnitSubtype | null;
+  title: string;
+  content: string;
+  speaker: string;
+  side: string;
+  actor: string;
+  target: string;
+  relatedIssue: string;
+};
+
+const INFO_UNIT_TYPES: InfoUnitType[] = ["entity", "event", "state", "rule", "position"];
+const ENTITY_SUBTYPES: InfoUnitSubtype[] = ["person", "organization", "object", "location"];
+const EVENT_SUBTYPES: InfoUnitSubtype[] = ["reported", "documented", "verified"];
+
+function emptyInfoUnitDraft(): InfoUnitDraft {
+  return {
+    type: "event",
+    subtype: null,
+    title: "",
+    content: "",
+    speaker: "",
+    side: "",
+    actor: "",
+    target: "",
+    relatedIssue: "",
+  };
+}
+
+function infoUnitDraft(unit: InfoUnit): InfoUnitDraft {
+  return {
+    type: unit.type,
+    subtype: unit.subtype,
+    title: unit.title,
+    content: unit.content,
+    speaker: unit.speaker ?? "",
+    side: unit.side ?? "",
+    actor: unit.actor ?? "",
+    target: unit.target ?? "",
+    relatedIssue: unit.related_issue ?? "",
+  };
+}
+
+function nullableText(value: string): string | null {
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function quoteMatchesSource(unit: QuoteUnit, ref: InfoUnit["source_refs"][number]): boolean {
+  return unit.file_id === ref.file_id && unit.start === ref.start && unit.end === ref.end && unit.text === ref.quote;
+}
 
 const CANVAS_WIDTH = 3200;
 const CANVAS_HEIGHT = 2200;
@@ -431,6 +498,15 @@ export default function App() {
   const [caseOptions, setCaseOptions] = useState<CaseSummary[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [caseMenuOpen, setCaseMenuOpen] = useState(false);
+  const [infoUnitEditor, setInfoUnitEditor] = useState<InfoUnitEditorState | null>(null);
+  const [infoUnitDraftState, setInfoUnitDraftState] = useState<InfoUnitDraft>(emptyInfoUnitDraft);
+  const [quoteUnits, setQuoteUnits] = useState<QuoteUnit[]>([]);
+  const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<string[]>([]);
+  const [evidenceChanged, setEvidenceChanged] = useState(false);
+  const [quoteSearch, setQuoteSearch] = useState("");
+  const [editorError, setEditorError] = useState("");
+  const [editorBusy, setEditorBusy] = useState(false);
+  const [quotesLoading, setQuotesLoading] = useState(false);
 
   const [transform, setTransform] = useState({ x: 0, y: 0 });
   const [nodePositions, setNodePositions] = useState<Record<string, Point>>({});
@@ -446,6 +522,7 @@ export default function App() {
   const uploadAbortRef = useRef<AbortController | null>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const selectionSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quoteRequestRef = useRef(0);
 
   const panStateRef = useRef<{ active: boolean; startMouseX: number; startMouseY: number; startX: number; startY: number }>({
     active: false,
@@ -465,6 +542,28 @@ export default function App() {
   const islandContainerRef = useRef<HTMLDivElement | null>(null);
   const islandInputRef = useRef<HTMLTextAreaElement | null>(null);
   const islandHeightRef = useRef(ISLAND_MIN_HEIGHT);
+
+  const selectedInfoUnit = useMemo(
+    () => currentCase?.info_units.find((unit) => unit.id === focusedNodeId) ?? null,
+    [currentCase, focusedNodeId],
+  );
+
+  const editedInfoUnit = useMemo(
+    () => infoUnitEditor?.infoUnitId
+      ? currentCase?.info_units.find((unit) => unit.id === infoUnitEditor.infoUnitId) ?? null
+      : null,
+    [currentCase, infoUnitEditor],
+  );
+
+  const filteredQuoteUnits = useMemo(() => {
+    const keyword = quoteSearch.trim().toLowerCase();
+    return quoteUnits.filter((unit) => {
+      if (unit.role === "group_boundary") return false;
+      if (!keyword) return true;
+      const file = currentCase?.files.find((item) => item.file_id === unit.file_id);
+      return unit.text.toLowerCase().includes(keyword) || file?.filename.toLowerCase().includes(keyword) === true;
+    });
+  }, [currentCase, quoteSearch, quoteUnits]);
 
   useEffect(() => {
     transformRef.current = transform;
@@ -1003,6 +1102,7 @@ export default function App() {
       const refreshedCase = await getCase();
       setUploadProgress(100);
       setCurrentCase(refreshedCase.case);
+      closeInfoUnitEditor();
       setSelectedNodeIds(pickSelectedNodeIds(refreshedCase.case));
       setFocusedNodeId(pickFocusedNodeId(refreshedCase.case));
       if (refreshedCase.case?.workspace_state?.viewport) {
@@ -1049,6 +1149,7 @@ export default function App() {
     setUploadProgress(0);
     setError("");
     await deleteCase();
+    closeInfoUnitEditor();
     setCurrentCase(null);
     setSelectedNodeIds([]);
     setFocusedNodeId(null);
@@ -1154,6 +1255,150 @@ export default function App() {
       // keep local interaction smooth even if persistence fails
     }
   }
+
+  function closeInfoUnitEditor() {
+    quoteRequestRef.current += 1;
+    setInfoUnitEditor(null);
+    setEditorError("");
+    setQuoteSearch("");
+    setQuoteUnits([]);
+    setSelectedEvidenceIds([]);
+    setEvidenceChanged(false);
+    setQuotesLoading(false);
+  }
+
+  async function openInfoUnitEditor(unit: InfoUnit | null = null) {
+    if (!currentCase) return;
+    const requestId = quoteRequestRef.current + 1;
+    quoteRequestRef.current = requestId;
+    setInfoUnitEditor({ mode: unit ? "edit" : "create", infoUnitId: unit?.id ?? null });
+    setInfoUnitDraftState(unit ? infoUnitDraft(unit) : emptyInfoUnitDraft());
+    setSelectedEvidenceIds([]);
+    setEvidenceChanged(false);
+    setQuoteSearch("");
+    setEditorError("");
+    setQuotesLoading(true);
+    try {
+      const units = await listQuoteUnits(currentCase.case_id);
+      if (quoteRequestRef.current !== requestId) return;
+      setQuoteUnits(units);
+      if (unit) {
+        setSelectedEvidenceIds(units
+          .filter((quoteUnit) => unit.source_refs.some((ref) => quoteMatchesSource(quoteUnit, ref)))
+          .map((quoteUnit) => quoteUnit.quote_id));
+      }
+    } catch (err) {
+      if (quoteRequestRef.current !== requestId) return;
+      setEditorError(err instanceof Error ? err.message : "Quote Unit 列表加载失败");
+    } finally {
+      if (quoteRequestRef.current === requestId) setQuotesLoading(false);
+    }
+  }
+
+  function changeInfoUnitType(type: InfoUnitType) {
+    setInfoUnitDraftState((current) => {
+      let subtype: InfoUnitSubtype | null = null;
+      if (type === "entity") {
+        subtype = current.subtype && ENTITY_SUBTYPES.includes(current.subtype) ? current.subtype : "person";
+      } else if (type === "event") {
+        subtype = current.subtype && EVENT_SUBTYPES.includes(current.subtype) ? current.subtype : null;
+      }
+      return { ...current, type, subtype };
+    });
+  }
+
+  function toggleEvidence(quoteId: string) {
+    setSelectedEvidenceIds((current) => current.includes(quoteId)
+      ? current.filter((id) => id !== quoteId)
+      : [...current, quoteId]);
+    setEvidenceChanged(true);
+  }
+
+  function buildInfoUnitPayload(): InfoUnitMutationInput {
+    return {
+      type: infoUnitDraftState.type,
+      subtype: infoUnitDraftState.subtype,
+      title: infoUnitDraftState.title.trim(),
+      content: infoUnitDraftState.content.trim(),
+      speaker: nullableText(infoUnitDraftState.speaker),
+      side: nullableText(infoUnitDraftState.side),
+      actor: nullableText(infoUnitDraftState.actor),
+      target: nullableText(infoUnitDraftState.target),
+      related_issue: nullableText(infoUnitDraftState.relatedIssue),
+    };
+  }
+
+  async function refreshAfterInfoUnitMutation(caseId: string, fallback: CaseData): Promise<CaseData> {
+    try {
+      return (await getCaseById(caseId)).case;
+    } catch (err) {
+      setError(`InfoUnit 已保存，但案件重新加载失败：${err instanceof Error ? err.message : "未知错误"}`);
+      return fallback;
+    }
+  }
+
+  async function saveInfoUnit() {
+    if (!currentCase || !infoUnitEditor) return;
+    setEditorError("");
+    if (!infoUnitDraftState.title.trim() || !infoUnitDraftState.content.trim()) {
+      setEditorError("title 和 content 不能为空");
+      return;
+    }
+    if (infoUnitEditor.mode === "create" && selectedEvidenceIds.length === 0) {
+      setEditorError("新建 InfoUnit 至少需要选择一条来源");
+      return;
+    }
+    if (infoUnitEditor.mode === "edit" && evidenceChanged && selectedEvidenceIds.length === 0) {
+      setEditorError("InfoUnit 至少需要保留一条来源");
+      return;
+    }
+
+    setEditorBusy(true);
+    try {
+      const beforeIds = new Set(currentCase.info_units.map((unit) => unit.id));
+      const basePayload = buildInfoUnitPayload();
+      const result = infoUnitEditor.mode === "create"
+        ? await createInfoUnit(currentCase.case_id, { ...basePayload, evidence_ids: selectedEvidenceIds })
+        : await updateInfoUnit(currentCase.case_id, infoUnitEditor.infoUnitId!, {
+            ...basePayload,
+            ...(evidenceChanged ? { evidence_ids: selectedEvidenceIds } : {}),
+          });
+      const refreshed = await refreshAfterInfoUnitMutation(currentCase.case_id, result.case);
+      setCurrentCase(refreshed);
+      const savedId = infoUnitEditor.mode === "edit"
+        ? infoUnitEditor.infoUnitId
+        : refreshed.info_units.find((unit) => !beforeIds.has(unit.id))?.id ?? null;
+      if (savedId) {
+        setSelectedNodeIds([savedId]);
+        setFocusedNodeId(savedId);
+      }
+      closeInfoUnitEditor();
+    } catch (err) {
+      setEditorError(err instanceof Error ? err.message : "InfoUnit 保存失败");
+    } finally {
+      setEditorBusy(false);
+    }
+  }
+
+  async function removeEditedInfoUnit() {
+    if (!currentCase || infoUnitEditor?.mode !== "edit" || !infoUnitEditor.infoUnitId) return;
+    if (!window.confirm("确认删除该 InfoUnit？存在业务引用时服务端会拒绝删除。")) return;
+    setEditorBusy(true);
+    setEditorError("");
+    try {
+      const result = await deleteInfoUnit(currentCase.case_id, infoUnitEditor.infoUnitId);
+      const refreshed = await refreshAfterInfoUnitMutation(currentCase.case_id, result.case);
+      setCurrentCase(refreshed);
+      setSelectedNodeIds(pickSelectedNodeIds(refreshed));
+      setFocusedNodeId(pickFocusedNodeId(refreshed));
+      closeInfoUnitEditor();
+    } catch (err) {
+      setEditorError(err instanceof Error ? err.message : "InfoUnit 删除失败");
+    } finally {
+      setEditorBusy(false);
+    }
+  }
+
   function onCanvasMouseDown(event: React.MouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest(".canvas-node") || (event.target as HTMLElement).closest(".dynamic-island")) {
@@ -1562,6 +1807,154 @@ export default function App() {
     );
   }
 
+  function renderInfoUnitEditor() {
+    if (!infoUnitEditor || !currentCase) return null;
+    const subtypeOptions = infoUnitDraftState.type === "entity"
+      ? ENTITY_SUBTYPES
+      : infoUnitDraftState.type === "event"
+        ? EVENT_SUBTYPES
+        : [];
+    const entityOptions = currentCase.info_units.filter((unit) =>
+      unit.type === "entity" && !(unit.id === infoUnitEditor.infoUnitId && infoUnitDraftState.type !== "entity"));
+    const currentSources = editedInfoUnit?.source_refs ?? [];
+
+    return (
+      <div className="info-unit-editor-backdrop" role="presentation" onMouseDown={(event) => event.stopPropagation()}>
+        <section className="info-unit-editor" role="dialog" aria-modal="true" aria-labelledby="info-unit-editor-title">
+          <header className="info-unit-editor-header">
+            <div>
+              <p className="info-unit-editor-kicker">InfoUnit</p>
+              <h2 id="info-unit-editor-title">{infoUnitEditor.mode === "create" ? "新建信息节点" : "编辑信息节点"}</h2>
+              {editedInfoUnit ? <p className="info-unit-editor-id">{editedInfoUnit.id}</p> : null}
+            </div>
+            <button type="button" className="editor-close" onClick={closeInfoUnitEditor} disabled={editorBusy} aria-label="关闭编辑器">×</button>
+          </header>
+
+          <div className="info-unit-editor-body">
+            <div className="info-unit-form-grid">
+              <label className="editor-field editor-field-wide">
+                <span>Title</span>
+                <input value={infoUnitDraftState.title} onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, title: event.target.value }))} />
+              </label>
+              <label className="editor-field editor-field-wide">
+                <span>Content</span>
+                <textarea rows={4} value={infoUnitDraftState.content} onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, content: event.target.value }))} />
+              </label>
+              <label className="editor-field">
+                <span>Type</span>
+                <select value={infoUnitDraftState.type} onChange={(event) => changeInfoUnitType(event.target.value as InfoUnitType)}>
+                  {INFO_UNIT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </label>
+              <label className="editor-field">
+                <span>Subtype</span>
+                <select
+                  value={infoUnitDraftState.subtype ?? ""}
+                  disabled={subtypeOptions.length === 0}
+                  onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, subtype: event.target.value ? event.target.value as InfoUnitSubtype : null }))}
+                >
+                  <option value="">无</option>
+                  {subtypeOptions.map((subtype) => <option key={subtype} value={subtype}>{subtype}</option>)}
+                </select>
+              </label>
+              <label className="editor-field">
+                <span>Speaker{infoUnitDraftState.type === "state" || infoUnitDraftState.type === "position" ? " *" : ""}</span>
+                <input value={infoUnitDraftState.speaker} onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, speaker: event.target.value }))} />
+              </label>
+              <label className="editor-field">
+                <span>Side</span>
+                <input value={infoUnitDraftState.side} onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, side: event.target.value }))} />
+              </label>
+              <label className="editor-field">
+                <span>Actor</span>
+                <select value={infoUnitDraftState.actor} onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, actor: event.target.value }))}>
+                  <option value="">无</option>
+                  {entityOptions.map((unit) => <option key={unit.id} value={unit.id}>{unit.title} · {unit.id}</option>)}
+                </select>
+              </label>
+              <label className="editor-field">
+                <span>Target</span>
+                <select value={infoUnitDraftState.target} onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, target: event.target.value }))}>
+                  <option value="">无</option>
+                  {entityOptions.map((unit) => <option key={unit.id} value={unit.id}>{unit.title} · {unit.id}</option>)}
+                </select>
+              </label>
+              <label className="editor-field editor-field-wide">
+                <span>Related issue</span>
+                <select value={infoUnitDraftState.relatedIssue} onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, relatedIssue: event.target.value }))}>
+                  <option value="">无</option>
+                  {currentCase.issue_set.map((issue) => <option key={issue} value={issue}>{issue}</option>)}
+                </select>
+              </label>
+            </div>
+
+            <section className="source-editor-section">
+              <div className="source-editor-heading">
+                <div>
+                  <h3>当前 SourceRefs</h3>
+                  <p>来源只由后端根据 Quote Unit 生成；下列内容为已保存引用。</p>
+                </div>
+                <span>{currentSources.length}</span>
+              </div>
+              {currentSources.length ? (
+                <div className="current-source-list">
+                  {currentSources.map((ref, index) => {
+                    const file = currentCase.files.find((item) => item.file_id === ref.file_id);
+                    return (
+                      <article className="current-source-item" key={`${ref.file_id}-${ref.start}-${ref.end}-${index}`}>
+                        <small>{file?.filename ?? ref.file_id} · {ref.source_kind} · {ref.start}–{ref.end}</small>
+                        <p>{ref.quote}</p>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : <p className="editor-empty">新建节点尚无已保存来源。</p>}
+            </section>
+
+            <section className="source-editor-section">
+              <div className="source-editor-heading">
+                <div>
+                  <h3>Quote Unit 证据</h3>
+                  <p>{infoUnitEditor.mode === "edit" && !evidenceChanged ? "未调整时保存会保留现有 SourceRefs。" : `将提交 ${selectedEvidenceIds.length} 条证据。`}</p>
+                </div>
+                <span>{selectedEvidenceIds.length}</span>
+              </div>
+              <input className="quote-search" value={quoteSearch} onChange={(event) => setQuoteSearch(event.target.value)} placeholder="按文件名或原文筛选" />
+              <div className="quote-unit-list">
+                {quotesLoading ? <p className="editor-empty">正在加载 Quote Units…</p> : null}
+                {!quotesLoading && filteredQuoteUnits.length === 0 ? <p className="editor-empty">没有可选择的 Quote Unit。</p> : null}
+                {filteredQuoteUnits.map((unit) => {
+                  const file = currentCase.files.find((item) => item.file_id === unit.file_id);
+                  const checked = selectedEvidenceIds.includes(unit.quote_id);
+                  return (
+                    <label className={`quote-unit-option ${checked ? "selected" : ""}`} key={unit.quote_id}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleEvidence(unit.quote_id)} />
+                      <span>
+                        <small>{file?.filename ?? unit.file_id} · {file?.source_kind ?? "unknown"} · {unit.start}–{unit.end} · {unit.role}</small>
+                        <strong>{unit.text}</strong>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+
+          {editorError ? <p className="info-unit-editor-error" role="alert">{editorError}</p> : null}
+          <footer className="info-unit-editor-actions">
+            {infoUnitEditor.mode === "edit" ? (
+              <button type="button" className="editor-delete" onClick={() => void removeEditedInfoUnit()} disabled={editorBusy}>删除</button>
+            ) : <span />}
+            <div>
+              <button type="button" className="editor-secondary" onClick={closeInfoUnitEditor} disabled={editorBusy}>取消</button>
+              <button type="button" onClick={() => void saveInfoUnit()} disabled={editorBusy || quotesLoading}>{editorBusy ? "保存中…" : "保存"}</button>
+            </div>
+          </footer>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <main className="page">
       <div className="studio-layout">
@@ -1613,6 +2006,7 @@ export default function App() {
                                 setSelectedCaseId(item.case_id);
                                 fireTrack("case_switch", [item.case_id]);
                                 setEvidences([]);
+                                closeInfoUnitEditor();
                                 setCaseMenuOpen(false);
                               } catch (err) {
                                 setError(err instanceof Error ? err.message : "Case switch failed");
@@ -1756,6 +2150,18 @@ export default function App() {
             onContextMenu={onCanvasContextMenu}
             style={{ backgroundPosition: `${transform.x}px ${transform.y}px` }}
           >
+            <div className="canvas-edit-toolbar" onMouseDown={(event) => event.stopPropagation()}>
+              <button type="button" onClick={() => void openInfoUnitEditor()} disabled={!currentCase}>+ 新建 InfoUnit</button>
+              <button
+                type="button"
+                className="editor-secondary"
+                onClick={() => void openInfoUnitEditor(selectedInfoUnit)}
+                disabled={!selectedInfoUnit}
+                title={selectedInfoUnit ? `编辑 ${selectedInfoUnit.title}` : "请先选中一个 InfoUnit 卡片"}
+              >
+                编辑选中节点
+              </button>
+            </div>
             <div
               className="canvas-content"
               style={canvasContentStyle}
@@ -1905,6 +2311,7 @@ export default function App() {
 
             {!currentCase ? <div className="canvas-empty">Upload files to generate nodes.</div> : null}
           </div>
+          {renderInfoUnitEditor()}
         </section>
       </div>
     </main>
