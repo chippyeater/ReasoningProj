@@ -114,10 +114,14 @@ type QuoteUnit = {
   start: number; // Unicode 字符偏移，左闭
   end: number;   // Unicode 字符偏移，右开
   text: string;
+  role: "text" | "temporal_context" | "message" | "record" | "group_boundary";
+  group_id: string | null;
+  message_id: string | null;
+  context_quote_ids: string[]; // 同组中更早的日期/时间 Quote Unit ID
 };
 
 type QuoteUnitIndex = {
-  segmentation_version: "quote-units-v1";
+  segmentation_version: "quote-units-v2";
   file_id: string;
   text_sha256: string;
   units: QuoteUnit[];
@@ -125,8 +129,18 @@ type QuoteUnitIndex = {
 ```
 
 每个单位必须满足 `cached_text.slice(start, end) === text`。`quote_id` 由分段规则版本、
-文件 ID、偏移和原文内容确定性生成；相同缓存和规则重复构建保持稳定，不同文件中的相同文本
-不会共用 ID。索引缺失、损坏或文本哈希改变时从缓存 TXT 重建；旧 ID 不做猜测性迁移。
+文件 ID、全文哈希、偏移和原文内容确定性生成；相同缓存和规则重复构建保持稳定，不同文件中的
+相同文本不会共用 ID。日期/时间仍是独立 `temporal_context` Quote Unit；消息通过
+`context_quote_ids` 引用它，不把日期文字复制进消息引文。长消息的各片段共享 `message_id`，
+同一日期聊天组或结构化记录的片段共享 `group_id`。
+
+分段采用统一的确定性层级：先保留段落、聊天消息或记录组，再按句末、子句、空白或分隔符
+选择边界，最后才在 800 字符（普通文本/消息）或 1200 字符（结构化记录）处执行长度兜底。
+兜底不截断、不改写、不重排原文，并在边界附近尽量避免拆开连续的日期、金额或编号表达。
+
+索引读取时会重新执行当前分段并比较完整结果，同时检查全部非空白原文覆盖、顺序、重叠、偏移、
+原文切片、Quote ID 及上下文引用。索引缺失、损坏、被删减、文本哈希改变或规则版本改变时均从
+缓存 TXT 重建；路径保持不变，旧 ID 不做猜测性迁移。
 
 ---
 
@@ -149,14 +163,23 @@ type QuoteExtractionInput = {
     quote_units: {
       quote_id: string;
       text: string;
+      role: "text" | "temporal_context" | "message" | "record" | "group_boundary";
+      group_id: string | null;
+      message_id: string | null;
+      context_quote_ids: string[];
     }[];
   }[];
   confirmed_source_kinds: Record<string, SourceKind>;
 };
 ```
 
-Quote Unit 保留日期、说话人和原始顺序；合同与笔录按原文行和句子边界划分，聊天以消息行
-为基础，结构化记录将同一连续记录的字段保留为一个单位。分段不重排、改写或拼接原文。
+Quote Unit 保留日期、说话人和原始顺序；合同与笔录保留原始行/段落结构，PDF 硬换行仍作为
+可独立追溯的连续片段且长行继续应用多级兜底；聊天仅在
+识别到日期/时间标题、明确分组边界或带说话人标头时建立上下文，结构化记录优先保持同一连续
+记录。无法可靠识别的聊天行降级为无上下文 `text`，不猜测发言人或日期。上下文元数据只帮助
+模型理解；若 `content` 使用日期或时间，模型仍必须将对应 `temporal_context` Quote Unit ID
+列入 `evidence_ids`。显式分组线保留为 `group_boundary` 以满足完整覆盖，但不得作为事实证据。
+分段不重排、改写或拼接原文。
 
 ### 2.2 模型候选与正式输出
 

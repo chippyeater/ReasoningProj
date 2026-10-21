@@ -27,6 +27,8 @@
 
 - `title` 去除首尾空白后为 2–24 个 Unicode 字符；`content` 为 4–220 个 Unicode 字符。不得靠截断丢失条件、否定、时间或来源限定。
 - 每个节点至少选择一个输入中真实存在的 `evidence_ids`；不得编造 ID，也不需要复述引文、文件 ID、offset 或 source_kind。
+- Quote Unit 的 `role/group_id/message_id/context_quote_ids` 只用于理解消息边界与上下文。若节点 `content` 使用关联日期或时间，必须同时把对应的日期/时间 Quote Unit ID 加入 `evidence_ids`；上下文元数据本身不能替代正式证据引用。
+- `role=group_boundary` 只表示原文中的聊天分隔线，不是事实证据，不得选入 `evidence_ids`。
 - 一条信息需要多处原文共同支持时，分别选择对应 Quote Unit ID；不连续证据必须是多个 ID，不能拼接。
 - 只选择直接支持该节点重要事实、金额、日期、条件、行为、状态及陈述归属的 Quote Units；不得为了减少引用数量选择无关的宽泛片段。
 - `content` 中的重要金额、日期、条件、陈述归属和不确定性必须得到所选 Quote Units 支持。

@@ -66,8 +66,9 @@ async def _materialize_with_optional_repair(
         result, merges = materialize_extraction(draft, case, diagnostics)
     except ExtractionFailure as exc:
         audit[f"{stage_name}_source_validation"] = exc.diagnostics or diagnostics
+        repairable_codes = {"invalid_evidence_id", "quote_unit_not_evidence"}
         repairable = (exc.code == "extraction_source_invalid" and exc.errors
-                      and all(error.get("code") == "invalid_evidence_id" for error in exc.errors))
+                      and all(error.get("code") in repairable_codes for error in exc.errors))
         if not repair_enabled or audit["evidence_repair_attempts"] >= 1 or not repairable:
             raise
         failed_ids = {error["item_id"] for error in exc.errors if error.get("item_id")}

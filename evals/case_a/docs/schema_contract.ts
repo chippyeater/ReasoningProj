@@ -39,6 +39,10 @@ export interface QuoteUnit {
   start: number;
   end: number;
   text: string;
+  role: 'text' | 'temporal_context' | 'message' | 'record' | 'group_boundary';
+  group_id: string | null;
+  message_id: string | null;
+  context_quote_ids: string[]; // Earlier temporal QuoteUnits in the same group.
 }
 interface ModelInfoUnitCommon {
   local_id: string;

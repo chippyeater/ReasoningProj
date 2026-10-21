@@ -6,6 +6,8 @@
 
 - 必须恰好覆盖输入列出的每个 `local_id`，不得增加或遗漏节点。
 - 只能选择输入中真实存在、直接支持该节点 `content` 的 Quote Unit ID。
+- `context_quote_ids` 只提示日期/时间归属；如果 `content` 使用该日期或时间，修复结果必须同时选择对应的上下文 Quote Unit ID。
+- 不得选择 `role=group_boundary` 的纯分组线作为证据。
 - 需要多处或不连续原文共同支持时选择多个 ID，不得拼接或复述原文。
 - 不得修改节点类型、标题、内容、speaker、actor/target、related_issue 或任何其他语义字段。
 - 如果现有材料不足以支持节点，也不得编造 ID。

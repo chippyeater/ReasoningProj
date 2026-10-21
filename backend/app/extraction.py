@@ -339,7 +339,8 @@ def materialize_extraction(draft: ModelExtraction, case: CaseData,
     """Resolve Quote Unit IDs, allocate formal IDs, and validate atomically."""
     index_events: list[QuoteIndexEvent] = []
     catalog = quote_catalog(case, index_events)
-    stale_rebuild = any(event.reason == "text_hash_changed" for event in index_events)
+    stale_rebuild = any(event.reason in {"text_hash_changed", "segmentation_version_changed"}
+                        for event in index_events)
     formal_ids = {unit.local_id: f"info-{uuid4().hex}" for unit in draft.info_units}
     units: list[InfoUnit] = []
     errors: list[dict] = []
