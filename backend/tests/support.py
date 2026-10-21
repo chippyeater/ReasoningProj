@@ -13,6 +13,7 @@ from docx import Document
 from fastapi.testclient import TestClient
 from app import case_store
 from app.main import app
+from app.quote_units import load_or_build_quote_index
 
 GOLD = REPO / "evals/case_a"
 
@@ -29,6 +30,15 @@ def docx_bytes(*paragraphs):
     buffer = io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
+
+
+def quote_id_for(case_id, file_id, text):
+    case = case_store.load_case(case_id)
+    file = next(item for item in case.files if item.file_id == file_id)
+    matches = [unit.quote_id for unit in load_or_build_quote_index(case_id, file).units if unit.text == text]
+    if len(matches) != 1:
+        raise AssertionError(f"Expected one Quote Unit for {text!r}, found {len(matches)}")
+    return matches[0]
 
 
 class IsolatedCaseTest(unittest.TestCase):

@@ -2,7 +2,7 @@ import json
 from itertools import count
 import unittest
 
-from support import IsolatedCaseTest
+from support import IsolatedCaseTest, quote_id_for
 from app import case_store
 from app.extraction import (
     ExtractionFailure, deduplicate_units, materialize_extraction,
@@ -14,9 +14,9 @@ from app.schemas import SourceKind
 _LOCAL_IDS = count()
 
 
-def model_unit(file_id, quote, **changes):
+def model_unit(_file_id, evidence_id, **changes):
     value = dict(local_id=f"local-{next(_LOCAL_IDS)}", type="event", subtype="reported", title="付款陈述",
-                 content="甲称已付款，尚未经独立核实。", source_quotes=[{"file_id": file_id, "quote": quote}],
+                 content="甲称已付款，尚未经独立核实。", evidence_ids=[evidence_id],
                  speaker="甲", side="付款方", actor_local_id=None, target_local_id=None,
                  related_issue="款项是否已支付")
     value.update(changes)
@@ -59,8 +59,9 @@ class TestExtractionBoundary(IsolatedCaseTest):
         saved = self.upload(raw="😀\n甲：我已付款".encode("utf-8"), source_kind="testimony")
         case = case_store.load_case(saved["case_id"])
         file_id = case.files[0].file_id
+        evidence_id = quote_id_for(case.case_id, file_id, "甲：我已付款")
         result, merges = materialize_extraction(
-            parse_model_extraction(model_result([model_unit(file_id, "甲：我已付款")])), case)
+            parse_model_extraction(model_result([model_unit(file_id, evidence_id)])), case)
         unit = result.info_units[0]
         self.assertTrue(unit.id.startswith("info-"))
         self.assertTrue(unit.created_at.endswith("Z"))
@@ -78,9 +79,9 @@ class TestExtractionBoundary(IsolatedCaseTest):
     def test_invalid_fields_types_and_classification_are_schema_errors(self):
         base = model_unit("f", "原文")
         changes = [dict(type="unknown"), dict(type="entity", subtype="reported"), dict(content=123),
-                   dict(content="  "), dict(source_quotes=[]), dict(id="model-id"), dict(created_at="model-time"),
-                   dict(source_quotes=[dict(file_id="f", quote="原文", start=0, end=2)]),
-                   dict(source_quotes=[dict(file_id="f", quote="原文", source_kind="testimony")])]
+                   dict(content="  "), dict(evidence_ids=[]), dict(id="model-id"), dict(created_at="model-time"),
+                   dict(source_quotes=[dict(file_id="f", quote="原文")]),
+                   dict(evidence_ids=[{"quote_id": "not-a-string"}])]
         for change in changes:
             with self.subTest(change=change), self.assertRaises(ExtractionFailure) as caught:
                 parse_model_extraction(model_result([{**base, **change}]))
@@ -106,8 +107,10 @@ class TestExtractionBoundary(IsolatedCaseTest):
         self.assertEqual(response.status_code, 200, response.text)
         case = case_store.load_case(saved["case_id"])
         a, b = case.files
+        qa = quote_id_for(case.case_id, a.file_id, "甲：我已付款")
+        qb = quote_id_for(case.case_id, b.file_id, "甲再次说：我已付款")
         draft = parse_model_extraction(model_result([
-            model_unit(a.file_id, "甲：我已付款"), model_unit(b.file_id, "甲再次说：我已付款")]))
+            model_unit(a.file_id, qa), model_unit(b.file_id, qb)]))
         result, merges = materialize_extraction(draft, case)
         self.assertEqual(len(result.info_units), 1)
         self.assertEqual(len(result.info_units[0].source_refs), 2)
@@ -121,9 +124,10 @@ class TestExtractionBoundary(IsolatedCaseTest):
         saved = self.upload(raw="甲称付款\n乙称未收款\n甲称次日付款".encode("utf-8"))
         case = case_store.load_case(saved["case_id"])
         fid = case.files[0].file_id
-        units = [model_unit(fid, "甲称付款"),
-                 model_unit(fid, "乙称未收款", content="乙称未收款。", speaker="乙", side="收款方"),
-                 model_unit(fid, "甲称次日付款", content="甲称次日付款。")]
+        units = [model_unit(fid, quote_id_for(case.case_id, fid, "甲称付款")),
+                 model_unit(fid, quote_id_for(case.case_id, fid, "乙称未收款"),
+                            content="乙称未收款。", speaker="乙", side="收款方"),
+                 model_unit(fid, quote_id_for(case.case_id, fid, "甲称次日付款"), content="甲称次日付款。")]
         result, _ = materialize_extraction(parse_model_extraction(model_result(units)), case)
         self.assertEqual(len(result.info_units), 3)
         copied = result.info_units[0].model_copy(deep=True)
@@ -131,31 +135,33 @@ class TestExtractionBoundary(IsolatedCaseTest):
         copied.id = "different-person"
         self.assertEqual(len(deduplicate_units([result.info_units[0], copied])[0]), 2)
 
-    def test_duplicate_citations_are_deduplicated_without_inflating_support(self):
+    def test_duplicate_evidence_ids_are_rejected(self):
         saved = self.upload(raw="甲称付款".encode("utf-8"))
         case = case_store.load_case(saved["case_id"])
         fid = case.files[0].file_id
-        unit = model_unit(fid, "甲称付款")
-        unit["source_quotes"] *= 2
-        result, _ = materialize_extraction(parse_model_extraction(model_result([unit])), case)
-        self.assertEqual(len(result.info_units[0].source_refs), 1)
+        unit = model_unit(fid, quote_id_for(case.case_id, fid, "甲称付款"))
+        unit["evidence_ids"] *= 2
+        with self.assertRaises(ExtractionFailure) as caught:
+            parse_model_extraction(model_result([unit]))
+        self.assertEqual(caught.exception.code, "extraction_schema_invalid")
 
-    def test_missing_wrong_ambiguous_and_unknown_sources_report_errors(self):
+    def test_invalid_quote_unit_ids_report_errors(self):
         saved = self.upload(raw="重复\n重复\n真实引文".encode("utf-8"))
         case = case_store.load_case(saved["case_id"])
         fid = case.files[0].file_id
-        for file_id, quote, expected in [(fid, "不存在", "quote_not_found"),
-                                         (fid, "重复", "ambiguous_quote"), ("unknown", "真实引文", "unknown_source_file")]:
-            with self.subTest(file_id=file_id, quote=quote), self.assertRaises(ExtractionFailure) as caught:
-                materialize_extraction(parse_model_extraction(model_result([model_unit(file_id, quote)])),
-                                       case)
-            self.assertEqual(caught.exception.code, "extraction_source_invalid")
-            self.assertEqual(caught.exception.errors[0]["code"], expected)
+        with self.assertRaises(ExtractionFailure) as caught:
+            materialize_extraction(parse_model_extraction(
+                model_result([model_unit(fid, "quote-does-not-exist")])), case)
+        self.assertEqual(caught.exception.code, "extraction_source_invalid")
+        self.assertEqual(caught.exception.errors[0]["code"], "invalid_evidence_id")
+        self.assertEqual(caught.exception.errors[0]["candidate_id"], "quote-does-not-exist")
+
     def test_same_model_output_gets_new_formal_ids_each_run(self):
         saved = self.upload(raw="甲称付款".encode("utf-8"))
         case = case_store.load_case(saved["case_id"])
         fid = case.files[0].file_id
-        draft = parse_model_extraction(model_result([model_unit(fid, "甲称付款")]))
+        draft = parse_model_extraction(model_result([
+            model_unit(fid, quote_id_for(case.case_id, fid, "甲称付款"))]))
         first, _ = materialize_extraction(draft, case)
         second, _ = materialize_extraction(draft, case)
         self.assertNotEqual(first.info_units[0].id, second.info_units[0].id)

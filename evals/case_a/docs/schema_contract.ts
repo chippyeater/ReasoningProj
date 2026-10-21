@@ -33,12 +33,18 @@ export type InfoUnit = InfoUnitCommon & (
   | {type: 'position'; subtype: null; speaker: string}
 );
 
-export interface ModelSourceQuote { file_id: string; quote: string; }
+export interface QuoteUnit {
+  quote_id: string;
+  file_id: string;
+  start: number;
+  end: number;
+  text: string;
+}
 interface ModelInfoUnitCommon {
   local_id: string;
   title: string;
   content: string;
-  source_quotes: ModelSourceQuote[];
+  evidence_ids: string[]; // Current-case QuoteUnit IDs; never persisted on InfoUnit.
   side: string | null;
   actor_local_id: string | null; // Must reference an entity local_id.
   target_local_id: string | null; // Must reference an entity local_id.

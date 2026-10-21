@@ -102,40 +102,67 @@ type ParsedDocument = {
 
 此对象供后续阶段读取，无需作为完整内容重复保存在 `case.json` 中。
 
+### 1.4 Quote Unit 索引
+
+后端在权威缓存 TXT 之上按材料结构建立 Quote Unit 索引。索引按文件保存在
+`quote_units/{file_id}.json`，不写入 `case.json`，其最小单位为：
+
+```ts
+type QuoteUnit = {
+  quote_id: string;
+  file_id: string;
+  start: number; // Unicode 字符偏移，左闭
+  end: number;   // Unicode 字符偏移，右开
+  text: string;
+};
+
+type QuoteUnitIndex = {
+  segmentation_version: "quote-units-v1";
+  file_id: string;
+  text_sha256: string;
+  units: QuoteUnit[];
+};
+```
+
+每个单位必须满足 `cached_text.slice(start, end) === text`。`quote_id` 由分段规则版本、
+文件 ID、偏移和原文内容确定性生成；相同缓存和规则重复构建保持稳定，不同文件中的相同文本
+不会共用 ID。索引缺失、损坏或文本哈希改变时从缓存 TXT 重建；旧 ID 不做猜测性迁移。
+
 ---
 
 ## 阶段 2：解析文本 → 核心争议与基础信息
 
-对应当前 `run_extraction_agent()`。
+对应当前 `run_extraction()`。
 
-### 2.1 模型输入 `ExtractionInput`
+### 2.1 模型输入
+
+公开的 `ExtractionInput`/文件全文接口仍用于读取权威缓存文本；实际 LLM 请求只发送一份按
+原文顺序排列的 Quote Units，避免同时发送完整正文和等价分段副本：
 
 ```ts
-type ExtractionInput = {
+type QuoteExtractionInput = {
   case_title: string;
 
   files: {
     file_id: string;
     filename: string;
-    text: string;
+    quote_units: {
+      quote_id: string;
+      text: string;
+    }[];
   }[];
+  confirmed_source_kinds: Record<string, SourceKind>;
 };
 ```
 
-模型输入使用第一阶段缓存的完整解析文本，而非文件预览。
-
-当前接口中的 `raw_text`、`context` 可以暂时保留兼容，但首轮评测仅测试文件输入。
+Quote Unit 保留日期、说话人和原始顺序；合同与笔录按原文行和句子边界划分，聊天以消息行
+为基础，结构化记录将同一连续记录的字段保留为一个单位。分段不重排、改写或拼接原文。
 
 ### 2.2 模型候选与正式输出
 
 模型先返回候选结构 `ModelExtraction`；后端校验来源、分配正式 ID、将候选节点之间的局部引用映射为正式 `InfoUnit.id`，才生成 `ExtractionOutput`。这避免要求模型预先猜测后端持久化 ID。
 
 ```ts
-type ModelSourceQuote = {
-  file_id: string;
-  quote: string; // 一段连续原文；仍按现有定位流程处理
-};
-
 type ModelInfoUnit = Omit<
   InfoUnit,
   "id" | "created_at" | "source_refs" | "actor" | "target" | "subtype"
@@ -144,7 +171,7 @@ type ModelInfoUnit = Omit<
   local_id: string;                  // 同次模型输出内部唯一
   actor_local_id: string | null;     // 指向本次输出的 entity.local_id
   target_local_id: string | null;    // 指向本次输出的 entity.local_id
-  source_quotes: ModelSourceQuote[];
+  evidence_ids: string[];            // 选择输入中的一个或多个 Quote Unit ID
 };
 
 type ModelExtraction = {
@@ -163,7 +190,7 @@ type ExtractionOutput = {
 - `core_issue` 为 `null` 或逐字存在于 `issue_set` 中；`issue_set` 不应存在语义重复争点。
 - `related_issue` 为 `null` 或逐字存在于 `issue_set` 中，替代旧字段 `stance_target`。
 - `local_id` 只在模型候选批次内有意义。后端生成持久化 ID，并原子性地映射所有 `actor_local_id/target_local_id`。跨文件增量处理时，可以通过后端提供的既有正式 ID 建立引用，不直接使用其它批次的 `local_id`。
-- `ModelSourceQuote` 保留 v0.2 已实现方向（`file_id + quote`）；未在本次分类修订中强行引入尚未完成的段落/证据 ID 预处理。未来改为 `evidence_ids` 时，只替换候选来源接口，不改变正式 `SourceRef`。
+- 模型不生成原文字符串、offset 或 `source_kind`。后端以 `evidence_ids` 查询当前 Quote Unit 索引，从缓存 TXT 切片生成正式 `SourceRef`；`evidence_ids` 不进入持久化业务 Schema。
 - 提取默认输出对案件争点必要、可以独立核查或参与后续推理的最小有用节点集合，不按原文句数设定目标节点数。
 
 ### 2.3 基础信息 `InfoUnit`（5 类语义对象）
@@ -320,11 +347,12 @@ const event: Partial<InfoUnit> = {
 
 ## 阶段 3：结构化数据校验与保存
 
-这一阶段不调用 LLM。输入为原始候选 `ModelExtraction`、已解析文件、当前已有实体节点（若有）；输出为通过验证且引用已映射的 `ExtractionOutput`。
+这一阶段默认不调用 LLM。输入为原始候选 `ModelExtraction`、当前 Quote Unit 索引、已解析文件和当前已有实体节点（若有）；输出为通过验证且引用已映射的 `ExtractionOutput`。若将 `EXTRACTION_EVIDENCE_REPAIR_ENABLED` 显式设为 `true`，单次 Extraction 运行最多增加一次只允许替换失败节点 `evidence_ids` 的受控调用；开关默认 `false`，修复不能改写任何语义字段，也不会进行第二次修复重试。
 
 ```ts
 type ValidationInput = {
   extraction: ModelExtraction;
+  quote_unit_indexes: QuoteUnitIndex[];
   parsed_files: CaseFile[];
   existing_info_units?: InfoUnit[];
 };
@@ -345,11 +373,11 @@ type ValidationResult<T> = {
 1. `type/subtype` 合法配对：`entity` 需实体子类，`event` 允许 `reported/documented/null`（首轮不得由模型提交 `verified`），其它类型的 `subtype` 只能为 `null`。
 2. `title` 为去除首尾空白后 2–24 个字符；`content` 为 4–220 个字符；不能依靠截断过检。
 3. `state` 与 `position` 的 `speaker` 是非空且不是空白的字符串；其余类型可为 `null`。缺乏真实可归属的主体时应返回校验错误，不能编造说话人。
-4. 各节点至少有一条来源；`file_id` 属于本案件，`quote` 是对应缓存全文中的真实连续引用，完整 `SourceRef` 的 `source_kind/start/end` 由后端物化且严格验证。
+4. 各节点至少选择一个当前案件的有效 Quote Unit ID；索引版本、文本哈希、offset 与原文切片必须一致。完整 `SourceRef` 的 `file_id/source_kind/quote/start/end` 全部由后端确定性物化，不接受模型手写引文。
 5. `core_issue`、`related_issue` 只能为 `null` 或指向 `issue_set` 中的原始字符串。
 6. `local_id` 在本轮唯一，正式 `id` 在案件中唯一；所有非空 `actor/target` 通过 ID 映射后均指向确实存在的 `entity` InfoUnit；不允许姓名字符串漏入正式结构。
 7. `reported/documented/verified` 的层级不得被模型凭推测升级。尤其 `verified` 必须有独立人工或程序核验审计依据，不能只因出现交易记录便标记为 `verified`。
-8. 对同一事件的不同主体、日期、条件等不能因合并而丢失来源限定；引用实际支持该节点文本，必要时执行单独的语义复核。
+8. 对同一事件的不同主体、日期、条件等不能因合并而丢失来源限定；后端保守检查明确金额和日期是否出现在所选证据中。自然语言支持性无法由该规则证明，结果明确标记为 `needs_review`，必要时执行单独的语义复核。
 
 当前第一轮评测采用**整批正式契约校验**；若未来要允许部分成功，应在评测协议中单列被拒节点、引用依赖和部分成功性质，不能悄然改变历史通过率口径。任何校验失败均不得对现有 CaseData 做部分写入。
 
@@ -844,7 +872,7 @@ type CaseData = {
 
 **决定 E：下游关系最小化。** `Relation` 保存 `about/support/contradict`；行为主体/对象连接由 `actor/target` 派生；`occur_at` 旧约束不再保留。既有三种视图的主要 Payload 结构不变。
 
-**决定 F：来源格式本轮不扩张。** 仍保留 `SourceRef(file_id, source_kind, quote, start, end)`；模型候选只给文件 ID 与连续引文，后端完成位置计算与完整校验。证据段 ID 定位另列后续改造，不与本次类型调整混算。
+**决定 F：正式来源格式保持稳定，模型侧使用 Quote Unit ID。** 持久化结构仍为 `SourceRef(file_id, source_kind, quote, start, end)`；模型候选只选择一个或多个 `evidence_ids`，后端从当前 Quote Unit 索引和缓存原文确定性物化完整来源，不接受模型手写引文。
 
 ## 六、来源合并与最小节点补充约定（保留）
 
@@ -861,8 +889,8 @@ type CaseData = {
 | 顺序 | 模块 / 位置 | 必须修改的内容 | 验收标准 |
 | --- | --- | --- | --- |
 | 1 | 后端 `schemas.py` / Pydantic 模型 | 更新 Type/Subtype 枚举与配对约束；移除 `summary`；设 `title/content` 长度；`speaker` 条件非空；`stance_target→related_issue`；`actor/target` 为 ID | 五种类型及 `null` 组合通过，旧子类及非法说话人/长度被拒绝 |
-| 2 | Extraction Prompt + 严格 JSON Schema | 将输出切换到 `ModelExtraction` 候选；用 `local_id` 与 `actor_local_id/target_local_id`；不允许模型输出 `verified`；保留来源限定 | 模型输出可严格解析，单方自述为 `event/reported`，金额状态有真实 speaker |
-| 3 | Extraction 归一化与保存 | 后端生成正式 ID；映射 actor/target；引用匹配并生成 SourceRef；更新 `related_issue` 校验；整批原子保存 | 所有非空关联指向当前案件 entity；错误引用拒绝写库，不修改既有 CaseData |
+| 2 | Extraction Prompt + 严格 JSON Schema | 将输出切换到 `ModelExtraction` 候选；用 `local_id` 与 `actor_local_id/target_local_id`；来源改为选择 `evidence_ids`；不允许模型输出 `verified` | 模型输出可严格解析，不再生成引文字符串，单方自述为 `event/reported`，金额状态有真实 speaker |
+| 3 | Extraction 归一化与保存 | 构建/校验 Quote Unit 索引；后端生成正式 ID；映射 actor/target；由 evidence ID 生成 SourceRef；整批原子保存 | 所有非空关联指向当前案件 entity；过期或错误 ID 拒绝写库，不修改既有 CaseData；支持性不确定项可审计 |
 | 4 | Consolidation / 去重 | 用信息用途与独立核查性决定合并；合并后重映射 actor/target 及外部引用，禁止悬挂 ID | 合并重复实体后依赖节点仍正确引用；不同核查对象不强行合并 |
 | 5 | Relation Prompt、Schema 与关系构建 | `about/support/contradict` 三类；删除对 `statement`、`state/temporal` 的依赖；actor_of/target_of 改为派生边 | 所有关系端点/evidence ID 有效；不会重复维护 actor/target 连线 |
 | 6 | 前端 TypeScript 类型、卡片及连线渲染 | 显示 `title/content`，移除 `summary` 字段读取；更新五类型颜色/标签；以 entity ID 解析 actor/target 并绘制派生边 | 卡片在无 summary 情况下正常折叠；actor/target 无需字符串匹配即可定位 |
@@ -884,4 +912,4 @@ type CaseData = {
 
 ### 本轮边界
 
-当前已完成 Pydantic Schema、Extraction/Consolidation Prompt、前端类型和案件 A Gold v1.8 的迁移。多轮 Agent Tools、全文片段证据 ID、状态核验工作流仍属于后续独立实现和评测；本次实现未扩张这些边界。
+当前已完成 Pydantic Schema、Extraction/Consolidation Prompt、Quote Unit 来源定位和案件 A Gold v1.8 的迁移。多轮 Agent Tools、独立 LLM 语义裁判与状态核验工作流仍属于后续独立实现和评测；本次实现未扩张这些边界。

@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from support import IsolatedCaseTest
+from support import IsolatedCaseTest, quote_id_for
 from app import case_store
 from app.extraction import ExtractionFailure, materialize_extraction, parse_model_extraction
 
@@ -9,10 +9,10 @@ from app.extraction import ExtractionFailure, materialize_extraction, parse_mode
 ISSUE = "款项是否已支付"
 
 
-def candidate(local_id, kind, subtype, title, content, file_id, quote, **changes):
+def candidate(local_id, kind, subtype, title, content, _file_id, evidence_id, **changes):
     value = {
         "local_id": local_id, "type": kind, "subtype": subtype, "title": title, "content": content,
-        "source_quotes": [{"file_id": file_id, "quote": quote}], "speaker": None, "side": None,
+        "evidence_ids": [evidence_id], "speaker": None, "side": None,
         "actor_local_id": None, "target_local_id": None, "related_issue": ISSUE,
     }
     value.update(changes)
@@ -43,8 +43,10 @@ class TestV03ExtractionContract(IsolatedCaseTest):
         saved = self.upload(raw="甲为付款人\n甲称已付款".encode("utf-8"), source_kind="testimony")
         case = case_store.load_case(saved["case_id"])
         fid = case.files[0].file_id
-        entity = candidate("person", "entity", "person", "付款人甲", "材料记载甲为付款人。", fid, "甲为付款人")
-        event = candidate("pay", "event", "reported", "甲称已经付款", "甲称已向对方支付款项。", fid, "甲称已付款",
+        entity = candidate("person", "entity", "person", "付款人甲", "材料记载甲为付款人。", fid,
+                           quote_id_for(case.case_id, fid, "甲为付款人"))
+        event = candidate("pay", "event", "reported", "甲称已经付款", "甲称已向对方支付款项。", fid,
+                          quote_id_for(case.case_id, fid, "甲称已付款"),
                           actor_local_id="person")
         result, _ = materialize_extraction(parse_model_extraction(batch(entity, event)), case)
         by_title = {unit.title: unit for unit in result.info_units}
@@ -55,9 +57,12 @@ class TestV03ExtractionContract(IsolatedCaseTest):
         saved = self.upload(raw="甲为付款人\n甲再次被记为付款人\n甲称已付款".encode("utf-8"), source_kind="testimony")
         case = case_store.load_case(saved["case_id"])
         fid = case.files[0].file_id
-        a = candidate("person-a", "entity", "person", "付款人甲", "材料记载甲为付款人。", fid, "甲为付款人")
-        b = candidate("person-b", "entity", "person", "付款人甲", "材料记载甲为付款人。", fid, "甲再次被记为付款人")
-        event = candidate("pay", "event", "reported", "甲称已经付款", "甲称已向对方支付款项。", fid, "甲称已付款",
+        a = candidate("person-a", "entity", "person", "付款人甲", "材料记载甲为付款人。", fid,
+                      quote_id_for(case.case_id, fid, "甲为付款人"))
+        b = candidate("person-b", "entity", "person", "付款人甲", "材料记载甲为付款人。", fid,
+                      quote_id_for(case.case_id, fid, "甲再次被记为付款人"))
+        event = candidate("pay", "event", "reported", "甲称已经付款", "甲称已向对方支付款项。", fid,
+                          quote_id_for(case.case_id, fid, "甲称已付款"),
                           actor_local_id="person-b")
         result, merges = materialize_extraction(parse_model_extraction(batch(a, b, event)), case)
         entities = [unit for unit in result.info_units if unit.type.value == "entity"]
