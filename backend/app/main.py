@@ -9,10 +9,12 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from app.api_models import (
-    CaseResponse, CasesResponse, ExtractionRunInput, RelationRunInput, UpdateCaseInput,
+    CaseResponse, CasesResponse, CreateInfoUnitInput, ExtractionRunInput, RelationRunInput,
+    UpdateCaseInput, UpdateInfoUnitInput,
 )
 from app.case_service import (
-    append_files_to_case, build_extraction_input, create_case_from_uploads, now_iso,
+    append_files_to_case, build_extraction_input, create_case_from_uploads, create_info_unit,
+    delete_info_unit, list_quote_units, now_iso, update_info_unit,
 )
 from app.case_store import (
     clear_case, clear_current_case, list_cases, load_case, load_case_snapshot, load_current_case,
@@ -20,6 +22,7 @@ from app.case_store import (
 )
 from app.errors import AppError
 from app.extraction_service import run_extraction
+from app.quote_units import QuoteUnit
 from app.schemas import (
     CaseData, ExtractionInput, ExtractionOutput, LawRetrieveInput, ParsedDocument, ReasoningInput, UploadRequest, WorkspaceState,
 )
@@ -134,6 +137,26 @@ async def get_parsed_text(case_id: str, file_id: str) -> ParsedDocument:
 @app.get("/api/cases/{case_id}/extraction-input", response_model=ExtractionInput)
 async def get_extraction_input(case_id: str, file_id: Annotated[list[str] | None, Query()] = None) -> ExtractionInput:
     return build_extraction_input(require_case(case_id), file_id)
+
+
+@app.get("/api/cases/{case_id}/quote-units", response_model=list[QuoteUnit])
+async def get_quote_units(case_id: str) -> list[QuoteUnit]:
+    return list_quote_units(require_case(case_id))
+
+
+@app.post("/api/cases/{case_id}/info-units", response_model=CaseResponse, status_code=201)
+async def add_info_unit(case_id: str, payload: CreateInfoUnitInput) -> CaseResponse:
+    return CaseResponse(case=create_info_unit(require_case(case_id), payload))
+
+
+@app.patch("/api/cases/{case_id}/info-units/{info_unit_id}", response_model=CaseResponse)
+async def edit_info_unit(case_id: str, info_unit_id: str, payload: UpdateInfoUnitInput) -> CaseResponse:
+    return CaseResponse(case=update_info_unit(require_case(case_id), info_unit_id, payload))
+
+
+@app.delete("/api/cases/{case_id}/info-units/{info_unit_id}", response_model=CaseResponse)
+async def remove_info_unit(case_id: str, info_unit_id: str) -> CaseResponse:
+    return CaseResponse(case=delete_info_unit(require_case(case_id), info_unit_id))
 
 
 @app.post("/api/cases/{case_id}/select", response_model=CaseResponse)

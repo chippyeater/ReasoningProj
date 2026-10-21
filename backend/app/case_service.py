@@ -7,19 +7,169 @@ from pathlib import Path
 from uuid import uuid4
 
 from starlette.datastructures import UploadFile
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from app import file_parsers
+from app.api_models import CreateInfoUnitInput, UpdateInfoUnitInput
 from app.case_store import artifact_path, atomic_write, read_parsed_document, save_case, write_json
 from app.errors import AppError
+from app.quote_units import QuoteUnit, quote_catalog, quote_indexes_for_case, source_ref_from_quote_unit
 from app.schemas import (
-    CaseData, CaseFile, ExtractionFile, ExtractionInput, ParseStatus,
-    PipelineStage, RelationInput, RunStatus, SourceKind, StageRun, Text, Viewport, WorkspaceState,
+    CaseData, CaseFile, ConflictView, ExtractionFile, ExtractionInput, HypothesisView, InfoUnit,
+    ParseStatus, PipelineStage, RelationInput, RunStatus, SourceKind, SourceRef, StageRun, Text,
+    TimelineView, Viewport, WorkspaceState,
 )
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _source_refs_from_evidence_ids(case: CaseData, evidence_ids: list[str]) -> list[SourceRef]:
+    if len(evidence_ids) != len(set(evidence_ids)):
+        raise AppError("duplicate_evidence_id", "evidence_ids must be unique")
+    catalog = quote_catalog(case)
+    references: list[SourceRef] = []
+    for evidence_id in evidence_ids:
+        resolved = catalog.get(evidence_id)
+        if resolved is None:
+            raise AppError("invalid_evidence_id", f"Unknown current-case Quote Unit ID: {evidence_id}")
+        unit, file = resolved
+        references.append(source_ref_from_quote_unit(case.case_id, unit, file))
+    return references
+
+
+def _save_info_unit_candidate(candidate: CaseData) -> CaseData:
+    candidate.updated_at = now_iso()
+    try:
+        candidate = CaseData.model_validate(candidate.model_dump(mode="json"))
+    except ValidationError as exc:
+        raise AppError(
+            "invalid_info_unit_change", "InfoUnit change violates the current case contract",
+            details={"errors": exc.errors(include_url=False, include_input=False, include_context=False)},
+        ) from exc
+    save_case(candidate)
+    return candidate
+
+
+def list_quote_units(case: CaseData) -> list[QuoteUnit]:
+    return [unit for index in quote_indexes_for_case(case) for unit in index.units]
+
+
+def create_info_unit(case: CaseData, payload: CreateInfoUnitInput) -> CaseData:
+    references = _source_refs_from_evidence_ids(case, payload.evidence_ids)
+    existing_ids = {unit.id for unit in case.info_units}
+    unit_id = f"info-{uuid4().hex}"
+    while unit_id in existing_ids:
+        unit_id = f"info-{uuid4().hex}"
+    try:
+        unit = InfoUnit(
+            **payload.model_dump(exclude={"evidence_ids"}), id=unit_id,
+            source_refs=references, created_at=now_iso(),
+        )
+    except ValidationError as exc:
+        raise AppError(
+            "invalid_info_unit", "InfoUnit violates the current schema",
+            details={"errors": exc.errors(include_url=False, include_input=False, include_context=False)},
+        ) from exc
+    candidate = case.model_copy(deep=True)
+    candidate.info_units.append(unit)
+    return _save_info_unit_candidate(candidate)
+
+
+def update_info_unit(case: CaseData, info_unit_id: str, payload: UpdateInfoUnitInput) -> CaseData:
+    index = next((i for i, unit in enumerate(case.info_units) if unit.id == info_unit_id), None)
+    if index is None:
+        raise AppError("info_unit_not_found", f"InfoUnit not found: {info_unit_id}", 404)
+    current = case.info_units[index]
+    values = current.model_dump(mode="json")
+    values.update(payload.model_dump(mode="json", exclude_unset=True, exclude={"evidence_ids"}))
+    if "evidence_ids" in payload.model_fields_set:
+        values["source_refs"] = [
+            ref.model_dump(mode="json")
+            for ref in _source_refs_from_evidence_ids(case, payload.evidence_ids or [])
+        ]
+    # Transport input cannot replace either stable field; assign them explicitly.
+    values["id"] = current.id
+    values["created_at"] = current.created_at
+    try:
+        updated = InfoUnit.model_validate(values)
+    except ValidationError as exc:
+        raise AppError(
+            "invalid_info_unit", "InfoUnit violates the current schema",
+            details={"errors": exc.errors(include_url=False, include_input=False, include_context=False)},
+        ) from exc
+    candidate = case.model_copy(deep=True)
+    candidate.info_units[index] = updated
+    return _save_info_unit_candidate(candidate)
+
+
+def _business_references_to_info_unit(case: CaseData, info_unit_id: str) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    for unit in case.info_units:
+        if unit.id == info_unit_id:
+            continue
+        for field in ("actor", "target"):
+            if getattr(unit, field) == info_unit_id:
+                references.append({"kind": "info_unit", "id": unit.id, "field": field})
+    for relation in case.relations:
+        for field in ("source_id", "target_id"):
+            if getattr(relation, field) == info_unit_id:
+                references.append({"kind": "relation", "id": relation.id, "field": field})
+        if info_unit_id in relation.evidence_unit_ids:
+            references.append({"kind": "relation", "id": relation.id, "field": "evidence_unit_ids"})
+    for view in case.reasoning_views:
+        payload = view.payload
+        if isinstance(payload, ConflictView):
+            for section in payload.sections:
+                for item in section.items:
+                    if item.info_unit_id == info_unit_id:
+                        references.append({
+                            "kind": "reasoning_view", "id": view.id,
+                            "field": f"sections.{section.id}.items",
+                        })
+        elif isinstance(payload, TimelineView):
+            for event in payload.events:
+                if info_unit_id in event.related_info_unit_ids:
+                    references.append({
+                        "kind": "reasoning_view", "id": view.id,
+                        "field": f"events.{event.id}.related_info_unit_ids",
+                    })
+        elif isinstance(payload, HypothesisView):
+            for step in payload.steps:
+                for field in ("supporting_info_unit_ids", "opposing_info_unit_ids"):
+                    if info_unit_id in getattr(step, field):
+                        references.append({
+                            "kind": "reasoning_view", "id": view.id,
+                            "field": f"steps.{step.id}.{field}",
+                        })
+    for match in case.law_matches:
+        if info_unit_id in match.related_info_unit_ids:
+            references.append({
+                "kind": "law_match", "id": match.law_id, "field": "related_info_unit_ids",
+            })
+    return references
+
+
+def delete_info_unit(case: CaseData, info_unit_id: str) -> CaseData:
+    index = next((i for i, unit in enumerate(case.info_units) if unit.id == info_unit_id), None)
+    if index is None:
+        raise AppError("info_unit_not_found", f"InfoUnit not found: {info_unit_id}", 404)
+    references = _business_references_to_info_unit(case, info_unit_id)
+    if references:
+        raise AppError(
+            "info_unit_in_use", "InfoUnit has business references and cannot be deleted", 409,
+            details={"references": references},
+        )
+    candidate = case.model_copy(deep=True)
+    candidate.info_units.pop(index)
+    state = candidate.workspace_state
+    state.selected_node_ids = [node_id for node_id in state.selected_node_ids if node_id != info_unit_id]
+    if state.focused_node_id == info_unit_id:
+        state.focused_node_id = None
+    state.node_positions.pop(info_unit_id, None)
+    state.display_levels.pop(info_unit_id, None)
+    return _save_info_unit_candidate(candidate)
 
 
 def create_empty_case(case_title: str) -> CaseData:
