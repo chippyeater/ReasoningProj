@@ -1,6 +1,6 @@
 # LogicWeaver｜最小 MVP 数据 Schema v0.3（修订版）
 
-**状态：Schema 设计稿 v0.3；尚未修改业务代码、Prompt 或 Gold；原 v0.2 与 Gold v1.7 均保持不变**\
+**状态：Schema v0.3 已实施；案件 A 当前 Gold v1.8 位于 `evals/case_a/gold/`；历史 v7.2 与 Gold v1.7 仍按原始基准保存**\
 **依据：** ReasoningProj 当前 `main` 分支；ACE 信息抽取、W3C PROV 与 OASIS LegalDocML 的通用建模原则\
 **目标：** 支持案件 A 从文件上传、信息抽取、关系构建、生成式推理、法条检索到画布展示和评测的完整流程。
 
@@ -768,7 +768,7 @@ type EvalCase = {
 };
 ```
 
-评测时既要检查模型内容，也要检查 Schema 合法性与引用真实性、`actor/target` 引用完整性以及 `state/position` 的归属约束。按新分类生成新的 Gold 标签映射，保留 Gold v1.7 原始字节及旧评分；改分类后的分数不得直接当作 v7.2 同口径结果。`fallback` 不能计为对应 LLM 模块的正常成功结果。
+评测时既要检查模型内容，也要检查 Schema 合法性与引用真实性、`actor/target` 引用完整性以及 `state/position` 的归属约束。当前 Gold v1.8 使用新分类；Gold v1.7 原始字节及旧评分由历史提交和结果目录保存，两个版本的分数不得混算。`fallback` 不能计为对应 LLM 模块的正常成功结果。
 
 ---
 
@@ -868,7 +868,7 @@ type CaseData = {
 | 6 | 前端 TypeScript 类型、卡片及连线渲染 | 显示 `title/content`，移除 `summary` 字段读取；更新五类型颜色/标签；以 entity ID 解析 actor/target 并绘制派生边 | 卡片在无 summary 情况下正常折叠；actor/target 无需字符串匹配即可定位 |
 | 7 | 推理 Selector / Composers | 更新类别相关 Prompt；`ConflictView.role=claim` 是布局角色，不是旧 `statement` Type；Timeline 使用 event 的日期内容，不能再依赖 state/temporal；Hypothesis 仍用 InfoUnit ID | 三种视图均可引用新节点并保留来源；不会因为分类变更丢失时间事件 |
 | 8 | `CaseData` / 旧案件读取层 | 为旧记录增加显式版本迁移或只读兼容；将旧 `actor/target` 名称解析成实体 ID；旧 `statement` 按语义映射，不机械转类 | 历史数据可安全读取；无法消歧时给出迁移错误，不静默乱连 |
-| 9 | Gold / Evaluator / 评测脚本 | 在独立副本上迁移标签及字段；保留 Gold v1.7、历史 Prediction 和 Prompt 指纹；新增 `speaker`、subtype、ID、长度与完整契约断言 | 旧评测可复现；新口径报告明确分开，不能冒充 v7.2 同口径基线 |
+| 9 | Gold / Evaluator / 评测脚本 | 当前标签统一位于 `evals/case_a/gold/`；保留历史 Gold v1.7、Prediction 和 Prompt 指纹；检查 `speaker`、subtype、ID、长度与完整契约 | 当前与历史评测各自绑定 Gold 版本和哈希，不能把 v1.8 结果冒充 v7.2 同口径基线 |
 | 10 | 未来 InfoUnit Tools（本轮不必实现） | create/update/archive 共用同一服务校验；核验时才能把 event 升级为 verified；删除前检查关系与视图引用 | 已发布 InfoUnit 的 ID 稳定；核验升级可审计，删除不造成悬挂关系 |
 
 ### 迁移规则（重要）
@@ -884,4 +884,4 @@ type CaseData = {
 
 ### 本轮边界
 
-已修改的是**文档中的目标数据契约与迁移说明**，并未修改代码仓库、实际 Pydantic Schema、Prompt、Gold 或运行评测。多轮 Agent Tools、全文片段证据 ID、状态核验工作流都可以共享此结构，但属于后续独立实现和评测。
+当前已完成 Pydantic Schema、Extraction/Consolidation Prompt、前端类型和案件 A Gold v1.8 的迁移。多轮 Agent Tools、全文片段证据 ID、状态核验工作流仍属于后续独立实现和评测；本次实现未扩张这些边界。

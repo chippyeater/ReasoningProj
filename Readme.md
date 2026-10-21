@@ -1,17 +1,17 @@
 # LogicWeaver
 
-当前后端采用根目录《LogicWeaver｜最小 MVP 数据 Schema v0.2.md》作为唯一业务数据契约。
-旧格式案件、旧卡片接口及数据转换层已移除。React 前端尚未迁移，当前不能与新后端完整联调。
+当前后端采用 `docs/LogicWeaver_schema_v0.3.md` 及 `backend/app/schemas.py` 作为业务数据契约。
+旧卡片接口已移除；旧案件仅通过显式、非持久化迁移读取，语义或引用无法消歧时返回 409。前端通过展示投影消费 v0.3 业务数据。
 
 ## 本轮可用能力
 
-- multipart 上传与追加文件，直接持久化 v0.2 `CaseData`。
+- multipart 上传与追加文件，直接持久化 v0.3 `CaseData`。
 - DOCX、PDF、UTF-8 TXT / Markdown 解析；图片和其他格式明确为 `unsupported`，不执行 OCR。
 - 原文件保存在 `backend/data/{case_id}/upload_files/`，完整正文保存在 `parsed/{file_id}.txt`。
 - `original_path`、`parsed_text_path` 均为案件目录下的相对路径。`case.json` 不复制完整正文。
 - 提取输入仅从缓存 TXT 构建；缓存缺失、空白或编码错误均返回错误，不重新解析原文件。
 - Extraction 已接通：完整有效 TXT → 全案 LLM 初稿 → 严格校验 → 显式全案合并复核 → 后端来源定位、正式 ID / 时间与去重 → 校验 → 原子保存。
-- `InfoUnit`、争点、来源切片、直接关系和视图引用校验；完整定义全部 v0.2 模型。
+- `InfoUnit`、争点、来源切片、直接关系和视图引用校验；完整定义全部 v0.3 模型。
 - 解析日志使用 `StageRun`，输入输出快照保存在案件目录的 `runs/` 下。
 
 DOCX 规范化按文档顺序读取非空段落和表格，去除段落边缘空白，以 LF 分隔段落，表格单元格以 Tab 分隔。
@@ -30,10 +30,10 @@ Set-Location backend
 & .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-本轮只验证 v0.2，不运行历史模型基线：
+验证当前 v0.3 代码和唯一的案件 A Gold v1.8；这些命令不调用真实模型：
 
 ```powershell
-& .\backend\.venv\Scripts\python.exe -m unittest discover -s backend/tests -p 'test_v02_*.py'
+& .\backend\.venv\Scripts\python.exe -m unittest discover -s backend/tests -p 'test_*.py'
 & .\backend\.venv\Scripts\python.exe evals/case_a/tests/check_docx_parsing.py
 & .\backend\.venv\Scripts\python.exe evals/case_a/tests/validate_eval.py
 & .\backend\.venv\Scripts\python.exe -m unittest discover -s evals/case_a/tests -p 'test_*.py'
@@ -54,7 +54,7 @@ Set-Location backend
 | `GET /api/cases/{case_id}` | `{case: CaseData}` |
 | `POST /api/cases/{case_id}/select` | 设置当前案件 |
 | `PATCH /api/cases/{case_id}` | `{case_title}` |
-| `PATCH /api/cases/{case_id}/workspace` | 完整 v0.2 `WorkspaceState` |
+| `PATCH /api/cases/{case_id}/workspace` | 完整 v0.3 `WorkspaceState` |
 | `DELETE /api/cases/{case_id}` | 删除指定案件及其文件 |
 | `DELETE /api/case` | 删除当前案件；不自动切换其他案件 |
 | `GET /api/cases/{case_id}/files/{file_id}/text` | `ParsedDocument`，读取已缓存正文 |
@@ -64,7 +64,7 @@ Set-Location backend
 未指定文件时构建全部文件的提取输入；存在失败或不支持文件时明确报错。
 要继续处理可用文件，应显式选择已解析的文件 ID，不会静默略过失败项。
 错误使用 HTTP 4xx / 5xx；业务错误体为 `{detail: {code, message}}`。
-旧格式快照返回 409；文件格式不支持通过 `CaseFile.parse_status` 表达；不接受 JSON 上传或全量旧案件 upsert。
+旧格式快照仅在确定性迁移安全时以内存投影读取，歧义数据返回 409；文件格式不支持通过 `CaseFile.parse_status` 表达；不接受 JSON 上传或全量旧案件 upsert。
 旧卡片编辑、`/api/inference/generate`、router、QA 和 interaction 接口已移除，返回 404。
 
 ## 上传来源类型与 Extraction
@@ -95,9 +95,9 @@ Set-Location backend
 `validate_extraction` 校验结果为 `ValidationResult[ExtractionOutput]`，不静默丢弃错误条目。
 任何条目校验失败时返回全部已发现来源错误，`valid=false`、`data=null`。
 
-模型边界只允许语义字段及 `file_id + quote`；ID、时间、来源类型和偏移不由模型生成。
+模型边界只允许批内 `local_id`、语义字段及 `file_id + quote`；正式 ID、时间、来源类型和偏移不由模型生成。
 来源类型直接取 `CaseFile.source_kind`；保存案件时再次检查引文切片及文件来源类型一致性。
-模型输出 JSON Schema 通过四个联合分支直接约束一级类型与子类配对；这只是同一个 `InfoUnit` 的模型输出限制，不新增业务实体表。
+模型输出 JSON Schema 通过五个联合分支直接约束一级类型与子类配对；初始 event 不允许 `verified`。这只是同一个 `InfoUnit` 的模型输出限制，不新增业务实体表。
 输入 JSON 不修复、不剥离 Markdown；重复 JSON 键、非法常量、额外字段、错误类型、非法分类或无效争点都明确拒绝。
 所有校验通过后才替换 `core_issue / issue_set / info_units`。失败只追加日志，不覆盖已有有效抽取。
 模型运行期间案件若发生变化，返回 409，避免覆盖其他请求；已有关系、视图或画布引用会因替换失效时也拒绝提交，不擅自删除下游数据。
@@ -125,12 +125,11 @@ Azure 使用 `AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY / AZURE_OPENAI_MODEL`
 | `POST /api/reasoning/run` | `ReasoningInput` → 选择视图、生成 `ViewPayload`、保存 `ReasoningView` |
 | `POST /api/law/retrieve` | `LawRetrieveInput` → `LawRetrieveOutput`，引用已核验 `LawEntry` |
 
-没有 Mock、业务兜底、旧格式解析或 LLM 隐式回退。
-`RunStatus.fallback` 仅因 v0.2 契约明确定义而保留枚举值；本轮没有使用它的执行分支。
+没有 Mock、业务兜底或 LLM 隐式回退。
+`RunStatus.fallback` 仅因 v0.3 契约明确定义而保留枚举值；当前没有使用它的执行分支。
 仅 Extraction 初稿与合并复核两个 Prompt 已进入运行路径；关系及其他视图 Prompt 不加载，需下一阶段审核。
-当前 Extraction 的技术流程已验证，真实语义质量尚未验收通过：案件 A 最新核心覆盖 10/16（62.5%），
-存在必要信息遗漏、同义立场重复和发言人归属问题。
-见 [实施文件、93 项测试及真实评测明细](evals/case_a/results/extraction_20261020_v6/review.md)。
+当前 Extraction 的技术流程已通过离线契约测试；尚未针对 Gold v1.8 运行新的真实模型评测。
+历史 v7.2 结果仍按 Gold v1.7 记录为整批拒绝，11/17 只属于诊断对齐，不是成功率。
 本地 `backend/data/laws.json` 已直接整理为 `LawEntry[]`，保留条文、条号、标题、ID 与来源。
 可从有效 Gold 确认的核验日期原样保留；其他条目的核验日期为 null，不虚构日期。
-React 的类型、状态和三种视图渲染需下一阶段统一改用 `InfoUnit`、`Relation`、`ReasoningView`。
+React 类型、兼容展示投影和三种视图渲染已统一读取 `InfoUnit`、`Relation`、`ReasoningView`；业务权威数据仍由后端 v0.3 Schema 定义。

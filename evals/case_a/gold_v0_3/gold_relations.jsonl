@@ -1,7 +1,0 @@
-{"id":"R005","source_id":"U019","target_id":"U008","relation_type":"about","evidence_unit_ids":["U019","U008"],"rationale":"李某拒退押金明确援引提前退租的合同条款。","certainty":"explicit"}
-{"id":"R010","source_id":"U029","target_id":"U036","relation_type":"contradict","evidence_unit_ids":["U029","U036"],"rationale":"双方对是否存在实际经济损失的判断相反；并非由此认定任何一方真实。","certainty":"inferred"}
-{"id":"R011","source_id":"U030","target_id":"U019","relation_type":"contradict","evidence_unit_ids":["U030","U019"],"rationale":"双方对押金是否应被全部扣除持相反立场。","certainty":"inferred"}
-{"id":"R014","source_id":"U029","target_id":"U026","relation_type":"about","evidence_unit_ids":["U029","U026"],"rationale":"张某没有实际损失的判断涉及其关于新租客3月8日入住的说法。","certainty":"explicit"}
-{"id":"R017","source_id":"U036","target_id":"U035","relation_type":"about","evidence_unit_ids":["U036","U035"],"rationale":"李某提出的损失理由涉及其所说的房屋空置情况。","certainty":"explicit"}
-{"id":"R022","source_id":"U016","target_id":"U015","relation_type":"about","evidence_unit_ids":["U016","U015"],"rationale":"张某称已找到愿接续者，涉及李某此前提出的有条件协商情境；不证明已达成退款约定。","certainty":"explicit"}
-{"id":"R023","source_id":"U030","target_id":"U008","relation_type":"about","evidence_unit_ids":["U030","U008"],"rationale":"张某反对全部扣押金的立场与合同押金条款有关。","certainty":"explicit"}

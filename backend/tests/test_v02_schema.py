@@ -4,7 +4,7 @@ import unittest
 
 from pydantic import TypeAdapter, ValidationError
 
-from support import GOLD, REPO
+from support import GOLD, gold_lines
 from app import case_store
 from app.case_service import create_empty_case
 from app.errors import AppError
@@ -14,11 +14,8 @@ from app.schemas import (
 )
 
 
-GOLD_V03 = GOLD / "gold_v0_3"
-
-
 def lines(name):
-    return [json.loads(line) for line in (GOLD_V03 / name).read_text(encoding="utf-8").splitlines() if line.strip()]
+    return gold_lines(name)
 
 
 class TestV03Schema(unittest.TestCase):
@@ -97,10 +94,12 @@ class TestV03Schema(unittest.TestCase):
 
     def test_all_three_view_payloads_and_claim_role(self):
         cases = lines("gold_view_cases.jsonl")
-        self.assertEqual({row["view_type"] for row in cases}, {"conflict", "timeline", "hypothesis"})
-        for row in cases:
-            TypeAdapter(ViewPayload).validate_python(row["payload"])
-        conflict = ConflictView.model_validate(cases[0]["payload"])
+        payloads = [row["expected"]["reference_payload"] for row in cases]
+        self.assertEqual({payload["view_type"] for payload in payloads}, {"conflict", "timeline", "hypothesis"})
+        for payload in payloads:
+            TypeAdapter(ViewPayload).validate_python(payload)
+        conflict = ConflictView.model_validate(next(
+            payload for payload in payloads if payload["view_type"] == "conflict"))
         self.assertEqual(conflict.sections[0].items[0].role, "claim")
         self.assertNotEqual(self.extraction.info_units[0].type.value, "statement")
 
@@ -108,7 +107,9 @@ class TestV03Schema(unittest.TestCase):
         with self.assertRaises(ValidationError):
             HypothesisView(view_type="hypothesis", title="测试假设", hypothesis="待验证假设", missing_information=[], steps=[
                 {"id":"a","claim":"第一步骤","supporting_info_unit_ids":[],"opposing_info_unit_ids":[],"depends_on_step_ids":["a"]}])
-        timeline = TimelineView.model_validate(lines("gold_view_cases.jsonl")[1]["payload"])
+        timeline = TimelineView.model_validate(next(
+            row["expected"]["reference_payload"] for row in lines("gold_view_cases.jsonl")
+            if row["expected"]["view_type"] == "timeline"))
         self.assertIsNone(timeline.events[-1].sort_date)
 
     def test_source_unicode_offsets(self):

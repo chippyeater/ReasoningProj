@@ -19,7 +19,7 @@ class TestDataset(unittest.TestCase):
         self.assertIn('不予退还',gold['U008']['content'])
         self.assertEqual(len(gold['U015']['source_refs']),1)
         self.assertNotIn('看情况再说',gold['U015']['content'])
-        self.assertEqual(gold['U019']['type'],'statement')
+        self.assertEqual(gold['U019']['type'],'position')
         self.assertEqual(gold['U035']['speaker'],'李某')
         self.assertEqual(len(gold['U035']['source_refs']),2)
         self.assertIn('3月8日',gold['U026']['content'])

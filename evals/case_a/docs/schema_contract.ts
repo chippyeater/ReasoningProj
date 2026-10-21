@@ -1,33 +1,70 @@
-/* LogicWeaver MVP Schema v0.2：评测集与新实现共同遵守的数据契约。 */
-export type InfoUnitType = 'entity' | 'event' | 'state' | 'statement';
-/* subtype 仅用于结构分类；不表达真实性和法律效力。 */
-export type InfoUnitSubtype = 'person' | 'organization' | 'object' | 'location' | 'action' | 'occurrence' | 'transfer' | 'communication' | 'temporal' | 'quantitative' | 'descriptive' | 'fact_assertion' | 'assessment' | 'provision';
+/* Case A evaluation contract: Schema v0.3. Runtime source of truth: backend/app/schemas.py. */
+export type EntitySubtype = 'person' | 'organization' | 'object' | 'location';
+export type EventSubtype = 'reported' | 'documented' | 'verified';
+export type InfoUnitType = 'entity' | 'event' | 'state' | 'rule' | 'position';
+export type InfoUnitSubtype = EntitySubtype | EventSubtype;
 export type SourceKind = 'document' | 'communication' | 'testimony' | 'record' | 'other';
-export interface SourceRef { file_id: string; source_kind: SourceKind; quote: string; start: number; end: number; }
-export interface InfoUnit {
+
+export interface SourceRef {
+  file_id: string;
+  source_kind: SourceKind;
+  quote: string;
+  start: number;
+  end: number;
+}
+
+interface InfoUnitCommon {
   id: string;
-  type: InfoUnitType;
-  subtype: InfoUnitSubtype;
-  title: string;
-  summary: string;
-  content: string;
+  title: string; // Trimmed Unicode length: 2-24.
+  content: string; // Trimmed Unicode length: 4-220.
   source_refs: SourceRef[];
-  speaker: string | null;
-  side: string | null; // 案件内角色，允许如 landlord / tenant 等具体案件标签
-  actor: string | null;
-  target: string | null;
-  stance_target: string | null;
+  side: string | null;
+  actor: string | null; // Same-case entity InfoUnit.id.
+  target: string | null; // Same-case entity InfoUnit.id.
+  related_issue: string | null; // Exact issue_set member when non-null.
   created_at: string;
 }
+
+export type InfoUnit = InfoUnitCommon & (
+  | {type: 'entity'; subtype: EntitySubtype; speaker: string | null}
+  | {type: 'event'; subtype: EventSubtype | null; speaker: string | null}
+  | {type: 'state'; subtype: null; speaker: string}
+  | {type: 'rule'; subtype: null; speaker: string | null}
+  | {type: 'position'; subtype: null; speaker: string}
+);
+
+export interface ModelSourceQuote { file_id: string; quote: string; }
+interface ModelInfoUnitCommon {
+  local_id: string;
+  title: string;
+  content: string;
+  source_quotes: ModelSourceQuote[];
+  side: string | null;
+  actor_local_id: string | null; // Must reference an entity local_id.
+  target_local_id: string | null; // Must reference an entity local_id.
+  related_issue: string | null;
+}
+export type ModelInfoUnit = ModelInfoUnitCommon & (
+  | {type: 'entity'; subtype: EntitySubtype; speaker: string | null}
+  | {type: 'event'; subtype: Exclude<EventSubtype, 'verified'> | null; speaker: string | null}
+  | {type: 'state'; subtype: null; speaker: string}
+  | {type: 'rule'; subtype: null; speaker: string | null}
+  | {type: 'position'; subtype: null; speaker: string}
+);
+export interface ModelExtraction { core_issue: string | null; issue_set: string[]; info_units: ModelInfoUnit[]; }
 export interface ExtractionOutput { core_issue: string | null; issue_set: string[]; info_units: InfoUnit[]; }
-export type RelationType = 'actor_of' | 'target_of' | 'about' | 'support' | 'contradict' | 'occur_at';
+
+export type RelationType = 'about' | 'support' | 'contradict';
 export interface Relation {
-  id: string; source_id: string; target_id: string;
+  id: string;
+  source_id: string;
+  target_id: string;
   relation_type: RelationType;
   evidence_unit_ids: string[];
   rationale: string;
   certainty: 'explicit' | 'inferred';
 }
+
 export interface ViewSelection { view_type: 'timeline' | 'conflict' | 'hypothesis'; reason: string; }
 export interface LayoutItem { info_unit_id: string; role: 'claim' | 'evidence' | 'event' | 'context'; emphasis: boolean; default_expanded: boolean; }
 export interface ConflictView { view_type: 'conflict'; title: string; sections: {id: string; title: string; placement:'left'|'right'|'center'; items: LayoutItem[]}[]; missing_information: string[]; }

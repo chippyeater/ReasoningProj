@@ -51,7 +51,7 @@ async def run(output: Path) -> dict:
         report.update(status="success", info_unit_count=len(result.info_units),
                       source_ref_count=sum(len(u.source_refs) for u in result.info_units),
                       classification_counts={kind: sum(u.type.value == kind for u in result.info_units)
-                                             for kind in ("entity", "event", "state", "statement")},
+                                             for kind in ("entity", "event", "state", "rule", "position")},
                       semantic_alignment="pending_review")
         # Human review uses original fixture IDs; emitted production IDs remain untouched.
         expected_by_name = {f['filename']: f['file_id'] for f in manifest['files']}

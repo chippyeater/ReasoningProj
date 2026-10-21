@@ -1,5 +1,3 @@
-{"id":"R001","source_id":"U010","target_id":"U002","relation_type":"actor_of","evidence_unit_ids":["U010","U002"],"rationale":"转账文字转写载明付款人为张某，人物身份由合同记录关联。","certainty":"explicit"}
-{"id":"R002","source_id":"U010","target_id":"U001","relation_type":"target_of","evidence_unit_ids":["U010","U001"],"rationale":"转账文字转写载明收款人为李某，人物身份由合同记录关联。","certainty":"explicit"}
 {"id":"R005","source_id":"U019","target_id":"U008","relation_type":"about","evidence_unit_ids":["U019","U008"],"rationale":"李某拒退押金明确援引提前退租的合同条款。","certainty":"explicit"}
 {"id":"R010","source_id":"U029","target_id":"U036","relation_type":"contradict","evidence_unit_ids":["U029","U036"],"rationale":"双方对是否存在实际经济损失的判断相反；并非由此认定任何一方真实。","certainty":"inferred"}
 {"id":"R011","source_id":"U030","target_id":"U019","relation_type":"contradict","evidence_unit_ids":["U030","U019"],"rationale":"双方对押金是否应被全部扣除持相反立场。","certainty":"inferred"}

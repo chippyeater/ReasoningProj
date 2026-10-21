@@ -48,19 +48,25 @@ def validate():
         assure(hashlib.sha256(b).hexdigest()==file['text_sha256'],f'bad source sha {fid}')
         assure(len(v)==file['chars'],f'bad chars {fid}')
         raw[fid]=v
-    type_map={'entity':{'person','organization','object','location'},'event':{'action','occurrence','transfer','communication'},'state':{'temporal','quantitative','descriptive'},'statement':{'fact_assertion','assessment','provision'}}
-    required={'id','type','subtype','title','summary','content','source_refs','speaker','side','actor','target','stance_target','created_at'}
+    type_map={'entity':{'person','organization','object','location'},
+              'event':{'reported','documented','verified',None},
+              'state':{None},'rule':{None},'position':{None}}
+    required={'id','type','subtype','title','content','source_refs','speaker','side',
+              'actor','target','related_issue','created_at'}
     unitids=set()
     for u in um:
         uid=u['id'];unitids.add(uid)
         assure(set(u)==required,f'{uid} fields unexpected or missing {set(u)^required}')
         assure(u['type'] in type_map and u['subtype'] in type_map[u['type']],f'{uid} illegal type')
-        assure(u['stance_target'] is None or u['stance_target'] in issues,f'{uid} illegal issue')
+        assure(u['related_issue'] is None or u['related_issue'] in issues,f'{uid} illegal issue')
         assure(u['side'] is None or (isinstance(u['side'],str) and bool(u['side'].strip())),f'{uid} illegal side')
         assure(u['source_refs'],f'{uid} no source')
-        assure(all(u[k] for k in ('id','title','summary','content')),f'{uid} no content')
-        assure(all(isinstance(u[k],str) and u[k].strip() for k in ('id','title','summary','content','created_at')),f'{uid} non-string text')
-        assure(all(u[k] is None or isinstance(u[k],str) and u[k].strip() for k in ('speaker','side','actor','target')),f'{uid} invalid nullable text')
+        assure(all(isinstance(u[k],str) and u[k].strip() for k in ('id','title','content','created_at')),f'{uid} empty text')
+        assure(2 <= len(u['title']) <= 24 and 4 <= len(u['content']) <= 220,f'{uid} content length')
+        assure(all(u[k] is None or isinstance(u[k],str) and u[k].strip()
+                   for k in ('speaker','side','actor','target')),f'{uid} invalid nullable text')
+        if u['type'] in ('state','position'):
+            assure(isinstance(u['speaker'],str) and bool(u['speaker'].strip()),f'{uid} speaker required')
         assure(u['created_at'].endswith('Z'),f'{uid} wrong timestamp format')
         for s in u['source_refs']:
             fid=s['file_id'];assure(fid in docs,f'{uid} missing file {fid}')
@@ -71,7 +77,11 @@ def validate():
             assure(type(p) is int and type(end) is int and 0<=p<end<=len(raw[fid]),f'{uid} invalid slice')
             assure(raw[fid][p:end]==q,f'{uid} quote mismatch: {repr(raw[fid][p:end])}')
     types={x['id']:x['type'] for x in um}
-    allowed={'actor_of','target_of','about','support','contradict','occur_at'}
+    for u in um:
+        for refname in ('actor','target'):
+            ref=u[refname]
+            assure(ref is None or (ref in types and types[ref]=='entity'),f"{u['id']} invalid {refname} entity reference")
+    allowed={'about','support','contradict'}
     seen=set()
     for r in rs:
         a=r['source_id'];b=r['target_id'];kind=r['relation_type']
@@ -81,12 +91,10 @@ def validate():
         seen.add((a,b,kind))
         assure(r['evidence_unit_ids'] and all(i in unitids for i in r['evidence_unit_ids']),f'{r["id"]} bad evidence')
         assure(r['certainty'] in {'explicit','inferred'},f'{r["id"]} bad certainty')
-        if kind in ('actor_of','target_of'):
-            assure(types[a]=='event' and types[b]=='entity',f'{r["id"]} wrong actor/target types')
-        if kind=='occur_at':assure(types[a]=='event' and types[b]=='state' and next(u for u in um if u['id']==b)['subtype']=='temporal',f'{r["id"]} wrong time relation types')
-        if kind=='contradict':assure(types[a]=='statement' and types[b]=='statement',f'{r["id"]} bad contradict')
-        if kind=='about':assure(types[a]=='statement',f'{r["id"]} bad about source')
-        if kind=='support':assure(types[b]=='statement',f'{r["id"]} bad support target type')
+        if kind=='support':
+            assure(types[b]!='entity',f'{r["id"]} support target must be non-entity')
+        if kind=='contradict':
+            assure(types[a]!='entity' and types[b]!='entity',f'{r["id"]} contradict endpoints must be non-entities')
     for r in ng:
         assure(r['relation_type'] in allowed and r['source_id'] in unitids and r['target_id'] in unitids,f'{r["id"]} negative malformed')
         assure((r['source_id'],r['target_id'],r['relation_type']) not in seen,f'{r["id"]} negative collides positive')

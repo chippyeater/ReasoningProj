@@ -1,12 +1,12 @@
 # LogicWeaver｜案件 A 当前评测集
 
-本评测集用于提前退租与押金返还纠纷，案例 ID 为 `case-4325561f`。其目标数据契约为 **Schema v0.2**，包含 17 条面向争点的核心 InfoUnit，并要求每条 `SourceRef` 自带 `source_kind`。评测集只保存当前有效标准答案，没有旧 Schema 转换规则。静态校验不代表模型或应用已经通过测试。
+本评测集用于提前退租与押金返还纠纷，案例 ID 为 `case-4325561f`。其当前唯一目标数据契约为 **Schema v0.3**，包含 17 条面向争点的核心 InfoUnit，并要求每条 `SourceRef` 自带 `source_kind`。评测集只保存当前有效标准答案，没有旧 Schema 转换规则。静态校验不代表模型或应用已经通过测试。
 
 ## 文件分工
 
 - `fixtures/parsed/*.txt`：五份固定 UTF-8 案件输入；`fixtures/file_manifest.json` 记录文件 ID、路径、哈希、长度及来源类型。
 - `fixtures/raw/*.docx`：原始 DOCX（需在本地提供），用于真实解析测试；`fixtures/variants/` 记录异常与补充文件输入。
-- `gold/gold_issues.json`：争议问题；`gold_info_units.jsonl`：17 个必要信息单元；`gold_relations.jsonl` 与 `negative_relations.jsonl`：9 个应成立、10 个禁止误建关系。
+- `gold/gold_issues.json`：争议问题；`gold_info_units.jsonl`：17 个必要信息单元；`gold_relations.jsonl` 与 `negative_relations.jsonl`：7 个应成立、10 个禁止误建关系。
 - `gold/gold_parse_cases.jsonl`：7 个解析场景；`gold_view_selection.jsonl`：10 个视图选择任务；`gold_view_cases.jsonl`：6 个布局参考；`gold_end_to_end.jsonl`：7 个完整流程场景。
 - `gold/verified_laws.json`：15 条法条 Gold；`gold_law_cases.jsonl`：13 个法律检索用例；`gold/evaluation_rubric.json`：评分指标。
 - `docs/schema_contract.ts`：目标结构化数据契约；`docs/annotation_review.md`：必要节点、去重和争议边界；`docs/law_corpus_review.md`：法条收录依据和适用前提。
@@ -46,7 +46,9 @@ python evals/case_a/tests/score_predictions.py --prediction /path/to/predicted_e
 
 `tests/gold_basis.py` 可打印当前版本、实际数量及 Gold/固定来源哈希。评分输出记录这些依据及预测、对齐文件哈希；已有输出文件会被拒绝覆盖。`tests/run_extraction_eval.py` 也会记录相同依据并拒绝复用非空输出目录；它运行完整 Extraction（含 Consolidation），不是仅第一轮工具。本轮未执行该脚本。
 
-历史版本映射见 `docs/historical_evaluation_index.json`，包含 v6、v7、v7.1 等本地归档。历史报告中的拆分诊断保留原样，只反映当时口径，不是 v1.7 的评判依据。重评历史预测时使用原预测及现有文件 ID 映射，重新逐条审核 v1.7 模板，在新的目录保存结果；不得修改历史输出、拆分节点或复用旧命中判断。
+历史版本映射见 `docs/historical_evaluation_index.json`，包含 v6、v7、v7.1、v7.2 等本地归档。历史报告中的拆分诊断保留原样，只反映当时口径，不是当前 Gold 的评判依据。历史结果继续按其记录的 Gold 基准解释；如需按当前 v1.8 重评，必须使用原预测和新的 v1.8 对齐模板，在新目录保存结果，不得修改历史输出、拆分节点或复用旧命中判断。
+
+旧的 v7.2 Extraction Prompt 仅作为哈希可核对的历史文件保留，生产运行入口只读取 v0.3 Prompt。旧的一次性联网评测脚本已移除；复核 v7.2 应读取冻结提交及结果目录，不能用当前生产 Schema 重新发送请求。
 
 法规检索使用 `backend/data/laws.json` 作为运行库，`gold/verified_laws.json` 作为评测参照。同一 ID 的法条原文、条号、标题与来源必须一致。可运行：
 
@@ -60,10 +62,17 @@ python evals/case_a/tests/score_law_retrieval.py --predictions /path/to/law_pred
 
 固定输入文本取自仓库中案件 A 的 extraction 请求记录：`backend/data/case-4325561f/llm_logs/20260331T141925321170Z_extraction_success_99f43f.json` 的 `request.files[].content`。该来源用于保留输入可重复性，不代表材料或事实经过法律核实。需要核对原始 DOCX 的完整文本和分段、多人对同一事件的陈述边界，以及候选法条与本案的实际关联。
 
-## Gold v1.7 变更说明
+## 当前 Gold v1.8 标注说明
 
 - 根据核心争点下的推理用途组织卡片，而非逐句拆分；U008、U019、U035 保留综合表达。
 - U015 不将3月1日“到时候看情况再说”列为必要节点内容，U016聚焦已找到接租者而非先前愿帮寻找的原话。
 - U026（入住）与新增 U027（另签合同）分别核查，新合同签订日期不明。
 - 旧评测中的 16 条 Gold 命中率不可直接作为新版17条Gold的基准，必须重新映射历史预测。
 - 旧运行结果和 Gold 哈希不在本次补丁中修改；不要覆盖 `results/` 下既有运行记录。
+
+## Schema v0.3 迁移约定
+
+- **唯一当前 Gold** 位于 `gold/`，仍为 17 条必要语义信息；分类和 actor/target ID 按 v0.3 更新，旧 `summary`/`stance_target` 移除。
+- 7 条显式关系（about/support/contradict）位于 `gold/gold_relations.jsonl`；两条 actor_of/target_of 已由 `InfoUnit.actor/target` 表达。
+- 先前的并行 Gold 副本已合并删除。旧 Gold v1.7 的原始字节可从历史 Git commit 读取；`results/` 内 v7.2 的哈希及诊断分数始终对应旧 Gold，**不得按 v1.8 重写历史分数**。
+- 当前评分只使用 `gold/` 和新的 `tests/alignment_template.jsonl`，需要重新对齐模型预测，旧对齐不得直接改写 Gold version/sha。

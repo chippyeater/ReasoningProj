@@ -1,6 +1,6 @@
 {
   "scope": "All existing local results directories; archival metadata only, never loaded as alternative runtime Gold.",
-  "current_gold_version": "1.7",
+  "current_gold_version": "1.8",
   "historical_version_identity": "historical-16 / rubric-1.5",
   "version_evidence": {
     "git_head": "52623de3df9be520cb392f51f1a578eeb9725593",
@@ -15,7 +15,7 @@
       }
     }
   },
-  "policy": "Historical scores and proposition-splitting reviews remain unchanged. They do not define v1.7 acceptance and cannot be compared directly to v1.7 scores.",
+  "policy": "Historical scores and proposition-splitting reviews remain unchanged. They do not define current v1.8 acceptance and cannot be compared directly to v1.8 scores.",
   "runs": [
     {
       "directory": "results/extraction_20261020",
@@ -33,7 +33,7 @@
       ],
       "scores": [],
       "comparable_to_current_gold": false,
-      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+      "reassessment": "Review unchanged predictions against the current v1.8 template; save new results outside this directory."
     },
     {
       "directory": "results/extraction_20261020_first_only_5875b93d",
@@ -68,7 +68,7 @@
         }
       ],
       "comparable_to_current_gold": false,
-      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+      "reassessment": "Review unchanged predictions against the current v1.8 template; save new results outside this directory."
     },
     {
       "directory": "results/extraction_20261020_first_only_e5b00709",
@@ -103,7 +103,7 @@
         }
       ],
       "comparable_to_current_gold": false,
-      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+      "reassessment": "Review unchanged predictions against the current v1.8 template; save new results outside this directory."
     },
     {
       "directory": "results/extraction_20261020_live",
@@ -130,7 +130,7 @@
         }
       ],
       "comparable_to_current_gold": false,
-      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+      "reassessment": "Review unchanged predictions against the current v1.8 template; save new results outside this directory."
     },
     {
       "directory": "results/extraction_20261020_v2",
@@ -149,7 +149,7 @@
       ],
       "scores": [],
       "comparable_to_current_gold": false,
-      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+      "reassessment": "Review unchanged predictions against the current v1.8 template; save new results outside this directory."
     },
     {
       "directory": "results/extraction_20261020_v3",
@@ -168,7 +168,7 @@
       ],
       "scores": [],
       "comparable_to_current_gold": false,
-      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+      "reassessment": "Review unchanged predictions against the current v1.8 template; save new results outside this directory."
     },
     {
       "directory": "results/extraction_20261020_v3_schema_fixed",
@@ -187,7 +187,7 @@
       ],
       "scores": [],
       "comparable_to_current_gold": false,
-      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+      "reassessment": "Review unchanged predictions against the current v1.8 template; save new results outside this directory."
     },
     {
       "directory": "results/extraction_20261020_v4",
@@ -214,7 +214,7 @@
         }
       ],
       "comparable_to_current_gold": false,
-      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+      "reassessment": "Review unchanged predictions against the current v1.8 template; save new results outside this directory."
     },
     {
       "directory": "results/extraction_20261020_v5",
@@ -241,7 +241,7 @@
         }
       ],
       "comparable_to_current_gold": false,
-      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+      "reassessment": "Review unchanged predictions against the current v1.8 template; save new results outside this directory."
     },
     {
       "directory": "results/extraction_20261020_v6",
@@ -285,7 +285,31 @@
         }
       ],
       "comparable_to_current_gold": false,
-      "reassessment": "Review unchanged predictions against the current v1.7 template; save new results outside this directory."
+      "reassessment": "Review unchanged predictions against the current v1.8 template; save new results outside this directory."
+    },
+    {
+      "directory": "results/extraction_20261020_first_only_v7_2_5e5d5833",
+      "run_label": "v7.2",
+      "gold_version_label": "1.7",
+      "info_unit_version_note": "The rejected run records its complete Gold v1.7 basis in current_668248a9/run_report.json.",
+      "gold_info_units": 17,
+      "rubric_version": "1.7",
+      "gold_hashes": {
+        "gold_info_units.jsonl": "fdf3b21ecc9336bd19b6e9c4090d1c49d03e190a4e0ff22b5875d9cbc2820c63",
+        "evaluation_rubric.json": "a54f19d994fd46ce4d0649816b2186c279868b3fc61d2847be833cab97bc81be",
+        "gold_basis_sha256": "198069edcf222a0bd61a4a464c6dd5521f055b8a2f5903c8ed4d07e43b411c57"
+      },
+      "basis_evidence": [
+        "results/extraction_20261020_first_only_v7_2_5e5d5833/current_668248a9/run_report.json",
+        "results/extraction_20261020_first_only_v7_2_5e5d5833/integrity_verification.json"
+      ],
+      "scores": [],
+      "result_status": "contract_rejected",
+      "diagnostic_alignment": "11/17",
+      "diagnostic_score_sha256": "aad9e1cc929afdd97645e73f8f3024317b1d080bc88ace4310276f3e60e528bd",
+      "comparable_to_current_gold": false,
+      "reassessment": "Keep the v1.7 rejection and diagnostic score unchanged; any v1.8 review must be saved as a new result."
     }
-  ]
+  ],
+  "current_basis_note": "Gold v1.8 uses production Schema v0.3; all historical hashes/scores still refer to their recorded old Gold basis."
 }
