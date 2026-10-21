@@ -45,23 +45,16 @@ backend/logs/
 
 # ---------- runtime 数据（case 数据、法条语料均为本地 live data，不入 git）----------
 backend/data/
-
-# ---------- 历史数据存档（领域迁移时归档的旧 case）----------
-archive/
+evals/case_a/results/
 
 # ---------- WorkBuddy / Agent 本地配置与记忆 ----------
 .workbuddy/
 .claude/
 CLAUDE.md
+tasks/
 
 # ---------- 编辑器 / 系统 ----------
 .idea/
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# ---------- 其它实验项目（与 logicWeaver 无关，已暂停）----------
-# Codex prompt / memory 基础设施实验，非本仓库源码
-analysis_outputs/
-experiment/
-evals/case_a/results/
