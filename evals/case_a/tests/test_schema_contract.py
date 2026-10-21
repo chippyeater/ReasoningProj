@@ -1,12 +1,12 @@
-"""Check current evaluation records against actual v0.2 Pydantic models offline."""
+"""Check Gold v1.7 against its frozen v0.2 contract offline."""
 import sys
 import unittest
 
 from validate_eval import ROOT, jl, js, validate_task_references
 
 sys.path.insert(0, str(ROOT.parents[1] / 'backend'))
-from app.schemas import (ConflictView, ExtractionOutput, HypothesisView, Relation,
-                         TimelineView, check_relations)
+from app.schemas import ConflictView, HypothesisView, TimelineView
+from legacy_v0_2_contract import ExtractionOutput, Relation, check_relations
 
 
 class TestGoldSchemaContract(unittest.TestCase):

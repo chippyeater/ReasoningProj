@@ -55,6 +55,92 @@ const json = async (response) => {
   return response.json();
 };
 
+function normalizeCaseData(value) {
+  if (!value) return null;
+  const units = Array.isArray(value.info_units) ? value.info_units : [];
+  const workspace = value.workspace_state || {};
+  const positions = workspace.node_positions || {};
+  const levels = workspace.display_levels || {};
+  const selected = workspace.selected_node_ids || workspace.selected_card_ids || [];
+  const metaCards = Array.isArray(value.meta_cards) ? value.meta_cards : units.map((unit, index) => ({
+    id: unit.id,
+    card_type: 'meta',
+    title: unit.title,
+    summary: null,
+    display_level: levels[unit.id] || 2,
+    status: 'active',
+    position: positions[unit.id] || { x: 80 + (index % 2) * 360, y: 80 + Math.floor(index / 2) * 240 },
+    ui_state: { selected: selected.includes(unit.id), highlighted: false, pinned: false, collapsed: false },
+    source_file_ids: [...new Set((unit.source_refs || []).map((ref) => ref.file_id))],
+    created_at: unit.created_at,
+    updated_at: value.updated_at,
+    info_type: unit.type,
+    info_subtype: unit.subtype,
+    detail: {
+      name: unit.type === 'entity' ? unit.title : null,
+      description: unit.content,
+      attributes: {
+        speaker: unit.speaker,
+        side: unit.side,
+        actor: unit.actor,
+        target: unit.target,
+        related_issue: unit.related_issue,
+      },
+      tags: [unit.type, unit.subtype].filter(Boolean),
+    },
+  }));
+  const inferenceCards = Array.isArray(value.inference_cards) ? value.inference_cards : (value.reasoning_views || []).map((view, index) => ({
+    id: view.id,
+    card_type: 'inference',
+    title: view.payload?.title || view.question,
+    summary: null,
+    display_level: levels[view.id] || 2,
+    status: 'active',
+    position: positions[view.id] || { x: 900 + (index % 2) * 420, y: 240 + Math.floor(index / 2) * 280 },
+    ui_state: { selected: selected.includes(view.id), highlighted: false, pinned: false, collapsed: false },
+    source_file_ids: [],
+    created_at: view.created_at,
+    updated_at: value.updated_at,
+    inference_type: view.view_type,
+    decision: 'undecided',
+    detail: {
+      claim: view.payload?.hypothesis || view.payload?.title || view.question,
+      reasoning_steps: view.payload?.steps?.map((step) => step.claim) || [],
+      supporting_card_ids: [],
+      opposing_card_ids: [],
+      missing_card_ids: view.payload?.missing_information || [],
+      legal_basis_ids: [],
+      view_type: view.view_type,
+      view_payload: view.payload,
+    },
+  }));
+  const relationEdges = (value.relations || []).map((relation) => ({
+    id: relation.id,
+    source: relation.source_id,
+    target: relation.target_id,
+    edge_type: relation.relation_type === 'support' ? 'supports' : relation.relation_type === 'contradict' ? 'conflicts_with' : 'relates_to',
+    relation_type: relation.relation_type,
+    label: relation.rationale,
+    created_at: value.updated_at,
+  }));
+  const derivedEdges = units.flatMap((unit) => [
+    ...(unit.actor ? [{ id: `derived-actor-${unit.id}`, source: unit.id, target: unit.actor, edge_type: 'relates_to', relation_type: 'actor_of', label: '行为主体', created_at: value.updated_at }] : []),
+    ...(unit.target ? [{ id: `derived-target-${unit.id}`, source: unit.id, target: unit.target, edge_type: 'relates_to', relation_type: 'target_of', label: '作用对象', created_at: value.updated_at }] : []),
+  ]);
+  return {
+    ...value,
+    meta_cards: metaCards,
+    inference_cards: inferenceCards,
+    law_cards: value.law_cards || [],
+    edges: value.edges || [...relationEdges, ...derivedEdges],
+    workspace_state: {
+      ...workspace,
+      selected_card_ids: selected,
+      focused_card_id: workspace.focused_node_id || workspace.focused_card_id || null,
+    },
+  };
+}
+
 const allCards = () => state.caseData
   ? [...state.caseData.meta_cards, ...state.caseData.inference_cards, ...state.caseData.law_cards]
   : [];
@@ -184,8 +270,9 @@ function timelinePayload(card) {
 
 function timelinePointCount(payload) {
   const timepoints = Array.isArray(payload?.timepoints) ? payload.timepoints.length : 0;
+  const events = Array.isArray(payload?.events) ? payload.events.length : 0;
   const preferred = Number(payload?.visible_point_count || 0);
-  return Math.max(timepoints, preferred, 1);
+  return Math.max(timepoints, events, preferred, 1);
 }
 
 function timelineCardWidth(card) {
@@ -276,11 +363,27 @@ async function patchCard(cardId, patch, rerender = true) {
   if (!state.caseData?.case_id) return;
   localPatch(cardId, patch);
   if (rerender) render();
-  await json(await fetch(`${API}/api/cases/${state.caseData.case_id}/cards/${cardId}`, {
+  const workspace = state.caseData.workspace_state || {};
+  if (patch.position !== undefined) {
+    workspace.node_positions = { ...(workspace.node_positions || {}), [cardId]: patch.position };
+  }
+  if (patch.display_level !== undefined) {
+    workspace.display_levels = { ...(workspace.display_levels || {}), [cardId]: patch.display_level };
+  }
+  if (patch.position === undefined && patch.display_level === undefined) return;
+  const data = await json(await fetch(`${API}/api/cases/${state.caseData.case_id}/workspace`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
+    body: JSON.stringify({
+      selected_node_ids: state.selected,
+      focused_node_id: state.focused,
+      current_view_id: workspace.current_view_id || null,
+      node_positions: workspace.node_positions || {},
+      display_levels: workspace.display_levels || {},
+      viewport: workspace.viewport || { zoom: 1, offset_x: 0, offset_y: 0 },
+    }),
   }));
+  state.caseData = normalizeCaseData(data.case);
 }
 
 function queueLevelSave(cardId, displayLevel) {
@@ -313,7 +416,7 @@ function semanticZoomSelected(delta, event) {
 
 async function loadCase() {
   const data = await json(await fetch(`${API}/api/case`));
-  state.caseData = data.case;
+  state.caseData = normalizeCaseData(data.case);
   if (!state.caseData) {
     state.selected = [];
     state.focused = null;
@@ -340,6 +443,7 @@ async function upload(files) {
   setStatus('正在上传并抽取材料...');
   const formData = new FormData();
   files.forEach((file) => formData.append('files', file));
+  formData.append('source_kinds', JSON.stringify(Object.fromEntries(files.map((file) => [file.name, 'other']))));
   let response;
   if (state.caseData?.case_id) {
     response = await fetch(`${API}/api/cases/${state.caseData.case_id}/files`, { method: 'POST', body: formData });
@@ -348,7 +452,7 @@ async function upload(files) {
     response = await fetch(`${API}/api/cases`, { method: 'POST', body: formData });
   }
   const data = await json(response);
-  state.caseData = data.case;
+  state.caseData = normalizeCaseData(data.case);
   setStatus('材料已上传，正在生成关系...');
   await runRelation();
 }
@@ -481,23 +585,24 @@ function roleLabel(value) {
 }
 
 function renderPlanItem(item, unitLookup) {
-  const unit = unitLookup.get(item.card_id);
+  const unitId = item.info_unit_id || item.card_id;
+  const unit = unitLookup.get(unitId);
   if (!unit) return '';
-  const summary = unit.summary || unit.detail || '';
+  const summary = unit.content || unit.detail || '';
   const meta = [
-    roleLabel(item.card_role),
-    emphasisLabel(item.emphasis),
+    roleLabel(item.role || item.card_role),
+    typeof item.emphasis === 'boolean' ? (item.emphasis ? '重点' : '上下文') : emphasisLabel(item.emphasis),
     unit.side === 'landlord' ? '房东侧' : unit.side === 'tenant' ? '租客侧' : '',
   ].filter(Boolean).join(' · ');
   return `<div class="view-item${item.default_expanded ? ' expanded' : ''}">
-    <div class="view-item-title">${esc(unit.title || item.card_id)}</div>
+    <div class="view-item-title">${esc(unit.title || unitId)}</div>
     ${meta ? `<div class="view-item-meta">${esc(meta)}</div>` : ''}
     ${summary ? `<div class="view-item-summary">${esc(summary)}</div>` : ''}
   </div>`;
 }
 
 function renderPlanSection(section, unitLookup) {
-  const cards = Array.isArray(section.cards) ? section.cards : [];
+  const cards = Array.isArray(section.items) ? section.items : Array.isArray(section.cards) ? section.cards : [];
   const items = cards
     .filter((item) => item && typeof item === 'object')
     .map((item) => renderPlanItem(item, unitLookup))
@@ -512,10 +617,10 @@ function renderPlanSection(section, unitLookup) {
 
 function renderConflictViewPlan(card) {
   const payload = card.detail?.view_payload;
-  const layoutPlan = payload?.layout_plan;
-  if (!layoutPlan || !Array.isArray(layoutPlan.sections) || !layoutPlan.sections.length) return '';
+  const sectionsValue = Array.isArray(payload?.sections) ? payload.sections : payload?.layout_plan?.sections;
+  if (!Array.isArray(sectionsValue) || !sectionsValue.length) return '';
   const unitLookup = infoUnitMap();
-  const sections = layoutPlan.sections.filter((section) => section && typeof section === 'object');
+  const sections = sectionsValue.filter((section) => section && typeof section === 'object');
   const top = sections.filter((section) => section.placement === 'top' || section.section_type === 'question_header');
   const left = sections.filter((section) => section.placement === 'left');
   const right = sections.filter((section) => section.placement === 'right');
@@ -526,11 +631,13 @@ function renderConflictViewPlan(card) {
   const bottomHtml = bottom.map((section) => renderPlanSection(section, unitLookup)).join('');
   const leftHtml = left.map((section) => renderPlanSection(section, unitLookup)).join('');
   const rightHtml = right.map((section) => renderPlanSection(section, unitLookup)).join('');
+  const missing = Array.isArray(payload?.missing_information) ? listBlock('待补信息', payload.missing_information) : '';
   return `<div class="view-plan conflict-plan">
     ${topHtml}
     ${leftHtml || rightHtml ? `<div class="view-columns">${leftHtml ? `<div class="view-column">${leftHtml}</div>` : ''}${rightHtml ? `<div class="view-column">${rightHtml}</div>` : ''}</div>` : ''}
     ${centerHtml}
     ${bottomHtml}
+    ${missing}
   </div>`;
 }
 
@@ -592,8 +699,16 @@ function renderTimelineBody(card, level) {
   if (level === 1) return '';
   const payload = timelinePayload(card);
   if (!payload) return '';
-  const timepoints = Array.isArray(payload.timepoints) ? payload.timepoints : [];
   const events = Array.isArray(payload.events) ? payload.events.filter((item) => item && typeof item === 'object') : [];
+  const timepoints = Array.isArray(payload.timepoints) ? payload.timepoints : events.map((event) => ({
+    id: event.id,
+    time_label: event.time_label,
+    time_sort_value: event.sort_date || '',
+    time_precision: event.time_precision,
+    event_title: event.title,
+    event_brief: event.summary,
+    event_ids: [event.id],
+  }));
   const eventMap = new Map(events.map((item) => [item.id, item]));
   const pointCount = timelinePointCount(payload);
   const focusedTimepointId = payload.focused_timepoint_id || timepoints[0]?.id || null;

@@ -1,4 +1,4 @@
-"""The complete LogicWeaver MVP v0.2 data contract.
+"""The complete LogicWeaver MVP v0.3 data contract.
 
 Transport envelopes live in api_models.py. No input upgrades or field aliases.
 """
@@ -9,7 +9,7 @@ from pathlib import PurePosixPath
 from typing import Annotated, Generic, Literal, TypeVar
 
 from fastapi import UploadFile
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator, model_validator
 
 
 class ContractModel(BaseModel):
@@ -17,6 +17,8 @@ class ContractModel(BaseModel):
 
 
 Text = Annotated[str, Field(min_length=1, pattern=r"\S")]
+Title = Annotated[str, Field(min_length=2, max_length=24)]
+Content = Annotated[str, Field(min_length=4, max_length=220)]
 Index = Annotated[StrictInt, Field(ge=0)]
 
 
@@ -108,7 +110,8 @@ class InfoUnitType(str, Enum):
     entity = "entity"
     event = "event"
     state = "state"
-    statement = "statement"
+    rule = "rule"
+    position = "position"
 
 
 class InfoUnitSubtype(str, Enum):
@@ -116,26 +119,23 @@ class InfoUnitSubtype(str, Enum):
     organization = "organization"
     object = "object"
     location = "location"
-    action = "action"
-    occurrence = "occurrence"
-    transfer = "transfer"
-    communication = "communication"
-    temporal = "temporal"
-    quantitative = "quantitative"
-    descriptive = "descriptive"
-    fact_assertion = "fact_assertion"
-    assessment = "assessment"
-    provision = "provision"
+    reported = "reported"
+    documented = "documented"
+    verified = "verified"
 
 
-def check_info_classification(info_type: InfoUnitType, subtype: InfoUnitSubtype) -> None:
+def check_info_classification(info_type: InfoUnitType | str, subtype: InfoUnitSubtype | str | None,
+                              *, allow_verified: bool = True) -> None:
     allowed = {
         "entity": {"person", "organization", "object", "location"},
-        "event": {"action", "occurrence", "transfer", "communication"},
-        "state": {"temporal", "quantitative", "descriptive"},
-        "statement": {"fact_assertion", "assessment", "provision"},
+        "event": {"reported", "documented", "verified", None},
+        "state": {None},
+        "rule": {None},
+        "position": {None},
     }
-    if subtype.value not in allowed[info_type.value]:
+    type_value = info_type.value if isinstance(info_type, InfoUnitType) else info_type
+    value = subtype.value if isinstance(subtype, InfoUnitSubtype) else subtype
+    if type_value not in allowed or value not in allowed[type_value] or (value == "verified" and not allow_verified):
         raise ValueError("subtype does not belong to type")
 
 
@@ -156,21 +156,29 @@ class SourceRef(ContractModel):
 class InfoUnit(ContractModel):
     id: Text
     type: InfoUnitType
-    subtype: InfoUnitSubtype
-    title: Text
-    summary: Text
-    content: Text
+    subtype: InfoUnitSubtype | None
+    title: Title
+    content: Content
     source_refs: Annotated[list[SourceRef], Field(min_length=1)]
     speaker: Text | None
     side: Text | None
     actor: Text | None
     target: Text | None
-    stance_target: Text | None
+    related_issue: Text | None
     created_at: Text
+
+    @field_validator("title", "content")
+    @classmethod
+    def reject_surrounding_whitespace(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("text must not have leading or trailing whitespace")
+        return value
 
     @model_validator(mode="after")
     def check_classification(self) -> InfoUnit:
         check_info_classification(self.type, self.subtype)
+        if self.type in {InfoUnitType.state, InfoUnitType.position} and self.speaker is None:
+            raise ValueError("state and position require a nonempty speaker")
         return self
 
 
@@ -185,9 +193,15 @@ class ExtractionOutput(ContractModel):
         unique([u.id for u in self.info_units], "info_units.id")
         if self.core_issue is not None and self.core_issue not in self.issue_set:
             raise ValueError("core_issue must occur in issue_set")
-        if any(u.stance_target is not None and u.stance_target not in self.issue_set
+        if any(u.related_issue is not None and u.related_issue not in self.issue_set
                for u in self.info_units):
-            raise ValueError("stance_target must occur in issue_set")
+            raise ValueError("related_issue must occur in issue_set")
+        lookup = {u.id: u for u in self.info_units}
+        for unit in self.info_units:
+            for field in ("actor", "target"):
+                target_id = getattr(unit, field)
+                if target_id is not None and (target_id not in lookup or lookup[target_id].type != InfoUnitType.entity):
+                    raise ValueError(f"{unit.id}.{field} must reference an entity InfoUnit")
         return self
 
 
@@ -221,12 +235,9 @@ class RelationInput(ExtractionOutput):
 
 
 class RelationType(str, Enum):
-    actor_of = "actor_of"
-    target_of = "target_of"
     about = "about"
     support = "support"
     contradict = "contradict"
-    occur_at = "occur_at"
 
 
 class Relation(ContractModel):
@@ -483,13 +494,9 @@ def check_relations(units: list[InfoUnit], relations: list[Relation]) -> None:
             raise ValueError(f"{r.id}: unknown InfoUnit reference")
         a, b = lookup[r.source_id], lookup[r.target_id]
         valid = {
-            RelationType.actor_of: a.type == InfoUnitType.event and b.type == InfoUnitType.entity,
-            RelationType.target_of: a.type == InfoUnitType.event and b.type == InfoUnitType.entity,
-            RelationType.about: a.type == InfoUnitType.statement,
-            RelationType.support: b.type == InfoUnitType.statement,
-            RelationType.contradict: a.type == b.type == InfoUnitType.statement,
-            RelationType.occur_at: a.type == InfoUnitType.event and b.type == InfoUnitType.state
-            and b.subtype == InfoUnitSubtype.temporal,
+            RelationType.about: True,
+            RelationType.support: b.type != InfoUnitType.entity,
+            RelationType.contradict: a.type != InfoUnitType.entity and b.type != InfoUnitType.entity,
         }
         if not valid[r.relation_type]:
             raise ValueError(f"{r.id}: illegal relation endpoint types")

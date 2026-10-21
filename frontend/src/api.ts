@@ -1,10 +1,11 @@
 ﻿const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
 export type FileType = "pdf" | "docx" | "image" | "txt" | "markdown" | "other";
-export type FileParseStatus = "pending" | "parsing" | "parsed" | "failed";
+export type FileParseStatus = "pending" | "parsing" | "parsed" | "failed" | "unsupported";
 export type CardType = "meta" | "inference" | "law";
 export type InferenceType =
   | "hypothesis"
+  | "timeline"
   | "conclusion"
   | "conflict"
   | "missing_evidence"
@@ -28,21 +29,15 @@ export type EdgeType =
 export type ViewMode = "panorama" | "reasoning" | "detail";
 
 
-export type InfoUnitType = "subject" | "event" | "state" | "claim";
+export type InfoUnitType = "entity" | "event" | "state" | "rule" | "position";
 export type InfoUnitSubtype =
   | "person"
   | "organization"
-  | "legal_act"
-  | "factual_act"
-  | "transaction"
-  | "communication"
-  | "violation"
-  | "temporal"
-  | "physical_state"
-  | "usage_state"
-  | "fact_assertion"
-  | "legal_assertion"
-  | "defense";
+  | "object"
+  | "location"
+  | "reported"
+  | "documented"
+  | "verified";
 
 export type SubjectLegalType = "natural_person" | "legal_person" | "unincorporated_org";
 export type NormSourceType = "statute" | "judicial_interpretation" | "local_regulation" | "guideline" | "case_rule" | "other";
@@ -51,17 +46,22 @@ export type NormLevel = "constitution" | "law" | "administrative_regulation" | "
 export type InfoUnit = {
   id: string;
   type: InfoUnitType;
-  subtype: InfoUnitSubtype;
-  subject_legal_type?: SubjectLegalType | null;
+  subtype: InfoUnitSubtype | null;
   title: string;
-  summary: string;
-  detail: string;
-  source_refs: string[];
-  confidence: "high" | "medium" | "low";
-  extraction_reason: string;
-  evidence_quote: string;
+  content: string;
+  source_refs: Array<{
+    file_id: string;
+    source_kind: "document" | "communication" | "testimony" | "record" | "other";
+    quote: string;
+    start: number;
+    end: number;
+  }>;
+  speaker: string | null;
+  side: string | null;
+  actor: string | null;
+  target: string | null;
+  related_issue: string | null;
   created_at: string;
-  updated_at: string;
 };
 
 export type CaseFile = {
@@ -69,6 +69,9 @@ export type CaseFile = {
   filename: string;
   file_type: FileType;
   file_size?: number | null;
+  source_kind?: "document" | "communication" | "testimony" | "record" | "other";
+  original_path?: string | null;
+  parsed_text_path?: string | null;
   storage_path?: string | null;
   uploaded_at: string;
   parse_status: FileParseStatus;
@@ -99,7 +102,7 @@ export type MetaCard = {
   created_at: string;
   updated_at: string;
   info_type: InfoUnitType;
-  info_subtype: InfoUnitSubtype;
+  info_subtype: InfoUnitSubtype | null;
   detail: {
     name?: string | null;
     description?: string | null;
@@ -172,6 +175,70 @@ export type GraphEdge = {
   created_at: string;
 };
 
+export type Relation = {
+  id: string;
+  source_id: string;
+  target_id: string;
+  relation_type: "about" | "support" | "contradict";
+  evidence_unit_ids: string[];
+  rationale: string;
+  certainty: "explicit" | "inferred";
+};
+
+export type ConflictView = {
+  view_type: "conflict";
+  title: string;
+  sections: Array<{
+    id: string;
+    title: string;
+    placement: "left" | "right" | "center";
+    items: Array<{
+      info_unit_id: string;
+      role: "claim" | "evidence" | "event" | "context";
+      emphasis: boolean;
+      default_expanded: boolean;
+    }>;
+  }>;
+  missing_information: string[];
+};
+
+export type TimelineView = {
+  view_type: "timeline";
+  title: string;
+  events: Array<{
+    id: string;
+    title: string;
+    time_label: string;
+    sort_date: string | null;
+    time_precision: "day" | "month" | "year" | "unknown";
+    summary: string;
+    related_info_unit_ids: string[];
+  }>;
+};
+
+export type HypothesisView = {
+  view_type: "hypothesis";
+  title: string;
+  hypothesis: string;
+  steps: Array<{
+    id: string;
+    claim: string;
+    supporting_info_unit_ids: string[];
+    opposing_info_unit_ids: string[];
+    depends_on_step_ids: string[];
+  }>;
+  missing_information: string[];
+};
+
+export type ReasoningView = {
+  id: string;
+  question: string;
+  view_type: "timeline" | "conflict" | "hypothesis";
+  selection_reason: string;
+  payload: ConflictView | TimelineView | HypothesisView;
+  created_at: string;
+};
+
 export type WorkspaceState = {
   current_view: ViewMode;
   selected_card_ids: string[];
@@ -183,6 +250,11 @@ export type WorkspaceState = {
     offset_x: number;
     offset_y: number;
   };
+  selected_node_ids?: string[];
+  focused_node_id?: string | null;
+  current_view_id?: string | null;
+  node_positions?: Record<string, CardPosition>;
+  display_levels?: Record<string, 1 | 2 | 3>;
 };
 
 export type CaseData = {
@@ -191,13 +263,165 @@ export type CaseData = {
   created_at: string;
   updated_at: string;
   files: CaseFile[];
+  core_issue: string | null;
+  issue_set: string[];
   info_units: InfoUnit[];
+  relations: Relation[];
+  reasoning_views: ReasoningView[];
+  law_matches: Array<Record<string, unknown>>;
+  stage_runs: Array<Record<string, unknown>>;
+  // The following collections are presentation-only compatibility projections.
   meta_cards: MetaCard[];
   inference_cards: InferenceCard[];
   law_cards: LawCard[];
   edges: GraphEdge[];
   workspace_state: WorkspaceState;
 };
+
+type V03WorkspaceState = {
+  selected_node_ids: string[];
+  focused_node_id: string | null;
+  current_view_id: string | null;
+  node_positions: Record<string, CardPosition>;
+  display_levels: Record<string, 1 | 2 | 3>;
+  viewport: { zoom: number; offset_x: number; offset_y: number };
+};
+
+function relationEdgeType(type: Relation["relation_type"]): EdgeType {
+  if (type === "support") return "supports";
+  if (type === "contradict") return "conflicts_with";
+  return "relates_to";
+}
+
+function reasoningRefs(view: ReasoningView): { supporting: string[]; opposing: string[]; missing: string[]; claim: string } {
+  if (view.payload.view_type === "hypothesis") {
+    return {
+      supporting: view.payload.steps.flatMap((step) => step.supporting_info_unit_ids),
+      opposing: view.payload.steps.flatMap((step) => step.opposing_info_unit_ids),
+      missing: view.payload.missing_information,
+      claim: view.payload.hypothesis,
+    };
+  }
+  if (view.payload.view_type === "conflict") {
+    return {
+      supporting: view.payload.sections.flatMap((section) => section.items.map((item) => item.info_unit_id)),
+      opposing: [],
+      missing: view.payload.missing_information,
+      claim: view.payload.title,
+    };
+  }
+  return {
+    supporting: view.payload.events.flatMap((event) => event.related_info_unit_ids),
+    opposing: [],
+    missing: [],
+    claim: view.payload.title,
+  };
+}
+
+/** Build legacy canvas objects from v0.3 business data without creating a second authority. */
+export function normalizeCaseData(raw: CaseData): CaseData {
+  const source = raw as CaseData & { workspace_state: WorkspaceState | V03WorkspaceState };
+  const workspace = source.workspace_state as Partial<WorkspaceState & V03WorkspaceState>;
+  const positions = workspace.node_positions ?? {};
+  const levels = workspace.display_levels ?? {};
+  const selected = workspace.selected_card_ids ?? workspace.selected_node_ids ?? [];
+  const focused = workspace.focused_card_id ?? workspace.focused_node_id ?? null;
+  const metaCards = raw.meta_cards ?? raw.info_units.map((unit, index): MetaCard => ({
+    id: unit.id,
+    card_type: "meta",
+    title: unit.title,
+    summary: null,
+    display_level: levels[unit.id] ?? 2,
+    status: "active",
+    position: positions[unit.id] ?? { x: 120 + (index % 4) * 280, y: 120 + Math.floor(index / 4) * 170 },
+    ui_state: { selected: selected.includes(unit.id), highlighted: false, pinned: false, collapsed: false },
+    source_file_ids: Array.from(new Set(unit.source_refs.map((ref) => ref.file_id))),
+    created_at: unit.created_at,
+    updated_at: raw.updated_at,
+    info_type: unit.type,
+    info_subtype: unit.subtype,
+    detail: {
+      name: unit.type === "entity" ? unit.title : null,
+      description: unit.content,
+      attributes: {
+        speaker: unit.speaker,
+        side: unit.side,
+        actor: unit.actor,
+        target: unit.target,
+        related_issue: unit.related_issue,
+      },
+      tags: [unit.type, ...(unit.subtype ? [unit.subtype] : [])],
+    },
+  }));
+  const inferenceCards = raw.inference_cards ?? raw.reasoning_views.map((view, index): InferenceCard => {
+    const refs = reasoningRefs(view);
+    return {
+      id: view.id,
+      card_type: "inference",
+      title: view.payload.title,
+      summary: null,
+      display_level: levels[view.id] ?? 2,
+      status: "active",
+      position: positions[view.id] ?? { x: 1320 + (index % 2) * 300, y: 160 + Math.floor(index / 2) * 180 },
+      ui_state: { selected: selected.includes(view.id), highlighted: false, pinned: false, collapsed: false },
+      source_file_ids: [],
+      created_at: view.created_at,
+      updated_at: raw.updated_at,
+      inference_type: view.view_type,
+      decision: "undecided",
+      detail: {
+        claim: refs.claim,
+        reasoning_steps: view.payload.view_type === "hypothesis" ? view.payload.steps.map((step) => step.claim) : [],
+        supporting_card_ids: refs.supporting,
+        opposing_card_ids: refs.opposing,
+        missing_card_ids: refs.missing,
+        confidence: null,
+        legal_basis_ids: [],
+      },
+    };
+  });
+  const relationEdges = raw.relations.map((relation): GraphEdge => ({
+    id: relation.id,
+    source: relation.source_id,
+    target: relation.target_id,
+    edge_type: relationEdgeType(relation.relation_type),
+    relation_type: relation.relation_type,
+    label: relation.rationale,
+    created_at: raw.updated_at,
+  }));
+  const derivedEdges = raw.info_units.flatMap((unit): GraphEdge[] => [
+    ...(unit.actor ? [{ id: `derived-actor-${unit.id}`, source: unit.id, target: unit.actor,
+      edge_type: "relates_to" as EdgeType, relation_type: "actor_of", label: "行为主体", created_at: raw.updated_at }] : []),
+    ...(unit.target ? [{ id: `derived-target-${unit.id}`, source: unit.id, target: unit.target,
+      edge_type: "relates_to" as EdgeType, relation_type: "target_of", label: "作用对象", created_at: raw.updated_at }] : []),
+  ]);
+  return {
+    ...raw,
+    core_issue: raw.core_issue ?? null,
+    issue_set: raw.issue_set ?? [],
+    relations: raw.relations ?? [],
+    reasoning_views: raw.reasoning_views ?? [],
+    law_matches: raw.law_matches ?? [],
+    stage_runs: raw.stage_runs ?? [],
+    meta_cards: metaCards,
+    inference_cards: inferenceCards,
+    law_cards: raw.law_cards ?? [],
+    edges: raw.edges ?? [...relationEdges, ...derivedEdges],
+    workspace_state: {
+      current_view: workspace.current_view ?? "panorama",
+      selected_card_ids: selected,
+      focused_card_id: focused,
+      expanded_card_ids: workspace.expanded_card_ids ?? [],
+      pinned_card_ids: workspace.pinned_card_ids ?? [],
+      viewport: workspace.viewport ?? { zoom: 1, offset_x: 0, offset_y: 0 },
+      selected_node_ids: selected,
+      focused_node_id: focused,
+      current_view_id: workspace.current_view_id ?? null,
+      node_positions: positions,
+      display_levels: levels,
+    },
+  };
+}
 
 export type CaseEnvelope = {
   case: CaseData | null;
@@ -278,6 +502,7 @@ export async function createCase(
             const formData = new FormData();
             formData.append("case_title", title);
             files.forEach((file) => formData.append("files", file));
+            formData.append("source_kinds", JSON.stringify(Object.fromEntries(files.map((file) => [file.name, "other"]))));
             return formData;
           })(),
         })
@@ -288,7 +513,8 @@ export async function createCase(
           body: JSON.stringify({ case_title: title }),
         });
 
-  return readJson<{ case: CaseData }>(response);
+  const data = await readJson<{ case: CaseData }>(response);
+  return { case: normalizeCaseData(data.case) };
 }
 
 export async function appendFilesToCase(caseId: string, files: File[], signal?: AbortSignal): Promise<{ case: CaseData }> {
@@ -298,19 +524,23 @@ export async function appendFilesToCase(caseId: string, files: File[], signal?: 
     body: (() => {
       const formData = new FormData();
       files.forEach((file) => formData.append("files", file));
+      formData.append("source_kinds", JSON.stringify(Object.fromEntries(files.map((file) => [file.name, "other"]))));
       return formData;
     })(),
   });
-  return readJson<{ case: CaseData }>(response);
+  const data = await readJson<{ case: CaseData }>(response);
+  return { case: normalizeCaseData(data.case) };
 }
 
 export async function getCase(): Promise<CaseEnvelope> {
-  return readJson<CaseEnvelope>(await fetch(`${API_BASE}/api/case`));
+  const data = await readJson<CaseEnvelope>(await fetch(`${API_BASE}/api/case`));
+  return { case: data.case ? normalizeCaseData(data.case) : null };
 }
 
 export async function listCases(): Promise<CaseListResponse> {
   const data = await readJson<{
-    cases: Array<{ case_id: string; case_title: string; updated_at: string; is_current: boolean }>;
+    cases: Array<{ case_id: string; case_title: string; updated_at: string }>;
+    current_case_id: string | null;
   }>(await fetch(`${API_BASE}/api/cases`));
 
   return {
@@ -318,27 +548,29 @@ export async function listCases(): Promise<CaseListResponse> {
       case_id: item.case_id,
       title: item.case_title,
       updated_at: Date.parse(item.updated_at) || 0,
-      is_current: item.is_current,
+      is_current: item.case_id === data.current_case_id,
     })),
   };
 }
 
 export async function selectCase(caseId: string): Promise<CaseEnvelope> {
-  return readJson<CaseEnvelope>(
+  const data = await readJson<CaseEnvelope>(
     await fetch(`${API_BASE}/api/cases/${caseId}/select`, {
       method: "POST",
     })
   );
+  return { case: data.case ? normalizeCaseData(data.case) : null };
 }
 
 export async function renameCase(caseId: string, caseTitle: string): Promise<CaseEnvelope> {
-  return readJson<CaseEnvelope>(
+  const data = await readJson<CaseEnvelope>(
     await fetch(`${API_BASE}/api/cases/${caseId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ case_title: caseTitle }),
     })
   );
+  return { case: data.case ? normalizeCaseData(data.case) : null };
 }
 
 export async function deleteCase(): Promise<void> {
@@ -388,13 +620,24 @@ export async function updateWorkspaceState(
   caseId: string,
   patch: WorkspacePatch
 ): Promise<{ case: CaseData }> {
-  return readJson<{ case: CaseData }>(
+  const current = (await getCase()).case;
+  if (!current || current.case_id !== caseId) throw new Error("Case workspace is unavailable");
+  const workspace = current.workspace_state;
+  const data = await readJson<{ case: CaseData }>(
     await fetch(`${API_BASE}/api/cases/${caseId}/workspace`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
+      body: JSON.stringify({
+        selected_node_ids: patch.selected_card_ids ?? workspace.selected_node_ids ?? workspace.selected_card_ids,
+        focused_node_id: patch.focused_card_id !== undefined ? patch.focused_card_id : workspace.focused_node_id ?? null,
+        current_view_id: workspace.current_view_id ?? null,
+        node_positions: workspace.node_positions ?? {},
+        display_levels: workspace.display_levels ?? {},
+        viewport: patch.viewport ?? workspace.viewport,
+      }),
     })
   );
+  return { case: normalizeCaseData(data.case) };
 }
 
 export async function updateCardPosition(
@@ -402,13 +645,22 @@ export async function updateCardPosition(
   cardId: string,
   position: { x: number; y: number }
 ): Promise<{ case: CaseData }> {
-  return readJson<{ case: CaseData }>(
-    await fetch(`${API_BASE}/api/cases/${caseId}/cards/${cardId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ position }),
-    })
-  );
+  const current = (await getCase()).case;
+  if (!current || current.case_id !== caseId) throw new Error("Case workspace is unavailable");
+  current.workspace_state.node_positions = { ...(current.workspace_state.node_positions ?? {}), [cardId]: position };
+  const data = await readJson<{ case: CaseData }>(await fetch(`${API_BASE}/api/cases/${caseId}/workspace`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      selected_node_ids: current.workspace_state.selected_node_ids ?? current.workspace_state.selected_card_ids,
+      focused_node_id: current.workspace_state.focused_node_id ?? null,
+      current_view_id: current.workspace_state.current_view_id ?? null,
+      node_positions: current.workspace_state.node_positions,
+      display_levels: current.workspace_state.display_levels ?? {},
+      viewport: current.workspace_state.viewport,
+    }),
+  }));
+  return { case: normalizeCaseData(data.case) };
 }
 
 
@@ -417,13 +669,22 @@ export async function updateCardDisplayLevel(
   cardId: string,
   displayLevel: 1 | 2 | 3
 ): Promise<{ case: CaseData }> {
-  return readJson<{ case: CaseData }>(
-    await fetch(`${API_BASE}/api/cases/${caseId}/cards/${cardId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ display_level: displayLevel }),
-    })
-  );
+  const current = (await getCase()).case;
+  if (!current || current.case_id !== caseId) throw new Error("Case workspace is unavailable");
+  current.workspace_state.display_levels = { ...(current.workspace_state.display_levels ?? {}), [cardId]: displayLevel };
+  const data = await readJson<{ case: CaseData }>(await fetch(`${API_BASE}/api/cases/${caseId}/workspace`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      selected_node_ids: current.workspace_state.selected_node_ids ?? current.workspace_state.selected_card_ids,
+      focused_node_id: current.workspace_state.focused_node_id ?? null,
+      current_view_id: current.workspace_state.current_view_id ?? null,
+      node_positions: current.workspace_state.node_positions ?? {},
+      display_levels: current.workspace_state.display_levels,
+      viewport: current.workspace_state.viewport,
+    }),
+  }));
+  return { case: normalizeCaseData(data.case) };
 }
 export type InteractionTrackPayload = {
   case_id: string;

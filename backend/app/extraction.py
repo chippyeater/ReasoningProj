@@ -1,45 +1,54 @@
-"""Strict model boundary and v0.2 materialization, without provider or storage writes."""
+"""Strict model boundary and v0.3 materialization, without provider or storage writes."""
 from __future__ import annotations
 
 import json
-from uuid import uuid4
 from typing import Literal
+from uuid import uuid4
 
-from pydantic import ConfigDict, Field, ValidationError, model_validator
+from pydantic import ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from app.case_service import now_iso
 from app.errors import AppError
 from app.schemas import (
-    CaseData, ContractModel, ExtractionOutput, InfoUnit, InfoUnitSubtype, InfoUnitType,
-    Text, ValidationInput, check_info_classification,
+    CaseData, Content, ContractModel, ExtractionOutput, InfoUnit, InfoUnitSubtype,
+    InfoUnitType, Text, Title, ValidationInput, check_info_classification,
 )
 from app.validation import locate_source_ref, validate_extraction
 
 
-class ModelCitation(ContractModel):
+class ModelSourceQuote(ContractModel):
     """Only fields the model supplies; provenance and offsets are server owned."""
     model_config = ConfigDict(extra="forbid", strict=True)
     file_id: Text
-    quote: Text = Field(description="一个连续、逐字一致且能唯一定位的原文片段；不得省略中间文字、改空格或拼接不同段落。")
+    quote: Text = Field(description="一个连续、逐字一致且能唯一定位的原文片段；不得拼接或改写。")
 
 
 class ModelInfoUnit(ContractModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+    local_id: Text
     type: InfoUnitType
-    subtype: InfoUnitSubtype
-    title: Text
-    summary: Text
-    content: Text = Field(description="一个可独立引用的主命题，保留时间、条件、不确定性和陈述归属。禁止整份材料摘要或把事实、评价、规则混在一条中。")
-    source_refs: list[ModelCitation] = Field(min_length=1)
+    subtype: InfoUnitSubtype | None
+    title: Title
+    content: Content = Field(description="保留必要条件、来源限定和不确定性的独立可核查信息。")
+    source_quotes: list[ModelSourceQuote] = Field(min_length=1)
     speaker: Text | None
     side: Text | None
-    actor: Text | None
-    target: Text | None
-    stance_target: Text | None
+    actor_local_id: Text | None
+    target_local_id: Text | None
+    related_issue: Text | None
+
+    @field_validator("title", "content")
+    @classmethod
+    def reject_surrounding_whitespace(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("text must not have leading or trailing whitespace")
+        return value
 
     @model_validator(mode="after")
-    def validate_classification(self) -> ModelInfoUnit:
-        check_info_classification(InfoUnitType(self.type), InfoUnitSubtype(self.subtype))
+    def validate_business_fields(self) -> ModelInfoUnit:
+        check_info_classification(self.type, self.subtype, allow_verified=False)
+        if self.type in {InfoUnitType.state, InfoUnitType.position} and self.speaker is None:
+            raise ValueError("state and position require a nonempty speaker")
         return self
 
 
@@ -50,38 +59,55 @@ class ModelEntity(ModelInfoUnit):
 
 class ModelEvent(ModelInfoUnit):
     type: Literal["event"]
-    subtype: Literal["action", "occurrence", "transfer", "communication"]
+    subtype: Literal["reported", "documented"] | None
 
 
 class ModelState(ModelInfoUnit):
     type: Literal["state"]
-    subtype: Literal["temporal", "quantitative", "descriptive"]
+    subtype: None
 
 
-class ModelStatement(ModelInfoUnit):
-    type: Literal["statement"]
-    subtype: Literal["fact_assertion", "assessment", "provision"]
+class ModelRule(ModelInfoUnit):
+    type: Literal["rule"]
+    subtype: None
+
+
+class ModelPosition(ModelInfoUnit):
+    type: Literal["position"]
+    subtype: None
+
+
+ModelInfoUnitUnion = ModelEntity | ModelEvent | ModelState | ModelRule | ModelPosition
 
 
 class ModelExtraction(ContractModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     core_issue: Text | None
     issue_set: list[Text]
-    info_units: list[ModelEntity | ModelEvent | ModelState | ModelStatement]
+    info_units: list[ModelInfoUnitUnion]
 
     @model_validator(mode="after")
-    def validate_issues(self) -> ModelExtraction:
+    def validate_batch(self) -> ModelExtraction:
         if len(set(self.issue_set)) != len(self.issue_set):
             raise ValueError("Duplicate issues")
         if self.core_issue is not None and self.core_issue not in self.issue_set:
             raise ValueError("core_issue must occur in issue_set")
-        if any(u.stance_target is not None and u.stance_target not in self.issue_set for u in self.info_units):
-            raise ValueError("stance_target must occur in issue_set")
+        if any(u.related_issue is not None and u.related_issue not in self.issue_set for u in self.info_units):
+            raise ValueError("related_issue must occur in issue_set")
+        local_ids = [unit.local_id for unit in self.info_units]
+        if len(local_ids) != len(set(local_ids)):
+            raise ValueError("local_id must be unique within one model batch")
+        lookup = {unit.local_id: unit for unit in self.info_units}
+        for unit in self.info_units:
+            for field in ("actor_local_id", "target_local_id"):
+                target = getattr(unit, field)
+                if target is not None and (target not in lookup or lookup[target].type != "entity"):
+                    raise ValueError(f"{unit.local_id}.{field} must reference an entity local_id")
         return self
 
 
 class ConsolidationDecision(ContractModel):
-    """A concise editorial decision, not a new business entity or a reasoning trace."""
+    """A concise editorial decision, not a new business entity or reasoning trace."""
     model_config = ConfigDict(extra="forbid", strict=True)
     draft_index: int = Field(ge=0)
     action: Literal["keep", "revise", "merge", "split", "remove"]
@@ -90,7 +116,7 @@ class ConsolidationDecision(ContractModel):
 
 
 class ModelConsolidation(ContractModel):
-    """Private review envelope; only extraction is materialized as v0.2 data."""
+    """Private review envelope; only its extraction is materialized as v0.3 data."""
     model_config = ConfigDict(extra="forbid", strict=True)
     decisions: list[ConsolidationDecision]
     coverage_findings: list[Text]
@@ -166,26 +192,42 @@ def parse_model_consolidation(raw: str, draft_count: int) -> ModelConsolidation:
 
 
 def _semantic_key(unit: InfoUnit) -> tuple:
-    # Conservative equality only. Do not conflate different speakers, times,
-    # qualifiers, facts, classifications or stances on a similarity threshold.
     return (unit.type, unit.subtype, unit.content, unit.speaker, unit.side,
-            unit.actor, unit.target, unit.stance_target)
+            unit.actor, unit.target, unit.related_issue)
 
 
 def deduplicate_units(units: list[InfoUnit]) -> tuple[list[InfoUnit], list[dict]]:
-    """Merge identical meanings expressed by the same qualified semantic fields.
-
-    Cross-file semantic consolidation is first performed jointly by the model.
-    This deterministic pass only merges exact content matches and unions sources.
-    Different content remains available for review instead of being guessed away.
-    """
-    combined: dict[tuple, InfoUnit] = {}
-    merges = []
+    """Conservatively merge exact meanings and repair entity references."""
+    entity_by_key: dict[tuple, InfoUnit] = {}
+    entity_id_map: dict[str, str] = {}
+    first_pass: list[InfoUnit] = []
+    merges: list[dict] = []
     for unit in units:
+        candidate = unit.model_copy(deep=True)
+        if candidate.type != InfoUnitType.entity:
+            first_pass.append(candidate)
+            continue
+        key = _semantic_key(candidate)
+        if key not in entity_by_key:
+            entity_by_key[key] = candidate
+            first_pass.append(candidate)
+        else:
+            kept = entity_by_key[key]
+            kept.source_refs.extend(candidate.source_refs)
+            entity_id_map[candidate.id] = kept.id
+            merges.append({"kept_id": kept.id, "merged_id": candidate.id})
+    for unit in first_pass:
+        if unit.actor in entity_id_map:
+            unit.actor = entity_id_map[unit.actor]
+        if unit.target in entity_id_map:
+            unit.target = entity_id_map[unit.target]
+
+    combined: dict[tuple, InfoUnit] = {}
+    for unit in first_pass:
         key = _semantic_key(unit)
         if key not in combined:
-            combined[key] = unit.model_copy(deep=True)
-        else:
+            combined[key] = unit
+        elif combined[key].id != unit.id:
             existing = combined[key]
             existing.source_refs.extend(unit.source_refs)
             merges.append({"kept_id": existing.id, "merged_id": unit.id})
@@ -196,23 +238,29 @@ def deduplicate_units(units: list[InfoUnit]) -> tuple[list[InfoUnit], list[dict]
 
 
 def materialize_extraction(draft: ModelExtraction, case: CaseData) -> tuple[ExtractionOutput, list[dict]]:
+    """Locate all quotes, allocate IDs, map local entity references, then validate atomically."""
     files = {f.file_id: f for f in case.files}
-    units = []
-    errors = []
+    formal_ids = {unit.local_id: f"info-{uuid4().hex}" for unit in draft.info_units}
+    units: list[InfoUnit] = []
+    errors: list[dict] = []
     created_at = now_iso()
     for index, unit in enumerate(draft.info_units):
         references = []
-        for ref_index, ref in enumerate(unit.source_refs):
+        for ref_index, ref in enumerate(unit.source_quotes):
             try:
                 if ref.file_id not in files:
                     raise AppError("unknown_source_file", "Referenced file is not part of this case")
                 references.append(locate_source_ref(case.case_id, files[ref.file_id], ref.quote))
             except AppError as exc:
-                errors.append({"item_index": index, "field": f"source_refs.{ref_index}",
-                               "code": exc.code, "message": str(exc)})
+                errors.append({"item_id": unit.local_id, "item_index": index,
+                               "field": f"source_quotes.{ref_index}", "code": exc.code, "message": str(exc)})
         if references:
-            units.append(InfoUnit(**unit.model_dump(exclude={"source_refs"}),
-                                  id=f"info-{uuid4().hex}", created_at=created_at, source_refs=references))
+            payload = unit.model_dump(exclude={"local_id", "source_quotes", "actor_local_id", "target_local_id"})
+            units.append(InfoUnit(
+                **payload, id=formal_ids[unit.local_id], created_at=created_at, source_refs=references,
+                actor=formal_ids[unit.actor_local_id] if unit.actor_local_id is not None else None,
+                target=formal_ids[unit.target_local_id] if unit.target_local_id is not None else None,
+            ))
     if errors:
         raise ExtractionFailure("extraction_source_invalid", "One or more source references could not be located",
                                 errors=errors)

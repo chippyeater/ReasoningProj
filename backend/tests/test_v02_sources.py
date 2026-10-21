@@ -11,6 +11,11 @@ from app.schemas import (
 from app.validation import locate_source_ref, validate_extraction, validate_relations
 
 
+def v03_lines(name):
+    return [json.loads(line) for line in (GOLD / "gold_v0_3" / name).read_text(encoding="utf-8").splitlines()
+            if line.strip()]
+
+
 class TestV02Sources(IsolatedCaseTest):
     def gold_validation_input(self):
         manifest = json.loads((GOLD / "fixtures/file_manifest.json").read_text(encoding="utf-8"))
@@ -28,7 +33,7 @@ class TestV02Sources(IsolatedCaseTest):
                 uploaded_at="2026-10-20T00:00:00Z"))
         issues = json.loads((GOLD / "gold/gold_issues.json").read_text(encoding="utf-8"))
         extraction = ExtractionOutput(core_issue=issues["core_issue"], issue_set=issues["issue_set"],
-                                      info_units=gold_lines("gold_info_units.jsonl"))
+                                      info_units=v03_lines("gold_info_units.jsonl"))
         return case_id, ValidationInput(extraction=extraction, parsed_files=files)
 
     def test_all_gold_source_refs_match_cached_unicode_slices_and_metadata(self):
@@ -89,7 +94,7 @@ class TestV02Sources(IsolatedCaseTest):
     def test_gold_relations_pass_and_unknown_reference_fails(self):
         _, value = self.gold_validation_input()
         context = RelationInput(**value.extraction.model_dump(mode="json"))
-        output = RelationOutput(relations=gold_lines("gold_relations.jsonl"))
+        output = RelationOutput(relations=v03_lines("gold_relations.jsonl"))
         self.assertTrue(validate_relations(output, context).valid)
         payload = output.model_dump(mode="json")
         payload["relations"][0]["target_id"] = "unknown"

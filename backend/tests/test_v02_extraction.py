@@ -1,4 +1,5 @@
 import json
+from itertools import count
 import unittest
 
 from support import IsolatedCaseTest
@@ -10,10 +11,14 @@ from app.extraction import (
 from app.schemas import SourceKind
 
 
+_LOCAL_IDS = count()
+
+
 def model_unit(file_id, quote, **changes):
-    value = dict(type="statement", subtype="fact_assertion", title="付款陈述", summary="甲称已付款",
-                 content="甲称已付款，尚未经独立核实。", source_refs=[{"file_id": file_id, "quote": quote}],
-                 speaker="甲", side="付款方", actor=None, target=None, stance_target="款项是否已支付")
+    value = dict(local_id=f"local-{next(_LOCAL_IDS)}", type="event", subtype="reported", title="付款陈述",
+                 content="甲称已付款，尚未经独立核实。", source_quotes=[{"file_id": file_id, "quote": quote}],
+                 speaker="甲", side="付款方", actor_local_id=None, target_local_id=None,
+                 related_issue="款项是否已支付")
     value.update(changes)
     return value
 
@@ -72,10 +77,10 @@ class TestExtractionBoundary(IsolatedCaseTest):
 
     def test_invalid_fields_types_and_classification_are_schema_errors(self):
         base = model_unit("f", "原文")
-        changes = [dict(type="unknown"), dict(type="entity", subtype="transfer"), dict(content=123),
-                   dict(content="  "), dict(source_refs=[]), dict(id="model-id"), dict(created_at="model-time"),
-                   dict(source_refs=[dict(file_id="f", quote="原文", start=0, end=2)]),
-                   dict(source_refs=[dict(file_id="f", quote="原文", source_kind="testimony")])]
+        changes = [dict(type="unknown"), dict(type="entity", subtype="reported"), dict(content=123),
+                   dict(content="  "), dict(source_quotes=[]), dict(id="model-id"), dict(created_at="model-time"),
+                   dict(source_quotes=[dict(file_id="f", quote="原文", start=0, end=2)]),
+                   dict(source_quotes=[dict(file_id="f", quote="原文", source_kind="testimony")])]
         for change in changes:
             with self.subTest(change=change), self.assertRaises(ExtractionFailure) as caught:
                 parse_model_extraction(model_result([{**base, **change}]))
@@ -91,7 +96,7 @@ class TestExtractionBoundary(IsolatedCaseTest):
             with self.subTest(change=change), self.assertRaises(ExtractionFailure):
                 parse_model_extraction(json.dumps({**value, **change}, ensure_ascii=False))
         with self.assertRaises(ExtractionFailure):
-            parse_model_extraction(model_result([model_unit("f", "原文", stance_target="未定义")]))
+            parse_model_extraction(model_result([model_unit("f", "原文", related_issue="未定义")]))
 
     def test_cross_file_duplicates_merge_and_preserve_all_sources(self):
         saved = self.upload(raw="甲：我已付款".encode("utf-8"), source_kind="testimony")
@@ -131,7 +136,7 @@ class TestExtractionBoundary(IsolatedCaseTest):
         case = case_store.load_case(saved["case_id"])
         fid = case.files[0].file_id
         unit = model_unit(fid, "甲称付款")
-        unit["source_refs"] *= 2
+        unit["source_quotes"] *= 2
         result, _ = materialize_extraction(parse_model_extraction(model_result([unit])), case)
         self.assertEqual(len(result.info_units[0].source_refs), 1)
 

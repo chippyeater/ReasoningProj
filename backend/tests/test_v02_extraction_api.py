@@ -55,7 +55,7 @@ class TestExtractionAPI(IsolatedCaseTest):
         run = stored["stage_runs"][-1]
         self.assertEqual(run["status"], "success")
         self.assertEqual(run["model"], "configured-model")
-        self.assertTrue(run["prompt_version"].startswith("v0.2-extraction-6:"))
+        self.assertTrue(run["prompt_version"].startswith("v0.3-extraction-1:"))
         root = self.data_dir / case["case_id"]
         audit = json.loads((root / run["output_snapshot_path"]).read_text(encoding="utf-8"))
         self.assertEqual(audit["model_content"], raw)
@@ -246,7 +246,7 @@ class TestExtractionAPI(IsolatedCaseTest):
         draft=model_result([model_unit(a['file_id'],'甲：已支付款项',content='甲称已付款，未核实。'),
                             model_unit(b['file_id'],'甲：款项已经付出',content='甲表示款项已付出，未核实。')])
         combined=model_unit(a['file_id'],'甲：已支付款项',content='甲在两份材料中重复称已付款，未核实。')
-        combined['source_refs'].append({'file_id':b['file_id'],'quote':'甲：款项已经付出'})
+        combined['source_quotes'].append({'file_id':b['file_id'],'quote':'甲：款项已经付出'})
         final=model_result([combined])
         decisions=[dict(draft_index=i,action='merge',finding='同人同义说法，合并来源。',final_indices=[0]) for i in range(2)]
         replies=[llm_client.LLMReply(draft,{'step':'extract'}),

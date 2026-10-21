@@ -1,0 +1,25 @@
+{
+  "schema_version": "0.3",
+  "source_gold_version": "1.7",
+  "source_gold_fingerprint": "198069edcf222a0bd61a4a464c6dd5521f055b8a2f5903c8ed4d07e43b411c57",
+  "score_compatibility": "not_comparable_to_v7.2",
+  "mappings": [
+    {"id":"U001","from":"entity/person","to":"entity/person","reason":"人物身份不变"},
+    {"id":"U002","from":"entity/person","to":"entity/person","reason":"人物身份不变"},
+    {"id":"U004","from":"state/temporal","to":"state/null","reason":"合同直接记载的租期与租金状态，speaker 为合同"},
+    {"id":"U006","from":"state/quantitative","to":"state/null","reason":"合同直接记载的金额状态，speaker 为合同"},
+    {"id":"U008","from":"statement/provision","to":"rule/null","reason":"合同条件和处理规则"},
+    {"id":"U010","from":"event/transfer","to":"event/documented","reason":"转账文字记录直接记载，未独立验真"},
+    {"id":"U012","from":"statement/fact_assertion","to":"event/reported","reason":"张某对计划性搬离行为的陈述"},
+    {"id":"U015","from":"statement/fact_assertion","to":"position/null","reason":"李某提出的条件式协商方案"},
+    {"id":"U016","from":"statement/fact_assertion","to":"event/reported","reason":"张某声称已找到接租者"},
+    {"id":"U019","from":"statement/assessment","to":"position/null","reason":"李某的处理立场"},
+    {"id":"U022","from":"statement/fact_assertion","to":"event/reported","reason":"张某自述搬离事件"},
+    {"id":"U026","from":"statement/fact_assertion","to":"event/reported","reason":"张某自述接租者入住事件"},
+    {"id":"U027","from":"statement/fact_assertion","to":"event/reported","reason":"张某自述另签租约事件"},
+    {"id":"U029","from":"statement/assessment","to":"position/null","reason":"张某对损失的判断"},
+    {"id":"U030","from":"statement/assessment","to":"position/null","reason":"张某关于押金处理的请求"},
+    {"id":"U035","from":"statement/fact_assertion","to":"state/null","reason":"李某归属下的空置状态"},
+    {"id":"U036","from":"statement/fact_assertion","to":"state/null","reason":"李某归属下的损失状态说法"}
+  ]
+}

@@ -1,4 +1,4 @@
-"""FastAPI entrypoint for the v0.2 upload and cached-document contract."""
+"""FastAPI entrypoint for the v0.3 upload and cached-document contract."""
 import json
 from typing import Annotated
 
@@ -24,7 +24,7 @@ from app.schemas import (
     CaseData, ExtractionInput, ExtractionOutput, LawRetrieveInput, ParsedDocument, ReasoningInput, UploadRequest, WorkspaceState,
 )
 
-app = FastAPI(title="LogicWeaver API", version="0.2")
+app = FastAPI(title="LogicWeaver API", version="0.3")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -54,7 +54,7 @@ def require_case(case_id: str) -> CaseData:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "schema_version": "0.2"}
+    return {"status": "ok", "schema_version": "0.3"}
 
 
 @app.get("/api/cases", response_model=CasesResponse)
@@ -175,7 +175,7 @@ async def delete_current_case() -> dict:
 
 
 def pipeline_unavailable(stage: str) -> None:
-    raise AppError("pipeline_not_implemented", f"v0.2 {stage} execution is not connected", 501)
+    raise AppError("pipeline_not_implemented", f"v0.3 {stage} execution is not connected", 501)
 
 
 @app.post("/api/extraction/run", response_model=ExtractionOutput)

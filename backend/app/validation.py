@@ -1,4 +1,4 @@
-"""Validate v0.2 results against fixed cached text and confirmed provenance."""
+"""Validate v0.3 results against fixed cached text and confirmed provenance."""
 from __future__ import annotations
 
 from app.case_store import read_parsed_document

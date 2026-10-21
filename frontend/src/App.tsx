@@ -177,17 +177,19 @@ function parseStatusLabel(status?: string) {
 
 function kindFromInfoType(type: InfoUnitType): CanvasKind {
   if (type === "event") return "event";
-  if (type === "claim") return "claim";
-  if (type === "subject") return "person";
+  if (type === "position") return "claim";
+  if (type === "rule") return "law";
+  if (type === "entity") return "person";
   return "object";
 }
 
 
 function infoTypeLabel(type: InfoUnitType): string {
-  if (type === "subject") return "主体";
+  if (type === "entity") return "实体";
   if (type === "event") return "事件";
   if (type === "state") return "状态";
-  if (type === "claim") return "主张";
+  if (type === "rule") return "规则";
+  if (type === "position") return "立场";
   return type;
 }
 
@@ -625,10 +627,13 @@ export default function App() {
         actionLabel: infoTypeLabel(card.info_type),
         detailFields: buildDetailFields([
           ["subType", card.info_subtype],
-          ["subjectLegalType", matchedInfoUnit?.subject_legal_type ?? null],
           ["description", description],
-          ["extraction_reason", matchedInfoUnit?.extraction_reason ?? null],
-          ["evidence_quote", matchedInfoUnit?.evidence_quote ?? null],
+          ["speaker", matchedInfoUnit?.speaker ?? null],
+          ["side", matchedInfoUnit?.side ?? null],
+          ["actor", matchedInfoUnit?.actor ?? null],
+          ["target", matchedInfoUnit?.target ?? null],
+          ["relatedIssue", matchedInfoUnit?.related_issue ?? null],
+          ["sourceQuotes", matchedInfoUnit?.source_refs.map((ref) => ref.quote) ?? []],
         ]),
         kind: kindFromInfoType(card.info_type),
         source: "meta",

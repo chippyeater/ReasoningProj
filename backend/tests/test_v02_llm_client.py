@@ -13,20 +13,37 @@ CONFIG = llm_client.LLMConfig("azure", "https://test.services.ai.azure.com/opena
 
 
 class TestModelTransport(unittest.TestCase):
-    def test_provider_schema_enforces_four_type_subtype_combinations(self):
+    def test_provider_schema_enforces_five_type_subtype_combinations(self):
         schema = ModelExtraction.model_json_schema()
         branches = schema['properties']['info_units']['items']['anyOf']
-        self.assertEqual(len(branches), 4)
+        self.assertEqual(len(branches), 5)
         actual = {}
         for branch in branches:
             definition = schema['$defs'][branch['$ref'].split('/')[-1]]
             fields = definition['properties']
-            actual[fields['type']['const']] = set(fields['subtype']['enum'])
+            subtype = fields['subtype']
+            if 'enum' in subtype:
+                values = set(subtype['enum'])
+            elif 'const' in subtype:
+                values = {subtype['const']}
+            elif subtype.get('type') == 'null':
+                values = {None}
+            else:
+                values = set()
+                for item in subtype['anyOf']:
+                    if 'enum' in item:
+                        values.update(item['enum'])
+                    elif 'const' in item:
+                        values.add(item['const'])
+                    elif item.get('type') == 'null':
+                        values.add(None)
+            actual[fields['type']['const']] = values
         self.assertEqual(actual, {
             'entity': {'person','organization','object','location'},
-            'event': {'action','occurrence','transfer','communication'},
-            'state': {'temporal','quantitative','descriptive'},
-            'statement': {'fact_assertion','assessment','provision'},
+            'event': {'reported','documented',None},
+            'state': {None},
+            'rule': {None},
+            'position': {None},
         })
 
     def test_provider_schema_references_do_not_have_unsupported_sibling_keywords(self):

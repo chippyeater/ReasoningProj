@@ -1,4 +1,4 @@
-"""TXT -> LLM -> validated v0.2 extraction, with an auditable atomic commit."""
+"""TXT -> LLM -> validated v0.3 extraction, with an auditable atomic commit."""
 from __future__ import annotations
 
 import hashlib
@@ -17,8 +17,8 @@ from app.extraction import (
 )
 from app.schemas import CaseData, ExtractionOutput, ParseStatus, PipelineStage, RunStatus, StageRun
 
-PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts/extraction_system_prompt.md"
-CONSOLIDATION_PROMPT_PATH = PROMPT_PATH.with_name("extraction_consolidation_prompt.md")
+PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts/extraction_system_prompt_v0_3.md"
+CONSOLIDATION_PROMPT_PATH = PROMPT_PATH.with_name("extraction_consolidation_prompt_v0_3.md")
 
 
 def prompt_with_version() -> tuple[str, str, str]:
@@ -29,7 +29,7 @@ def prompt_with_version() -> tuple[str, str, str]:
         raise AppError("extraction_prompt_unavailable", "Extraction prompt could not be read", 500) from exc
     if not prompt.strip() or not consolidation.strip():
         raise AppError("extraction_prompt_unavailable", "Extraction prompt is empty", 500)
-    version = "v0.2-extraction-6:" + hashlib.sha256((prompt + "\n" + consolidation).encode("utf-8")).hexdigest()[:16]
+    version = "v0.3-extraction-1:" + hashlib.sha256((prompt + "\n" + consolidation).encode("utf-8")).hexdigest()[:16]
     return prompt, consolidation, version
 
 

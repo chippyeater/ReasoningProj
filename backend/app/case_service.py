@@ -1,4 +1,4 @@
-"""v0.2 upload/persistence services, independent of model execution."""
+"""v0.3 upload/persistence services, independent of model execution."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -139,4 +139,3 @@ def build_extraction_input(case: CaseData, file_ids: list[str] | None = None) ->
 
 def build_relation_input(case: CaseData) -> RelationInput:
     return RelationInput(core_issue=case.core_issue, issue_set=case.issue_set, info_units=case.info_units)
-
