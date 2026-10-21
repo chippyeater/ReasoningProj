@@ -13,7 +13,6 @@ import {
   generateInference,
   routeTask,
   runExtraction,
-  runRelation,
   runReasoning,
   askQa,
   actInteraction,
@@ -22,7 +21,6 @@ import {
   updateCardDisplayLevel,
   updateInfoUnit,
   updateWorkspaceState,
-  trackInteraction,
   type CaseData,
   type CaseSummary,
   type InferenceCard,
@@ -507,6 +505,7 @@ export default function App() {
   const [editorError, setEditorError] = useState("");
   const [editorBusy, setEditorBusy] = useState(false);
   const [quotesLoading, setQuotesLoading] = useState(false);
+  const [extractionRunning, setExtractionRunning] = useState(false);
 
   const [transform, setTransform] = useState({ x: 0, y: 0 });
   const [nodePositions, setNodePositions] = useState<Record<string, Point>>({});
@@ -1044,7 +1043,6 @@ export default function App() {
 
     setError("");
     setIsDropSelected(true);
-    fireTrack("upload_files_added", [], { count: list.length, file_names: list.map((f) => f.name) });
     setTimeout(() => {
       void submitCase(nextFiles);
     }, 0);
@@ -1059,7 +1057,6 @@ export default function App() {
   }
 
   function removeEvidence(id: string) {
-    fireTrack("queued_file_remove", [id]);
     setEvidences((current) => current.filter((item) => item.id !== id));
   }
 
@@ -1098,15 +1095,13 @@ export default function App() {
       const response = currentCase?.case_id
         ? await appendFilesToCase(currentCase.case_id, files, controller.signal)
         : await createCase(currentCase?.case_title ?? "未命名案件", files, controller.signal);
-      await runRelation({ case_id: response.case.case_id });
-      const refreshedCase = await getCase();
       setUploadProgress(100);
-      setCurrentCase(refreshedCase.case);
+      setCurrentCase(response.case);
       closeInfoUnitEditor();
-      setSelectedNodeIds(pickSelectedNodeIds(refreshedCase.case));
-      setFocusedNodeId(pickFocusedNodeId(refreshedCase.case));
-      if (refreshedCase.case?.workspace_state?.viewport) {
-        const viewport = refreshedCase.case.workspace_state.viewport;
+      setSelectedNodeIds(pickSelectedNodeIds(response.case));
+      setFocusedNodeId(pickFocusedNodeId(response.case));
+      if (response.case.workspace_state?.viewport) {
+        const viewport = response.case.workspace_state.viewport;
         setTransform(clampViewportToWrapper({ x: viewport.offset_x, y: viewport.offset_y }, wrapperRef.current));
       }
       setEvidences([]);
@@ -1131,8 +1126,24 @@ export default function App() {
     }
   }
 
+  async function onRunExtraction() {
+    if (!currentCase) return;
+    setExtractionRunning(true);
+    setError("");
+    try {
+      await runExtraction({ case_id: currentCase.case_id });
+      const refreshed = await getCaseById(currentCase.case_id);
+      setCurrentCase(refreshed.case);
+      setSelectedNodeIds(pickSelectedNodeIds(refreshed.case));
+      setFocusedNodeId(pickFocusedNodeId(refreshed.case));
+    } catch (err) {
+      setError(`Extraction failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setExtractionRunning(false);
+    }
+  }
+
   function onCancelUpload() {
-    fireTrack("upload_cancel");
     uploadAbortRef.current?.abort();
     stopProgressTimer();
     setCaseLoading(false);
@@ -1143,7 +1154,6 @@ export default function App() {
   }
 
   async function onClearCase() {
-    fireTrack("case_clear_requested");
     uploadAbortRef.current?.abort();
     stopProgressTimer();
     setUploadProgress(0);
@@ -1421,7 +1431,6 @@ export default function App() {
 
   function onCanvasContextMenu(event: React.MouseEvent<HTMLDivElement>) {
     event.preventDefault();
-    fireTrack("canvas_context_menu");
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
     const rect = wrapper.getBoundingClientRect();
@@ -1465,7 +1474,6 @@ export default function App() {
   }
 
   async function onGenerateInferenceFromIsland() {
-    fireTrack("island_generate_click", currentCase?.workspace_state?.selected_card_ids ?? []);
     if (!currentCase) {
       setError("No active case.");
       return;
@@ -1532,11 +1540,6 @@ export default function App() {
     const nextLevel = stepDisplayLevel(currentNode.level, direction);
     if (nextLevel === currentNode.level) return;
 
-    fireTrack("node_display_level_change", [focusedNodeId], {
-      from: currentNode.level,
-      to: nextLevel,
-      direction,
-    });
     void persistCardDisplayLevel(focusedNodeId, nextLevel);
   }
 
@@ -1619,19 +1622,6 @@ export default function App() {
     height: `${CANVAS_HEIGHT}px`,
     transform: `translate(${transform.x}px, ${transform.y}px)`,
   } as CSSProperties;
-
-  function fireTrack(action: string, targets: string[] = [], params: Record<string, unknown> = {}) {
-    if (!currentCase?.case_id) return;
-    void trackInteraction({
-      case_id: currentCase.case_id,
-      action,
-      targets,
-      params,
-      context: { selected_case_id: selectedCaseId },
-    }).catch(() => {
-      // non-blocking telemetry
-    });
-  }
 
   function renderConflictGlyph() {
     return (
@@ -1971,9 +1961,8 @@ export default function App() {
                 className="case-selector-trigger"
                 type="button"
                 title="Double click to rename"
-                onClick={() => { fireTrack("case_menu_toggle"); setCaseMenuOpen((current) => !current); }}
+                onClick={() => setCaseMenuOpen((current) => !current)}
                 onDoubleClick={() => {
-                  fireTrack("case_rename_open");
                   void onRenameCurrentCase();
                 }}
               >
@@ -2004,7 +1993,6 @@ export default function App() {
                                   setTransform(clampViewportToWrapper({ x: 0, y: 0 }, wrapperRef.current));
                                 }
                                 setSelectedCaseId(item.case_id);
-                                fireTrack("case_switch", [item.case_id]);
                                 setEvidences([]);
                                 closeInfoUnitEditor();
                                 setCaseMenuOpen(false);
@@ -2045,7 +2033,7 @@ export default function App() {
             <div className="file-card-list">
               {allFiles.length === 0 ? <p className="tree-empty">No files</p> : null}
               {allFiles.map((item) => (
-                <article className={`figma-file-card ${selectedFileId === item.id ? "is-selected" : ""}`} key={item.id} onClick={() => { setSelectedFileId(item.id); fireTrack("file_select", [item.id]); }}>
+                <article className={`figma-file-card ${selectedFileId === item.id ? "is-selected" : ""}`} key={item.id} onClick={() => setSelectedFileId(item.id)}>
                   <div className="card-file-icon">
                     <img src={pickFileIcon(item.type, item.name)} alt={item.type} />
                   </div>
@@ -2090,7 +2078,6 @@ export default function App() {
               onClick={() => {
                 if (uploadStage === "idle") {
                   setIsDropSelected(true);
-                  fireTrack("upload_picker_open");
                   hiddenFileInputRef.current?.click();
                 }
               }}
@@ -2151,6 +2138,14 @@ export default function App() {
             style={{ backgroundPosition: `${transform.x}px ${transform.y}px` }}
           >
             <div className="canvas-edit-toolbar" onMouseDown={(event) => event.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() => void onRunExtraction()}
+                disabled={!currentCase || extractionRunning || caseLoading}
+                title="使用当前案件材料运行 Extraction"
+              >
+                {extractionRunning ? "提取中…" : "开始提取"}
+              </button>
               <button type="button" onClick={() => void openInfoUnitEditor()} disabled={!currentCase}>+ 新建 InfoUnit</button>
               <button
                 type="button"
@@ -2261,7 +2256,6 @@ export default function App() {
                         : (nextSelectedNodeIds[nextSelectedNodeIds.length - 1] ?? null);
 
                       setFocusedNodeId(nextFocusedNodeId);
-                      fireTrack("node_select", nextSelectedNodeIds, { multi_select: isMultiSelect });
                       scheduleSelectionSync(nextSelectedNodeIds, nextFocusedNodeId);
                       onNodeMouseDown(event, node.id);
                     }}

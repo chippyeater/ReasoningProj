@@ -782,30 +782,6 @@ export async function updateCardDisplayLevel(
   }));
   return { case: normalizeCaseData(data.case) };
 }
-export type InteractionTrackPayload = {
-  case_id: string;
-  action: string;
-  targets?: string[];
-  params?: Record<string, unknown>;
-  context?: Record<string, unknown>;
-};
-
-export type InteractionTrackResponse = {
-  success: boolean;
-  run_id: string;
-  message?: string | null;
-};
-
-export async function trackInteraction(payload: InteractionTrackPayload): Promise<InteractionTrackResponse> {
-  return readJson<InteractionTrackResponse>(
-    await fetch(`${API_BASE}/api/interaction/track`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-  );
-}
-
 export type RouterTask = "extraction" | "relation" | "reasoning" | "qa" | "interaction";
 
 export type RouteRequestPayload = {
@@ -823,27 +799,12 @@ export type RouteResponsePayload = {
 
 export type ExtractionRunRequest = {
   case_id: string;
-  file_ids?: string[];
-  raw_text?: string;
-  context?: string;
 };
 
 export type ExtractionRunResponse = {
-  success: boolean;
+  core_issue: string | null;
+  issue_set: string[];
   info_units: InfoUnit[];
-  message?: string | null;
-};
-
-export type RelationRunRequest = {
-  case_id: string;
-  info_unit_ids?: string[];
-};
-
-export type RelationRunResponse = {
-  success: boolean;
-  relations: Array<Record<string, unknown>>;
-  new_edges: GraphEdge[];
-  message?: string | null;
 };
 
 export type ReasoningRunRequest = {
@@ -905,16 +866,6 @@ export async function routeTask(payload: RouteRequestPayload): Promise<RouteResp
 export async function runExtraction(payload: ExtractionRunRequest): Promise<ExtractionRunResponse> {
   return readJson<ExtractionRunResponse>(
     await fetch(`${API_BASE}/api/extraction/run`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-  );
-}
-
-export async function runRelation(payload: RelationRunRequest): Promise<RelationRunResponse> {
-  return readJson<RelationRunResponse>(
-    await fetch(`${API_BASE}/api/relation/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

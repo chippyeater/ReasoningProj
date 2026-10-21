@@ -482,6 +482,10 @@ button:disabled {
   cursor: default;
 }
 
+.canvas-edit-toolbar button {
+  white-space: nowrap;
+}
+
 .canvas-content {
   position: relative;
   transform-origin: 0 0;
