@@ -489,6 +489,7 @@ button:disabled {
 .canvas-content {
   position: relative;
   transform-origin: 0 0;
+  will-change: transform;
 }
 
 .canvas-links {

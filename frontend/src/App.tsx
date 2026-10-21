@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+﻿import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   createCase,
   createInfoUnit,
@@ -114,6 +114,7 @@ type CanvasEdge = {
 
 type Point = { x: number; y: number };
 type NodeSize = { width: number; height: number };
+type CanvasTransform = Point & { zoom: number };
 
 type FileTreeItem = {
   id: string;
@@ -192,23 +193,36 @@ const ISLAND_MIN_HEIGHT = 38;
 const ISLAND_MAX_INPUT_HEIGHT = 120;
 const ISLAND_PADDING = 8;
 const ISLAND_BOTTOM_DOCK_THRESHOLD = 28;
-function clampViewport(point: Point, viewportWidth: number, viewportHeight: number): Point {
-  const centeredX = Math.max(0, (viewportWidth - CANVAS_WIDTH) / 2);
-  const centeredY = Math.max(0, (viewportHeight - CANVAS_HEIGHT) / 2);
-  const minX = viewportWidth >= CANVAS_WIDTH ? centeredX : viewportWidth - CANVAS_WIDTH;
-  const maxX = viewportWidth >= CANVAS_WIDTH ? centeredX : 0;
-  const minY = viewportHeight >= CANVAS_HEIGHT ? centeredY : viewportHeight - CANVAS_HEIGHT;
-  const maxY = viewportHeight >= CANVAS_HEIGHT ? centeredY : 0;
+const MIN_CANVAS_ZOOM = 0.25;
+const MAX_CANVAS_ZOOM = 2.5;
+const FIT_NODES_PADDING = 64;
+const VIEWPORT_SAVE_DELAY_MS = 180;
+const DISPLAY_LEVEL_SAVE_DELAY_MS = 160;
+
+function clampZoom(zoom: number): number {
+  return Math.min(MAX_CANVAS_ZOOM, Math.max(MIN_CANVAS_ZOOM, zoom));
+}
+
+function clampViewport(transform: CanvasTransform, viewportWidth: number, viewportHeight: number): CanvasTransform {
+  const canvasWidth = CANVAS_WIDTH * transform.zoom;
+  const canvasHeight = CANVAS_HEIGHT * transform.zoom;
+  const centeredX = Math.max(0, (viewportWidth - canvasWidth) / 2);
+  const centeredY = Math.max(0, (viewportHeight - canvasHeight) / 2);
+  const minX = viewportWidth >= canvasWidth ? centeredX : viewportWidth - canvasWidth;
+  const maxX = viewportWidth >= canvasWidth ? centeredX : 0;
+  const minY = viewportHeight >= canvasHeight ? centeredY : viewportHeight - canvasHeight;
+  const maxY = viewportHeight >= canvasHeight ? centeredY : 0;
   return {
-    x: Math.min(maxX, Math.max(minX, point.x)),
-    y: Math.min(maxY, Math.max(minY, point.y)),
+    x: Math.min(maxX, Math.max(minX, transform.x)),
+    y: Math.min(maxY, Math.max(minY, transform.y)),
+    zoom: transform.zoom,
   };
 }
 
-function clampViewportToWrapper(point: Point, wrapper: HTMLDivElement | null): Point {
-  if (!wrapper) return point;
+function clampViewportToWrapper(transform: CanvasTransform, wrapper: HTMLDivElement | null): CanvasTransform {
+  if (!wrapper) return transform;
   const rect = wrapper.getBoundingClientRect();
-  return clampViewport(point, rect.width, rect.height);
+  return clampViewport(transform, rect.width, rect.height);
 }
 
 function stepDisplayLevel(currentLevel: 1 | 2 | 3, direction: "up" | "down"): 1 | 2 | 3 {
@@ -507,7 +521,7 @@ export default function App() {
   const [quotesLoading, setQuotesLoading] = useState(false);
   const [extractionRunning, setExtractionRunning] = useState(false);
 
-  const [transform, setTransform] = useState({ x: 0, y: 0 });
+  const [transform, setTransform] = useState<CanvasTransform>({ x: 0, y: 0, zoom: 1 });
   const [nodePositions, setNodePositions] = useState<Record<string, Point>>({});
   const [nodeSizes, setNodeSizes] = useState<Record<string, NodeSize>>({});
 
@@ -521,6 +535,11 @@ export default function App() {
   const uploadAbortRef = useRef<AbortController | null>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const selectionSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewportSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const displayLevelSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingDisplayLevelsRef = useRef<Record<string, 1 | 2 | 3>>({});
+  const workspaceMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const canvasWheelHandlerRef = useRef<(event: WheelEvent) => void>(() => undefined);
   const quoteRequestRef = useRef(0);
 
   const panStateRef = useRef<{ active: boolean; startMouseX: number; startMouseY: number; startX: number; startY: number }>({
@@ -530,7 +549,14 @@ export default function App() {
     startX: 0,
     startY: 0,
   });
-  const nodeDragRef = useRef<{ id: string; startMouseX: number; startMouseY: number; startX: number; startY: number } | null>(null);
+  const nodeDragRef = useRef<{
+    id: string;
+    startMouseX: number;
+    startMouseY: number;
+    startX: number;
+    startY: number;
+    zoom: number;
+  } | null>(null);
   const islandDragRef = useRef<{ offsetX: number; offsetY: number } | null>(null);
   const transformRef = useRef(transform);
   const pendingDragRef = useRef<{ id: string; x: number; y: number } | null>(null);
@@ -567,6 +593,20 @@ export default function App() {
   useEffect(() => {
     transformRef.current = transform;
   }, [transform]);
+
+  useEffect(() => () => {
+    if (selectionSyncTimerRef.current) clearTimeout(selectionSyncTimerRef.current);
+    if (viewportSyncTimerRef.current) clearTimeout(viewportSyncTimerRef.current);
+    Object.values(displayLevelSyncTimersRef.current).forEach((timer) => clearTimeout(timer));
+  }, []);
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const handleWheel = (event: WheelEvent) => canvasWheelHandlerRef.current(event);
+    wrapper.addEventListener("wheel", handleWheel, { passive: false });
+    return () => wrapper.removeEventListener("wheel", handleWheel);
+  }, []);
 
   useEffect(() => {
     islandHeightRef.current = islandHeight;
@@ -630,7 +670,11 @@ export default function App() {
           setFocusedNodeId(pickFocusedNodeId(current.case));
           const viewport = current.case.workspace_state?.viewport;
           if (viewport) {
-            setTransform(clampViewportToWrapper({ x: viewport.offset_x, y: viewport.offset_y }, wrapperRef.current));
+            setTransform(clampViewportToWrapper({
+              x: viewport.offset_x,
+              y: viewport.offset_y,
+              zoom: clampZoom(viewport.zoom),
+            }, wrapperRef.current));
           }
           return;
         }
@@ -865,6 +909,9 @@ export default function App() {
     return { nodes, edges };
   }, [currentCase, evidences]);
 
+  const canvasNodeIdsKey = canvasData.nodes.map((node) => node.id).join("\u0000");
+  const canvasNodeLayoutKey = canvasData.nodes.map((node) => `${node.id}:${node.level}`).join("\u0000");
+
   useEffect(() => {
     if (canvasData.nodes.length === 0) {
       setNodePositions({});
@@ -873,26 +920,29 @@ export default function App() {
 
     setNodePositions((previous) => {
       const next: Record<string, Point> = { ...previous };
+      let changed = false;
       canvasData.nodes.forEach((node) => {
         if (!next[node.id]) {
           next[node.id] = { x: node.x, y: node.y };
+          changed = true;
         }
       });
       Object.keys(next).forEach((id) => {
         if (!canvasData.nodes.some((node) => node.id === id)) {
           delete next[id];
+          changed = true;
         }
       });
-      return next;
+      return changed ? next : previous;
     });
-  }, [canvasData.nodes]);
+  }, [canvasNodeIdsKey]);
 
   useEffect(() => {
     const handleMove = (event: MouseEvent) => {
       const draggingNode = nodeDragRef.current;
       if (draggingNode) {
-        const dx = event.clientX - draggingNode.startMouseX;
-        const dy = event.clientY - draggingNode.startMouseY;
+        const dx = (event.clientX - draggingNode.startMouseX) / draggingNode.zoom;
+        const dy = (event.clientY - draggingNode.startMouseY) / draggingNode.zoom;
         pendingDragRef.current = { id: draggingNode.id, x: draggingNode.startX + dx, y: draggingNode.startY + dy };
 
         if (dragRafRef.current === null) {
@@ -935,14 +985,19 @@ export default function App() {
       if (!pan.active) return;
       const dx = event.clientX - pan.startMouseX;
       const dy = event.clientY - pan.startMouseY;
-      pendingPanRef.current = clampViewportToWrapper({ x: pan.startX + dx, y: pan.startY + dy }, wrapperRef.current);
+      pendingPanRef.current = clampViewportToWrapper({
+        x: pan.startX + dx,
+        y: pan.startY + dy,
+        zoom: transformRef.current.zoom,
+      }, wrapperRef.current);
 
       if (panRafRef.current === null) {
         panRafRef.current = window.requestAnimationFrame(() => {
           panRafRef.current = null;
           const pending = pendingPanRef.current;
           if (!pending) return;
-          setTransform((current) => ({ ...current, x: pending.x, y: pending.y }));
+          transformRef.current = { ...transformRef.current, x: pending.x, y: pending.y };
+          setTransform(transformRef.current);
         });
       }
     };
@@ -950,6 +1005,7 @@ export default function App() {
     const handleUp = () => {
       const draggedNode = nodeDragRef.current;
       const wasPanning = panStateRef.current.active;
+      let finalPanTransform = transformRef.current;
 
       if (islandDragRef.current) {
         const wrapper = wrapperRef.current;
@@ -981,6 +1037,15 @@ export default function App() {
         window.cancelAnimationFrame(panRafRef.current);
         panRafRef.current = null;
       }
+      if (wasPanning && pendingPanRef.current) {
+        finalPanTransform = {
+          ...transformRef.current,
+          x: pendingPanRef.current.x,
+          y: pendingPanRef.current.y,
+        };
+        transformRef.current = finalPanTransform;
+        setTransform(finalPanTransform);
+      }
 
       if (draggedNode) {
         const pending = pendingDragRef.current;
@@ -999,10 +1064,11 @@ export default function App() {
 
       setDraggingNodeId(null);
       pendingDragRef.current = null;
+      pendingPanRef.current = null;
       dragPreviewPointRef.current = null;
 
       if (wasPanning) {
-        void persistWorkspace(transformRef.current);
+        void persistWorkspace(finalPanTransform);
       }
     };
 
@@ -1102,7 +1168,11 @@ export default function App() {
       setFocusedNodeId(pickFocusedNodeId(response.case));
       if (response.case.workspace_state?.viewport) {
         const viewport = response.case.workspace_state.viewport;
-        setTransform(clampViewportToWrapper({ x: viewport.offset_x, y: viewport.offset_y }, wrapperRef.current));
+        setTransform(clampViewportToWrapper({
+          x: viewport.offset_x,
+          y: viewport.offset_y,
+          zoom: clampZoom(viewport.zoom),
+        }, wrapperRef.current));
       }
       setEvidences([]);
       setUploadStage("idle");
@@ -1166,7 +1236,7 @@ export default function App() {
     setDraggingNodeId(null);
     setEvidences([]);
     setNodePositions({});
-    setTransform(clampViewportToWrapper({ x: 0, y: 0 }, wrapperRef.current));
+    setTransform(clampViewportToWrapper({ x: 0, y: 0, zoom: 1 }, wrapperRef.current));
     setUploadStage("idle");
     setUploadDisplayText("");
     try {
@@ -1179,20 +1249,34 @@ export default function App() {
     }
   }
 
-  async function persistWorkspace(nextTransform: { x: number; y: number }) {
+  function enqueueWorkspaceMutation(mutation: () => Promise<void>): Promise<void> {
+    const queued = workspaceMutationQueueRef.current.catch(() => undefined).then(mutation);
+    workspaceMutationQueueRef.current = queued.catch(() => undefined);
+    return queued;
+  }
+
+  async function persistWorkspace(nextTransform: CanvasTransform) {
     if (!currentCase?.case_id) return;
     try {
-      const updated = await updateWorkspaceState(currentCase.case_id, {
-        viewport: {
-          zoom: 1,
-          offset_x: nextTransform.x,
-          offset_y: nextTransform.y,
-        },
+      await enqueueWorkspaceMutation(async () => {
+        await updateWorkspaceState(currentCase.case_id, {
+          viewport: {
+            zoom: nextTransform.zoom,
+            offset_x: nextTransform.x,
+            offset_y: nextTransform.y,
+          },
+        });
       });
-      setCurrentCase(updated.case);
     } catch {
       // keep local interaction smooth even if persistence fails
     }
+  }
+
+  function scheduleViewportSync(nextTransform: CanvasTransform) {
+    if (viewportSyncTimerRef.current) clearTimeout(viewportSyncTimerRef.current);
+    viewportSyncTimerRef.current = setTimeout(() => {
+      void persistWorkspace(nextTransform);
+    }, VIEWPORT_SAVE_DELAY_MS);
   }
 
   async function persistSelectedNodes(nodeIds: string[], focusedNodeId: string | null) {
@@ -1206,11 +1290,12 @@ export default function App() {
     const focused = focusedNodeId && knownCardIds.has(focusedNodeId) ? focusedNodeId : (filteredIds[0] ?? null);
 
     try {
-      const updated = await updateWorkspaceState(currentCase.case_id, {
-        selected_card_ids: filteredIds,
-        focused_card_id: focused,
+      await enqueueWorkspaceMutation(async () => {
+        await updateWorkspaceState(currentCase.case_id, {
+          selected_card_ids: filteredIds,
+          focused_card_id: focused,
+        });
       });
-      setCurrentCase(updated.case);
     } catch {
       // keep local interaction smooth even if persistence fails
     }
@@ -1234,7 +1319,9 @@ export default function App() {
     if (!isKnownCard) return;
 
     try {
-      await updateCardPosition(currentCase.case_id, cardId, point);
+      await enqueueWorkspaceMutation(async () => {
+        await updateCardPosition(currentCase.case_id, cardId, point);
+      });
     } catch {
       // keep local interaction smooth even if persistence fails
     }
@@ -1248,6 +1335,17 @@ export default function App() {
       currentCase.law_cards.some((card) => card.id === cardId);
     if (!isKnownCard) return;
 
+    try {
+      await enqueueWorkspaceMutation(async () => {
+        await updateCardDisplayLevel(currentCase.case_id, cardId, displayLevel);
+      });
+    } catch {
+      // keep local interaction smooth even if persistence fails
+    }
+  }
+
+  function updateCardDisplayLevelLocally(cardId: string, displayLevel: 1 | 2 | 3) {
+    pendingDisplayLevelsRef.current[cardId] = displayLevel;
     setCurrentCase((existing) => {
       if (!existing) return existing;
       return {
@@ -1255,15 +1353,26 @@ export default function App() {
         meta_cards: existing.meta_cards.map((card) => (card.id === cardId ? { ...card, display_level: displayLevel } : card)),
         inference_cards: existing.inference_cards.map((card) => (card.id === cardId ? { ...card, display_level: displayLevel } : card)),
         law_cards: existing.law_cards.map((card) => (card.id === cardId ? { ...card, display_level: displayLevel } : card)),
+        workspace_state: {
+          ...existing.workspace_state,
+          display_levels: {
+            ...(existing.workspace_state.display_levels ?? {}),
+            [cardId]: displayLevel,
+          },
+        },
       };
     });
 
-    try {
-      const updated = await updateCardDisplayLevel(currentCase.case_id, cardId, displayLevel);
-      setCurrentCase(updated.case);
-    } catch {
-      // keep local interaction smooth even if persistence fails
-    }
+    const currentTimer = displayLevelSyncTimersRef.current[cardId];
+    if (currentTimer) clearTimeout(currentTimer);
+    displayLevelSyncTimersRef.current[cardId] = setTimeout(() => {
+      delete displayLevelSyncTimersRef.current[cardId];
+      void persistCardDisplayLevel(cardId, displayLevel).finally(() => {
+        if (pendingDisplayLevelsRef.current[cardId] === displayLevel) {
+          delete pendingDisplayLevelsRef.current[cardId];
+        }
+      });
+    }, DISPLAY_LEVEL_SAVE_DELAY_MS);
   }
 
   function closeInfoUnitEditor() {
@@ -1470,6 +1579,7 @@ export default function App() {
       startMouseY: event.clientY,
       startX: point.x,
       startY: point.y,
+      zoom: transformRef.current.zoom,
     };
   }
 
@@ -1528,20 +1638,73 @@ export default function App() {
       setError(err instanceof Error ? err.message : "Rename case failed");
     }
   }
-  function onCanvasWheel(event: React.WheelEvent<HTMLDivElement>) {
+  function applyCanvasTransform(nextTransform: CanvasTransform, persist = true) {
+    const clamped = clampViewportToWrapper(nextTransform, wrapperRef.current);
+    transformRef.current = clamped;
+    setTransform(clamped);
+    if (persist) scheduleViewportSync(clamped);
+  }
+
+  function fitAllNodes() {
+    const wrapper = wrapperRef.current;
+    if (!wrapper || canvasData.nodes.length === 0) return;
+    const rect = wrapper.getBoundingClientRect();
+    const bounds = canvasData.nodes.reduce((result, node) => {
+      const point = nodePositions[node.id] ?? { x: node.x, y: node.y };
+      const size = getNodeSize(node.id);
+      return {
+        minX: Math.min(result.minX, point.x),
+        minY: Math.min(result.minY, point.y),
+        maxX: Math.max(result.maxX, point.x + size.width),
+        maxY: Math.max(result.maxY, point.y + size.height),
+      };
+    }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+    const contentWidth = Math.max(1, bounds.maxX - bounds.minX);
+    const contentHeight = Math.max(1, bounds.maxY - bounds.minY);
+    const availableWidth = Math.max(1, rect.width - FIT_NODES_PADDING * 2);
+    const availableHeight = Math.max(1, rect.height - FIT_NODES_PADDING * 2);
+    const zoom = clampZoom(Math.min(availableWidth / contentWidth, availableHeight / contentHeight));
+    const x = (rect.width - contentWidth * zoom) / 2 - bounds.minX * zoom;
+    const y = (rect.height - contentHeight * zoom) / 2 - bounds.minY * zoom;
+    applyCanvasTransform({ x, y, zoom });
+  }
+
+  function onCanvasWheel(event: WheelEvent) {
     event.preventDefault();
+    if (event.ctrlKey) {
+      const wrapper = wrapperRef.current;
+      if (!wrapper) return;
+      const rect = wrapper.getBoundingClientRect();
+      const pointerX = event.clientX - rect.left;
+      const pointerY = event.clientY - rect.top;
+      const current = transformRef.current;
+      const nextZoom = clampZoom(current.zoom * Math.exp(-event.deltaY * 0.0015));
+      if (nextZoom === current.zoom) return;
+      const worldX = (pointerX - current.x) / current.zoom;
+      const worldY = (pointerY - current.y) / current.zoom;
+      applyCanvasTransform({
+        x: pointerX - worldX * nextZoom,
+        y: pointerY - worldY * nextZoom,
+        zoom: nextZoom,
+      });
+      return;
+    }
+
     if (!currentCase || !focusedNodeId) return;
 
     const currentNode = canvasData.nodes.find((node) => node.id === focusedNodeId);
     if (!currentNode) return;
     if (currentNode.source === "evidence" || currentNode.source === "placeholder" || currentNode.source === "law") return;
 
+    const currentLevel = pendingDisplayLevelsRef.current[focusedNodeId] ?? currentNode.level;
     const direction = event.deltaY < 0 ? "up" : "down";
-    const nextLevel = stepDisplayLevel(currentNode.level, direction);
-    if (nextLevel === currentNode.level) return;
+    const nextLevel = stepDisplayLevel(currentLevel, direction);
+    if (nextLevel === currentLevel) return;
 
-    void persistCardDisplayLevel(focusedNodeId, nextLevel);
+    updateCardDisplayLevelLocally(focusedNodeId, nextLevel);
   }
+
+  canvasWheelHandlerRef.current = onCanvasWheel;
 
   const draggingNode = useMemo(() => {
     if (!draggingNodeId) return null;
@@ -1564,7 +1727,25 @@ export default function App() {
 
       return changed ? next : current;
     });
-  }, [canvasData.nodes]);
+  }, [canvasNodeIdsKey]);
+
+  useLayoutEffect(() => {
+    setNodeSizes((current) => {
+      let changed = false;
+      const next = { ...current };
+      canvasData.nodes.forEach((node) => {
+        const element = nodeElementRefs.current[node.id];
+        if (!element) return;
+        const width = element.offsetWidth;
+        const height = element.offsetHeight;
+        const previous = current[node.id];
+        if (previous?.width === width && previous.height === height) return;
+        next[node.id] = { width, height };
+        changed = true;
+      });
+      return changed ? next : current;
+    });
+  }, [canvasNodeLayoutKey]);
 
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") return;
@@ -1579,8 +1760,8 @@ export default function App() {
           const nodeId = element.dataset.nodeId;
           if (!nodeId) return;
 
-          const width = Math.round(entry.contentRect.width);
-          const height = Math.round(entry.contentRect.height);
+          const width = element.offsetWidth;
+          const height = element.offsetHeight;
           const prev = current[nodeId];
           if (prev && prev.width === width && prev.height === height) return;
 
@@ -1592,24 +1773,28 @@ export default function App() {
       });
     });
 
+    const initialSizes: Record<string, NodeSize> = {};
     canvasData.nodes.forEach((node) => {
       const element = nodeElementRefs.current[node.id];
       if (!element) return;
 
       observer.observe(element);
-      const rect = element.getBoundingClientRect();
-      const width = Math.round(rect.width);
-      const height = Math.round(rect.height);
-
-      setNodeSizes((current) => {
-        const prev = current[node.id];
-        if (prev && prev.width === width && prev.height === height) return current;
-        return { ...current, [node.id]: { width, height } };
+      initialSizes[node.id] = { width: element.offsetWidth, height: element.offsetHeight };
+    });
+    setNodeSizes((current) => {
+      let changed = false;
+      const next = { ...current };
+      Object.entries(initialSizes).forEach(([nodeId, size]) => {
+        const previous = current[nodeId];
+        if (previous?.width === size.width && previous.height === size.height) return;
+        next[nodeId] = size;
+        changed = true;
       });
+      return changed ? next : current;
     });
 
     return () => observer.disconnect();
-  }, [canvasData.nodes]);
+  }, [canvasNodeIdsKey]);
 
   function getNodeSize(nodeId: string): NodeSize {
     return nodeSizes[nodeId] ?? DEFAULT_NODE_SIZE;
@@ -1620,7 +1805,7 @@ export default function App() {
   const canvasContentStyle = {
     width: `${CANVAS_WIDTH}px`,
     height: `${CANVAS_HEIGHT}px`,
-    transform: `translate(${transform.x}px, ${transform.y}px)`,
+    transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.zoom})`,
   } as CSSProperties;
 
   function renderConflictGlyph() {
@@ -1988,9 +2173,13 @@ export default function App() {
                                 setFocusedNodeId(pickFocusedNodeId(selectedCaseEnvelope.case));
                                 if (selectedCaseEnvelope.case?.workspace_state?.viewport) {
                                   const viewport = selectedCaseEnvelope.case.workspace_state.viewport;
-                                  setTransform(clampViewportToWrapper({ x: viewport.offset_x, y: viewport.offset_y }, wrapperRef.current));
+                                  setTransform(clampViewportToWrapper({
+                                    x: viewport.offset_x,
+                                    y: viewport.offset_y,
+                                    zoom: clampZoom(viewport.zoom),
+                                  }, wrapperRef.current));
                                 } else {
-                                  setTransform(clampViewportToWrapper({ x: 0, y: 0 }, wrapperRef.current));
+                                  setTransform(clampViewportToWrapper({ x: 0, y: 0, zoom: 1 }, wrapperRef.current));
                                 }
                                 setSelectedCaseId(item.case_id);
                                 setEvidences([]);
@@ -2133,11 +2322,21 @@ export default function App() {
             ref={wrapperRef}
             className="canvas-wrapper"
             onMouseDown={onCanvasMouseDown}
-            onWheel={onCanvasWheel}
             onContextMenu={onCanvasContextMenu}
-            style={{ backgroundPosition: `${transform.x}px ${transform.y}px` }}
+            style={{
+              backgroundPosition: `${transform.x}px ${transform.y}px`,
+              backgroundSize: `${42 * transform.zoom}px ${42 * transform.zoom}px`,
+            }}
           >
             <div className="canvas-edit-toolbar" onMouseDown={(event) => event.stopPropagation()}>
+              <button
+                type="button"
+                onClick={fitAllNodes}
+                disabled={canvasData.nodes.length === 0}
+                title="缩放并居中显示当前全部节点"
+              >
+                适应全部节点
+              </button>
               <button
                 type="button"
                 onClick={() => void onRunExtraction()}
@@ -2157,6 +2356,7 @@ export default function App() {
                 编辑选中节点
               </button>
             </div>
+            <div className="canvas-zoom-badge" aria-live="polite">{Math.round(transform.zoom * 100)}%</div>
             <div
               className="canvas-content"
               style={canvasContentStyle}
