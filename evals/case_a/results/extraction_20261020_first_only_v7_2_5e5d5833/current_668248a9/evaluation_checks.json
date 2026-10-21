@@ -1,0 +1,26 @@
+{
+  "gold_unchanged": true,
+  "actual_request_uses_full_current_pydantic_schema": true,
+  "strict_true": true,
+  "model_request_attempts": 1,
+  "actual_http_request_count": 1,
+  "consolidation_calls": 0,
+  "production_case_written": false,
+  "accepted_prediction_saved": false,
+  "actual_prompt_sha256_matches_input": true,
+  "field_schema_projection_equals_actual_schema": "checked by validate_raw",
+  "no_semantic_rewrites": true,
+  "new_run_status": "contract_rejected",
+  "refused_entire_batch_reason": "quote_not_found at raw info_units[10].source_refs[0]",
+  "one_to_one_alignment_verified_for": [
+    "v6",
+    "v7",
+    "v7.1",
+    "v7.2"
+  ],
+  "preflight_only_attempt": {
+    "network_calls": 0,
+    "reason": "Version heading removed by external workspace edit before first request"
+  },
+  "new_runner_sha256": "6853a8c990d85700e55e1f7d4139d7f2738f7bd369eebaddae5614c1a0b30dc2"
+}

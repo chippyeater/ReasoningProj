@@ -1,0 +1,29 @@
+{
+  "protected_file_count": 429,
+  "unchanged_files": 428,
+  "unexpected_changes": [],
+  "production_data_unchanged": true,
+  "historical_artifacts_unchanged": true,
+  "gold_and_fixed_sources_unchanged": true,
+  "external_prompt_change": {
+    "path": "backend/prompts/extraction_system_prompt.md",
+    "before_sha256": "5e5d583342a12bc2a60187999935e2e7a02e42ddfde06ae0854520a4add9c271",
+    "used_and_final_sha256": "668248a9e57da6232cd479fa34f9164cbeb00d180acc6f0476e73b2a05eeb4ac",
+    "only_version_header_removed": true,
+    "agent_did_not_write_prompt": true,
+    "preflight_requests": 0,
+    "live_requests_after_change": 1
+  },
+  "deleted_files": [],
+  "new_source_files": [
+    "evals/case_a/tests/run_first_round_eval.py"
+  ],
+  "new_result_directory": "evals/case_a/results/extraction_20261020_first_only_v7_2_5e5d5833",
+  "git_diff_check_exit_code": 0,
+  "git_status": " M backend/prompts/extraction_system_prompt.md\n?? evals/case_a/tests/run_first_round_eval.py\n",
+  "all_new_json_artifacts_parse": true,
+  "preexisting_prompt_change_only_header": true,
+  "total_actual_network_requests": 1,
+  "consolidation_calls": 0,
+  "newly_added_eval_entry_source_sha256": "6853a8c990d85700e55e1f7d4139d7f2738f7bd369eebaddae5614c1a0b30dc2"
+}

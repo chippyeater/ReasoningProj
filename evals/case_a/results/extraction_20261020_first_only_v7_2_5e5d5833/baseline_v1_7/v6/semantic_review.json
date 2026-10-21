@@ -1,0 +1,172 @@
+{
+  "missing_content": [
+    "U006"
+  ],
+  "partial_content": [
+    "U004",
+    "U008"
+  ],
+  "merge_blocked": [
+    "U015",
+    "U027",
+    "U030",
+    "U036"
+  ],
+  "harmful_merge_groups": [
+    {
+      "indices": [
+        12
+      ],
+      "gold_ids": [
+        "U012",
+        "U015"
+      ],
+      "reason": "Tenant possible departure and landlord conditional negotiation need separate attribution and verification.",
+      "predicted_ids": [
+        "info-e7237239fdcf44c493d719cf5caf0b3d"
+      ]
+    },
+    {
+      "indices": [
+        10
+      ],
+      "gold_ids": [
+        "U016",
+        "U026",
+        "U027"
+      ],
+      "reason": "Finding, move-in, later lease are independently verifiable; found-friend is available separately in unit 13, later lease is not.",
+      "predicted_ids": [
+        "info-9733aa410ed348af998fe3b5a8e6cb1a"
+      ]
+    },
+    {
+      "indices": [
+        11
+      ],
+      "gold_ids": [
+        "U029",
+        "U030"
+      ],
+      "reason": "Loss assessment and deposit remedy concern independent reasoning questions.",
+      "predicted_ids": [
+        "info-61d895ef9f0543cfb3b2d91c4c8c37d8"
+      ]
+    },
+    {
+      "indices": [
+        7
+      ],
+      "gold_ids": [
+        "U035",
+        "U036"
+      ],
+      "reason": "Vacancy alone does not establish actual loss.",
+      "predicted_ids": [
+        "info-448a339f4ba644b7b9513608d24d1de0"
+      ]
+    }
+  ],
+  "fragmented_stance_groups": [
+    [
+      5,
+      8,
+      14
+    ]
+  ],
+  "substantive_redundancy_groups": [
+    [
+      5,
+      8,
+      14
+    ],
+    [
+      10,
+      13
+    ]
+  ],
+  "identity_pollution_indices": [
+    1
+  ],
+  "classification_indices": [
+    12,
+    13,
+    14
+  ],
+  "source_semantic_findings": [
+    {
+      "indices": [
+        12,
+        13,
+        14
+      ],
+      "kind": "attribution_metadata",
+      "detail": "Communication events have speaker=null while their content carries parties factual positions; direct text still names speakers.",
+      "predicted_ids": [
+        "info-e7237239fdcf44c493d719cf5caf0b3d",
+        "info-1f0e3afb844f430c8e00eb0fb6c6ba48",
+        "info-49e0074d4d2e4abf983da288e6a8b7e0"
+      ]
+    },
+    {
+      "indices": [
+        14,
+        7
+      ],
+      "kind": "time_scope",
+      "detail": "March 5 current vacancy and later several-day vacancy remain distributed; no known exact vacancy range can be inferred.",
+      "predicted_ids": [
+        "info-49e0074d4d2e4abf983da288e6a8b7e0",
+        "info-448a339f4ba644b7b9513608d24d1de0"
+      ]
+    },
+    {
+      "indices": [
+        10,
+        9
+      ],
+      "kind": "claim_not_verified",
+      "detail": "Move-out, move-in and later lease remain Zhang testimony; repeated Zhang sources are not independent confirmation.",
+      "predicted_ids": [
+        "info-9733aa410ed348af998fe3b5a8e6cb1a",
+        "info-bab6f6f416f14558b28dfdaa713f9660"
+      ]
+    }
+  ],
+  "gold_basis": {
+    "version": "1.7",
+    "gold_units": 17,
+    "file_sha256": {
+      "gold/evaluation_rubric.json": "a54f19d994fd46ce4d0649816b2186c279868b3fc61d2847be833cab97bc81be",
+      "gold/gold_end_to_end.jsonl": "9b3bf7b69e6832792ba19d089929a0b3a4eff7f6738506bce2148c2925dfe3be",
+      "gold/gold_info_units.jsonl": "fdf3b21ecc9336bd19b6e9c4090d1c49d03e190a4e0ff22b5875d9cbc2820c63",
+      "gold/gold_issues.json": "7247267f3ddb27112db2a603811c24de9221fec7cffbfa3cb766b397ffefd4f4",
+      "gold/gold_law_cases.jsonl": "8b048b67e6b6167b8442f38b2270c9c686fd7b0a83657bdeede25ff5b1ed5078",
+      "gold/gold_parse_cases.jsonl": "fdb2ec1b1c6da85a523f59f81b3066d4ae23c4a29f1f3ffe04e8e61f85c44dd8",
+      "gold/gold_relations.jsonl": "66fa59b7606eeaa680ae88818b3871a44b7d2f056344cef247d65921bab83539",
+      "gold/gold_view_cases.jsonl": "44f95c4e11bafaca1c77bdf9061d7d8bb6c2006ebb5f03a0141f8790c994d168",
+      "gold/gold_view_selection.jsonl": "f69cc35e4b82687b2f9bc637e969bf3d18f15d055df571271afe9bcc3d7137e3",
+      "gold/negative_relations.jsonl": "4b1289adce1ac1455787e700df6c0e6e3b1b718fa37ecf3bdae85ebd9981f84c",
+      "gold/verified_laws.json": "ee68236c513bcacf41ae93b6041a3dd6999474506708aece105eae427caf69a5",
+      "fixtures/file_manifest.json": "d73d497a5b44775bf1c82b73fadafe2b3b8ce54b902b98df4755f5557203e3c5",
+      "fixtures/parsed/file-06b00bee7b.txt": "bf078aff9224eeab6a7e499d761c6a4b7018879af3df7da9aa4e6b3583b81f9d",
+      "fixtures/parsed/file-16d4ace3c7.txt": "06705e197980a5ba7aa4a6129fb7a976e52080e40e38c1fc0a9d80d2a0f7b7b4",
+      "fixtures/parsed/file-31ebd1366e.txt": "158923aae89e45b7bdecea4c973f317eb4636f9484805597cbf60a038a082706",
+      "fixtures/parsed/file-3a4acd1eac.txt": "40dc9152e80193833776b57fc4d0040b96838fe8428222fc9a688d52e54eaa25",
+      "fixtures/parsed/file-e256bb1ee8.txt": "76e3db737794a41f78a7d8c13cab4d1526310a224b8b31fdb3309d1c71ac64fb"
+    },
+    "sha256": "198069edcf222a0bd61a4a464c6dd5521f055b8a2f5903c8ed4d07e43b411c57"
+  },
+  "scoring_scope": "accepted_first_round",
+  "content_rewritten": false,
+  "reasonable_composites": {
+    "U008": "Missing normal refund condition; no penalty merely for combining rules.",
+    "U019": "Whole stance and its reasons may be grouped; fragmentation is recorded.",
+    "U035": "Different-time vacancy sources may be grouped; loss assertion remains independently verifiable."
+  },
+  "exact_duplicate_nodes": 0,
+  "unsupported_wholly_invented_nodes": 0,
+  "important_note": "Repeated-person testimony is not independent proof. Core matching does not certify all details, classification or source completeness.",
+  "classification_definite_error_indices": [],
+  "classification_caution": "Prior classification_indices are review candidates, not automatic errors. event/communication can describe an important communication act; violation must follow the actual primary function. No blanket penalty for mixed semantic categories."
+}

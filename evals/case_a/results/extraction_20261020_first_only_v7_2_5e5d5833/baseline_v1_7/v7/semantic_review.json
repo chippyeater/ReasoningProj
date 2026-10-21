@@ -1,0 +1,189 @@
+{
+  "missing_content": [],
+  "partial_content": [
+    "U004",
+    "U008"
+  ],
+  "merge_blocked": [
+    "U006",
+    "U015",
+    "U016",
+    "U027",
+    "U030",
+    "U036"
+  ],
+  "harmful_merge_groups": [
+    {
+      "indices": [
+        4
+      ],
+      "gold_ids": [
+        "U006",
+        "U010"
+      ],
+      "reason": "Contractual obligation and actual performance must be independently checked.",
+      "predicted_ids": [
+        "info-03631d807bd34a3aadcb45ce4d9de9c4"
+      ]
+    },
+    {
+      "indices": [
+        10
+      ],
+      "gold_ids": [
+        "U012",
+        "U015",
+        "U016"
+      ],
+      "reason": "Whole-chat summary combines different parties and independent facts/proposal; two critical facts cannot receive independent credit.",
+      "predicted_ids": [
+        "info-21b149950f6549ecbf3575fb9449f05e"
+      ]
+    },
+    {
+      "indices": [
+        6
+      ],
+      "gold_ids": [
+        "U016",
+        "U026",
+        "U027"
+      ],
+      "reason": "Finding, actual move-in and later separate contract are independently verifiable.",
+      "predicted_ids": [
+        "info-7ca163549db44285b6c09407c484c33a"
+      ]
+    },
+    {
+      "indices": [
+        7
+      ],
+      "gold_ids": [
+        "U029",
+        "U030"
+      ],
+      "reason": "Loss assessment and deposit remedy have different reasoning purposes.",
+      "predicted_ids": [
+        "info-deab74123a7b47b2b11f32077560375e"
+      ]
+    },
+    {
+      "indices": [
+        9
+      ],
+      "gold_ids": [
+        "U035",
+        "U036"
+      ],
+      "reason": "Vacancy is not proof of actual loss.",
+      "predicted_ids": [
+        "info-38f592aae0b842bc94be45e25e894513"
+      ]
+    }
+  ],
+  "fragmented_stance_groups": [
+    [
+      8,
+      10,
+      11
+    ]
+  ],
+  "substantive_redundancy_groups": [
+    [
+      8,
+      10,
+      11
+    ],
+    [
+      6,
+      10
+    ]
+  ],
+  "identity_pollution_indices": [
+    0,
+    1
+  ],
+  "classification_indices": [
+    4
+  ],
+  "source_semantic_findings": [
+    {
+      "indices": [
+        1
+      ],
+      "kind": "citation_coverage",
+      "detail": "Identity cites contract and move-out paragraph, but content also claims replacement found and short vacancy from other paragraphs not cited here.",
+      "predicted_ids": [
+        "info-58a115c621634a26adf17ed055cc79f0"
+      ]
+    },
+    {
+      "indices": [
+        10
+      ],
+      "kind": "attribution_metadata",
+      "detail": "Whole chat has speaker=null; wording identifies parties but per-node attribution cannot represent one coherent position.",
+      "predicted_ids": [
+        "info-21b149950f6549ecbf3575fb9449f05e"
+      ]
+    },
+    {
+      "indices": [
+        9
+      ],
+      "kind": "time_scope",
+      "detail": "Current vacancy quote has March 5 context in TXT, but current date not expressed in the node.",
+      "predicted_ids": [
+        "info-38f592aae0b842bc94be45e25e894513"
+      ]
+    },
+    {
+      "indices": [
+        4
+      ],
+      "kind": "verification_strength",
+      "detail": "Transfer text transcription is treated as completed payment without stating original bank evidence remains unverified.",
+      "predicted_ids": [
+        "info-03631d807bd34a3aadcb45ce4d9de9c4"
+      ]
+    }
+  ],
+  "gold_basis": {
+    "version": "1.7",
+    "gold_units": 17,
+    "file_sha256": {
+      "gold/evaluation_rubric.json": "a54f19d994fd46ce4d0649816b2186c279868b3fc61d2847be833cab97bc81be",
+      "gold/gold_end_to_end.jsonl": "9b3bf7b69e6832792ba19d089929a0b3a4eff7f6738506bce2148c2925dfe3be",
+      "gold/gold_info_units.jsonl": "fdf3b21ecc9336bd19b6e9c4090d1c49d03e190a4e0ff22b5875d9cbc2820c63",
+      "gold/gold_issues.json": "7247267f3ddb27112db2a603811c24de9221fec7cffbfa3cb766b397ffefd4f4",
+      "gold/gold_law_cases.jsonl": "8b048b67e6b6167b8442f38b2270c9c686fd7b0a83657bdeede25ff5b1ed5078",
+      "gold/gold_parse_cases.jsonl": "fdb2ec1b1c6da85a523f59f81b3066d4ae23c4a29f1f3ffe04e8e61f85c44dd8",
+      "gold/gold_relations.jsonl": "66fa59b7606eeaa680ae88818b3871a44b7d2f056344cef247d65921bab83539",
+      "gold/gold_view_cases.jsonl": "44f95c4e11bafaca1c77bdf9061d7d8bb6c2006ebb5f03a0141f8790c994d168",
+      "gold/gold_view_selection.jsonl": "f69cc35e4b82687b2f9bc637e969bf3d18f15d055df571271afe9bcc3d7137e3",
+      "gold/negative_relations.jsonl": "4b1289adce1ac1455787e700df6c0e6e3b1b718fa37ecf3bdae85ebd9981f84c",
+      "gold/verified_laws.json": "ee68236c513bcacf41ae93b6041a3dd6999474506708aece105eae427caf69a5",
+      "fixtures/file_manifest.json": "d73d497a5b44775bf1c82b73fadafe2b3b8ce54b902b98df4755f5557203e3c5",
+      "fixtures/parsed/file-06b00bee7b.txt": "bf078aff9224eeab6a7e499d761c6a4b7018879af3df7da9aa4e6b3583b81f9d",
+      "fixtures/parsed/file-16d4ace3c7.txt": "06705e197980a5ba7aa4a6129fb7a976e52080e40e38c1fc0a9d80d2a0f7b7b4",
+      "fixtures/parsed/file-31ebd1366e.txt": "158923aae89e45b7bdecea4c973f317eb4636f9484805597cbf60a038a082706",
+      "fixtures/parsed/file-3a4acd1eac.txt": "40dc9152e80193833776b57fc4d0040b96838fe8428222fc9a688d52e54eaa25",
+      "fixtures/parsed/file-e256bb1ee8.txt": "76e3db737794a41f78a7d8c13cab4d1526310a224b8b31fdb3309d1c71ac64fb"
+    },
+    "sha256": "198069edcf222a0bd61a4a464c6dd5521f055b8a2f5903c8ed4d07e43b411c57"
+  },
+  "scoring_scope": "diagnostic_rejected_raw_candidate",
+  "content_rewritten": false,
+  "reasonable_composites": {
+    "U008": "Missing normal refund condition; no penalty merely for combining rules.",
+    "U019": "Whole stance and its reasons may be grouped; fragmentation is recorded.",
+    "U035": "Different-time vacancy sources may be grouped; loss assertion remains independently verifiable."
+  },
+  "exact_duplicate_nodes": 0,
+  "unsupported_wholly_invented_nodes": 0,
+  "important_note": "Repeated-person testimony is not independent proof. Core matching does not certify all details, classification or source completeness.",
+  "classification_definite_error_indices": [
+    4
+  ],
+  "classification_caution": "Prior classification_indices are review candidates, not automatic errors. event/communication can describe an important communication act; violation must follow the actual primary function. No blanket penalty for mixed semantic categories."
+}

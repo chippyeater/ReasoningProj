@@ -1,0 +1,183 @@
+{
+  "missing_content": [],
+  "partial_content": [
+    "U004",
+    "U008"
+  ],
+  "merge_blocked": [
+    "U016",
+    "U027",
+    "U030",
+    "U036"
+  ],
+  "harmful_merge_groups": [
+    {
+      "indices": [
+        4
+      ],
+      "gold_ids": [
+        "U006",
+        "U010"
+      ],
+      "reason": "Contractual amount and actual payment conflated, despite separate transfer node 6.",
+      "predicted_ids": [
+        "info-ef507c926c524d0e9051bd23a04a0e1d"
+      ]
+    },
+    {
+      "indices": [
+        11
+      ],
+      "gold_ids": [
+        "U016",
+        "U026",
+        "U027"
+      ],
+      "reason": "Finding replacement, move-in and later lease need independent checking.",
+      "predicted_ids": [
+        "info-fb988966d1384dbba6bb8dadac339738"
+      ]
+    },
+    {
+      "indices": [
+        12
+      ],
+      "gold_ids": [
+        "U029",
+        "U030"
+      ],
+      "reason": "No-loss assessment and requested remedy must remain independently addressable.",
+      "predicted_ids": [
+        "info-03c068d4a79a43e1b367c1e7639cb642"
+      ]
+    },
+    {
+      "indices": [
+        9
+      ],
+      "gold_ids": [
+        "U035",
+        "U036"
+      ],
+      "reason": "Vacancy does not itself establish actual loss.",
+      "predicted_ids": [
+        "info-402c1f3418f348cdb3de2f93d17a204b"
+      ]
+    }
+  ],
+  "fragmented_stance_groups": [
+    [
+      7,
+      8,
+      15
+    ]
+  ],
+  "substantive_redundancy_groups": [
+    [
+      7,
+      15
+    ],
+    [
+      4,
+      6
+    ]
+  ],
+  "identity_pollution_indices": [
+    0,
+    1
+  ],
+  "classification_indices": [
+    7,
+    8
+  ],
+  "source_semantic_findings": [
+    {
+      "indices": [
+        0
+      ],
+      "kind": "citation_coverage",
+      "detail": "Only identity and early-termination paragraph cited, while content also asserts vacancy/loss and no duty to find replacement.",
+      "predicted_ids": [
+        "info-49abc7736eb9455baaade7de2698c8f6"
+      ]
+    },
+    {
+      "indices": [
+        1
+      ],
+      "kind": "citation_coverage",
+      "detail": "Identity and transfer quotes do not support its move-out, move-in, new-contract and remedy content.",
+      "predicted_ids": [
+        "info-b966a6f1331f40c5a6fddb9a9192e690"
+      ]
+    },
+    {
+      "indices": [
+        3
+      ],
+      "kind": "inference_as_content",
+      "detail": "Lease-date fragment alone does not establish when Zhang proposed to leave.",
+      "predicted_ids": [
+        "info-f5a379927c604f34a3af04854919bb9e"
+      ]
+    },
+    {
+      "indices": [
+        7
+      ],
+      "kind": "citation_coverage",
+      "detail": "Content says refusal is reasonable, but cite omits the final assessment paragraph; actual material supports it elsewhere.",
+      "predicted_ids": [
+        "info-4d8234ef12a64f9c869568542712b659"
+      ]
+    },
+    {
+      "indices": [
+        4
+      ],
+      "kind": "verification_strength",
+      "detail": "Text transcription described as proving actual payment; original transaction evidence not independently verified.",
+      "predicted_ids": [
+        "info-ef507c926c524d0e9051bd23a04a0e1d"
+      ]
+    }
+  ],
+  "gold_basis": {
+    "version": "1.7",
+    "gold_units": 17,
+    "file_sha256": {
+      "gold/evaluation_rubric.json": "a54f19d994fd46ce4d0649816b2186c279868b3fc61d2847be833cab97bc81be",
+      "gold/gold_end_to_end.jsonl": "9b3bf7b69e6832792ba19d089929a0b3a4eff7f6738506bce2148c2925dfe3be",
+      "gold/gold_info_units.jsonl": "fdf3b21ecc9336bd19b6e9c4090d1c49d03e190a4e0ff22b5875d9cbc2820c63",
+      "gold/gold_issues.json": "7247267f3ddb27112db2a603811c24de9221fec7cffbfa3cb766b397ffefd4f4",
+      "gold/gold_law_cases.jsonl": "8b048b67e6b6167b8442f38b2270c9c686fd7b0a83657bdeede25ff5b1ed5078",
+      "gold/gold_parse_cases.jsonl": "fdb2ec1b1c6da85a523f59f81b3066d4ae23c4a29f1f3ffe04e8e61f85c44dd8",
+      "gold/gold_relations.jsonl": "66fa59b7606eeaa680ae88818b3871a44b7d2f056344cef247d65921bab83539",
+      "gold/gold_view_cases.jsonl": "44f95c4e11bafaca1c77bdf9061d7d8bb6c2006ebb5f03a0141f8790c994d168",
+      "gold/gold_view_selection.jsonl": "f69cc35e4b82687b2f9bc637e969bf3d18f15d055df571271afe9bcc3d7137e3",
+      "gold/negative_relations.jsonl": "4b1289adce1ac1455787e700df6c0e6e3b1b718fa37ecf3bdae85ebd9981f84c",
+      "gold/verified_laws.json": "ee68236c513bcacf41ae93b6041a3dd6999474506708aece105eae427caf69a5",
+      "fixtures/file_manifest.json": "d73d497a5b44775bf1c82b73fadafe2b3b8ce54b902b98df4755f5557203e3c5",
+      "fixtures/parsed/file-06b00bee7b.txt": "bf078aff9224eeab6a7e499d761c6a4b7018879af3df7da9aa4e6b3583b81f9d",
+      "fixtures/parsed/file-16d4ace3c7.txt": "06705e197980a5ba7aa4a6129fb7a976e52080e40e38c1fc0a9d80d2a0f7b7b4",
+      "fixtures/parsed/file-31ebd1366e.txt": "158923aae89e45b7bdecea4c973f317eb4636f9484805597cbf60a038a082706",
+      "fixtures/parsed/file-3a4acd1eac.txt": "40dc9152e80193833776b57fc4d0040b96838fe8428222fc9a688d52e54eaa25",
+      "fixtures/parsed/file-e256bb1ee8.txt": "76e3db737794a41f78a7d8c13cab4d1526310a224b8b31fdb3309d1c71ac64fb"
+    },
+    "sha256": "198069edcf222a0bd61a4a464c6dd5521f055b8a2f5903c8ed4d07e43b411c57"
+  },
+  "scoring_scope": "accepted_first_round",
+  "content_rewritten": false,
+  "reasonable_composites": {
+    "U008": "Missing normal refund condition; no penalty merely for combining rules.",
+    "U019": "Whole stance and its reasons may be grouped; fragmentation is recorded.",
+    "U035": "Different-time vacancy sources may be grouped; loss assertion remains independently verifiable."
+  },
+  "exact_duplicate_nodes": 0,
+  "unsupported_wholly_invented_nodes": 0,
+  "important_note": "Repeated-person testimony is not independent proof. Core matching does not certify all details, classification or source completeness.",
+  "classification_definite_error_indices": [
+    7
+  ],
+  "classification_caution": "Prior classification_indices are review candidates, not automatic errors. event/communication can describe an important communication act; violation must follow the actual primary function. No blanket penalty for mixed semantic categories."
+}

@@ -1,0 +1,44 @@
+{
+  "gold_basis": {
+    "version": "1.7",
+    "gold_units": 17,
+    "file_sha256": {
+      "gold/evaluation_rubric.json": "a54f19d994fd46ce4d0649816b2186c279868b3fc61d2847be833cab97bc81be",
+      "gold/gold_end_to_end.jsonl": "9b3bf7b69e6832792ba19d089929a0b3a4eff7f6738506bce2148c2925dfe3be",
+      "gold/gold_info_units.jsonl": "fdf3b21ecc9336bd19b6e9c4090d1c49d03e190a4e0ff22b5875d9cbc2820c63",
+      "gold/gold_issues.json": "7247267f3ddb27112db2a603811c24de9221fec7cffbfa3cb766b397ffefd4f4",
+      "gold/gold_law_cases.jsonl": "8b048b67e6b6167b8442f38b2270c9c686fd7b0a83657bdeede25ff5b1ed5078",
+      "gold/gold_parse_cases.jsonl": "fdb2ec1b1c6da85a523f59f81b3066d4ae23c4a29f1f3ffe04e8e61f85c44dd8",
+      "gold/gold_relations.jsonl": "66fa59b7606eeaa680ae88818b3871a44b7d2f056344cef247d65921bab83539",
+      "gold/gold_view_cases.jsonl": "44f95c4e11bafaca1c77bdf9061d7d8bb6c2006ebb5f03a0141f8790c994d168",
+      "gold/gold_view_selection.jsonl": "f69cc35e4b82687b2f9bc637e969bf3d18f15d055df571271afe9bcc3d7137e3",
+      "gold/negative_relations.jsonl": "4b1289adce1ac1455787e700df6c0e6e3b1b718fa37ecf3bdae85ebd9981f84c",
+      "gold/verified_laws.json": "ee68236c513bcacf41ae93b6041a3dd6999474506708aece105eae427caf69a5",
+      "fixtures/file_manifest.json": "d73d497a5b44775bf1c82b73fadafe2b3b8ce54b902b98df4755f5557203e3c5",
+      "fixtures/parsed/file-06b00bee7b.txt": "bf078aff9224eeab6a7e499d761c6a4b7018879af3df7da9aa4e6b3583b81f9d",
+      "fixtures/parsed/file-16d4ace3c7.txt": "06705e197980a5ba7aa4a6129fb7a976e52080e40e38c1fc0a9d80d2a0f7b7b4",
+      "fixtures/parsed/file-31ebd1366e.txt": "158923aae89e45b7bdecea4c973f317eb4636f9484805597cbf60a038a082706",
+      "fixtures/parsed/file-3a4acd1eac.txt": "40dc9152e80193833776b57fc4d0040b96838fe8428222fc9a688d52e54eaa25",
+      "fixtures/parsed/file-e256bb1ee8.txt": "76e3db737794a41f78a7d8c13cab4d1526310a224b8b31fdb3309d1c71ac64fb"
+    },
+    "sha256": "198069edcf222a0bd61a4a464c6dd5521f055b8a2f5903c8ed4d07e43b411c57"
+  },
+  "prediction_sha256": "feefb0845d0c990ccad576df8c68cf9871377fdb8d3d6a9a4bac6da00fa5ddaa",
+  "alignment_sha256": "2133b3e37e75c6e59a5772ddf5d95b953cb4436f42024495506a327b49e422be",
+  "gold_units": 17,
+  "predicted_units": 15,
+  "reviewed_matches": 10,
+  "gold_coverage": 0.5882,
+  "extra_predictions_reviewed": 0,
+  "extra_dispositions": {},
+  "reference_invalid": 0,
+  "reference_invalid_details": [],
+  "unmatched_predictions_need_review": [
+    "info-2b220fb960f84829b214b93907510a41",
+    "info-49e0074d4d2e4abf983da288e6a8b7e0",
+    "info-50a15da1bb604164b7d561f93c9b06e7",
+    "info-53cef8bb891a41f1ab8eaccd2a836b6e",
+    "info-540c4c88ef60439daece18aa1fa541c3"
+  ],
+  "note": "Unmatched predicted nodes are not automatically hallucinations. Extra predictions need a manual disposition; duplicate/irrelevant/unsupported items contribute to overextraction review, not Gold recall. Compare scores only after reviewing unchanged predictions against the same Gold basis. Unit utility and split/merge quality require task-oriented human review."
+}

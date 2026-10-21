@@ -1,0 +1,36 @@
+{
+  "source_directory": "D:\\VSCode\\VSProj\\logicWeaver\\evals\\case_a\\results\\extraction_20261020_v6\\first_round_evaluation",
+  "provider_content_path": "D:\\VSCode\\VSProj\\logicWeaver\\evals\\case_a\\results\\extraction_20261020_v6\\runtime\\case-aaedf9d7fa1845d9b8107d83de0b590d\\runs\\run-2cfbe9f5ba214ff6b0e72e87cf955cad.output.json",
+  "provider_content_sha256": "ed32092f4487585e70ef31e6df774168450cfaaac484b5bd032b398d588c14fa",
+  "all_raw_semantics_unchanged": true,
+  "candidate_exactly_equals_original": true,
+  "scoring_prediction_exactly_equals_original": true,
+  "original_ids_retained": true,
+  "historical_gold_version": "historical-16 / rubric-1.5",
+  "historical_gold_info_units_sha256": "3735b786c0f9a1932a55051b049058cefa052a6694166164fcf64e74f9449a24",
+  "current_gold_basis": {
+    "version": "1.7",
+    "gold_units": 17,
+    "file_sha256": {
+      "gold/evaluation_rubric.json": "a54f19d994fd46ce4d0649816b2186c279868b3fc61d2847be833cab97bc81be",
+      "gold/gold_end_to_end.jsonl": "9b3bf7b69e6832792ba19d089929a0b3a4eff7f6738506bce2148c2925dfe3be",
+      "gold/gold_info_units.jsonl": "fdf3b21ecc9336bd19b6e9c4090d1c49d03e190a4e0ff22b5875d9cbc2820c63",
+      "gold/gold_issues.json": "7247267f3ddb27112db2a603811c24de9221fec7cffbfa3cb766b397ffefd4f4",
+      "gold/gold_law_cases.jsonl": "8b048b67e6b6167b8442f38b2270c9c686fd7b0a83657bdeede25ff5b1ed5078",
+      "gold/gold_parse_cases.jsonl": "fdb2ec1b1c6da85a523f59f81b3066d4ae23c4a29f1f3ffe04e8e61f85c44dd8",
+      "gold/gold_relations.jsonl": "66fa59b7606eeaa680ae88818b3871a44b7d2f056344cef247d65921bab83539",
+      "gold/gold_view_cases.jsonl": "44f95c4e11bafaca1c77bdf9061d7d8bb6c2006ebb5f03a0141f8790c994d168",
+      "gold/gold_view_selection.jsonl": "f69cc35e4b82687b2f9bc637e969bf3d18f15d055df571271afe9bcc3d7137e3",
+      "gold/negative_relations.jsonl": "4b1289adce1ac1455787e700df6c0e6e3b1b718fa37ecf3bdae85ebd9981f84c",
+      "gold/verified_laws.json": "ee68236c513bcacf41ae93b6041a3dd6999474506708aece105eae427caf69a5",
+      "fixtures/file_manifest.json": "d73d497a5b44775bf1c82b73fadafe2b3b8ce54b902b98df4755f5557203e3c5",
+      "fixtures/parsed/file-06b00bee7b.txt": "bf078aff9224eeab6a7e499d761c6a4b7018879af3df7da9aa4e6b3583b81f9d",
+      "fixtures/parsed/file-16d4ace3c7.txt": "06705e197980a5ba7aa4a6129fb7a976e52080e40e38c1fc0a9d80d2a0f7b7b4",
+      "fixtures/parsed/file-31ebd1366e.txt": "158923aae89e45b7bdecea4c973f317eb4636f9484805597cbf60a038a082706",
+      "fixtures/parsed/file-3a4acd1eac.txt": "40dc9152e80193833776b57fc4d0040b96838fe8428222fc9a688d52e54eaa25",
+      "fixtures/parsed/file-e256bb1ee8.txt": "76e3db737794a41f78a7d8c13cab4d1526310a224b8b31fdb3309d1c71ac64fb"
+    },
+    "sha256": "198069edcf222a0bd61a4a464c6dd5521f055b8a2f5903c8ed4d07e43b411c57"
+  },
+  "gaps": []
+}

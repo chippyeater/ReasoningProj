@@ -1,0 +1,7 @@
+{
+  "status": "preflight_failed",
+  "model_request_attempts": 0,
+  "observed_http_requests": 0,
+  "error": "Prompt version header was removed during preflight; no network call reached.",
+  "prompt_file_sha256": "668248a9e57da6232cd479fa34f9164cbeb00d180acc6f0476e73b2a05eeb4ac"
+}

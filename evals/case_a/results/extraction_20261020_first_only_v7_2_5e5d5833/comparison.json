@@ -1,0 +1,1095 @@
+{
+  "gold_basis": {
+    "version": "1.7",
+    "gold_units": 17,
+    "file_sha256": {
+      "gold/evaluation_rubric.json": "a54f19d994fd46ce4d0649816b2186c279868b3fc61d2847be833cab97bc81be",
+      "gold/gold_end_to_end.jsonl": "9b3bf7b69e6832792ba19d089929a0b3a4eff7f6738506bce2148c2925dfe3be",
+      "gold/gold_info_units.jsonl": "fdf3b21ecc9336bd19b6e9c4090d1c49d03e190a4e0ff22b5875d9cbc2820c63",
+      "gold/gold_issues.json": "7247267f3ddb27112db2a603811c24de9221fec7cffbfa3cb766b397ffefd4f4",
+      "gold/gold_law_cases.jsonl": "8b048b67e6b6167b8442f38b2270c9c686fd7b0a83657bdeede25ff5b1ed5078",
+      "gold/gold_parse_cases.jsonl": "fdb2ec1b1c6da85a523f59f81b3066d4ae23c4a29f1f3ffe04e8e61f85c44dd8",
+      "gold/gold_relations.jsonl": "66fa59b7606eeaa680ae88818b3871a44b7d2f056344cef247d65921bab83539",
+      "gold/gold_view_cases.jsonl": "44f95c4e11bafaca1c77bdf9061d7d8bb6c2006ebb5f03a0141f8790c994d168",
+      "gold/gold_view_selection.jsonl": "f69cc35e4b82687b2f9bc637e969bf3d18f15d055df571271afe9bcc3d7137e3",
+      "gold/negative_relations.jsonl": "4b1289adce1ac1455787e700df6c0e6e3b1b718fa37ecf3bdae85ebd9981f84c",
+      "gold/verified_laws.json": "ee68236c513bcacf41ae93b6041a3dd6999474506708aece105eae427caf69a5",
+      "fixtures/file_manifest.json": "d73d497a5b44775bf1c82b73fadafe2b3b8ce54b902b98df4755f5557203e3c5",
+      "fixtures/parsed/file-06b00bee7b.txt": "bf078aff9224eeab6a7e499d761c6a4b7018879af3df7da9aa4e6b3583b81f9d",
+      "fixtures/parsed/file-16d4ace3c7.txt": "06705e197980a5ba7aa4a6129fb7a976e52080e40e38c1fc0a9d80d2a0f7b7b4",
+      "fixtures/parsed/file-31ebd1366e.txt": "158923aae89e45b7bdecea4c973f317eb4636f9484805597cbf60a038a082706",
+      "fixtures/parsed/file-3a4acd1eac.txt": "40dc9152e80193833776b57fc4d0040b96838fe8428222fc9a688d52e54eaa25",
+      "fixtures/parsed/file-e256bb1ee8.txt": "76e3db737794a41f78a7d8c13cab4d1526310a224b8b31fdb3309d1c71ac64fb"
+    },
+    "sha256": "198069edcf222a0bd61a4a464c6dd5521f055b8a2f5903c8ed4d07e43b411c57"
+  },
+  "reviewer": "assistant offline semantic review, no model judge",
+  "same_policy": "One unchanged prediction can match at most one Gold. Existing overlapping predictions may match different Gold; redundancy, independent utility and citation errors are separately reviewed. Classification/source semantics do not silently change core-content recall.",
+  "core_presence_note": "Content present is not one-to-one coverage. No independent corroboration is claimed.",
+  "runs": {
+    "v6": {
+      "nodes": 15,
+      "matched": 10,
+      "gold_total": 17,
+      "coverage": 0.5882,
+      "accepted": true,
+      "scope": "validated offline first-round content",
+      "matched_gold": [
+        "U001",
+        "U002",
+        "U010",
+        "U012",
+        "U016",
+        "U019",
+        "U022",
+        "U026",
+        "U029",
+        "U035"
+      ],
+      "unmatched_gold": [
+        "U004",
+        "U006",
+        "U008",
+        "U015",
+        "U027",
+        "U030",
+        "U036"
+      ],
+      "core_content_present": 14,
+      "core_content_absent": [
+        "U006"
+      ],
+      "core_content_partial": [
+        "U004",
+        "U008"
+      ],
+      "merge_blocked_unmatched": [
+        "U015",
+        "U027",
+        "U030",
+        "U036"
+      ],
+      "harmful_merge_groups": 4,
+      "substantive_partial_redundancy_groups": 2,
+      "fragmented_stance_groups": 1,
+      "classification_definite_error_indices": [],
+      "exact_duplicate_nodes": 0,
+      "reference_count": 16,
+      "unlocatable_refs": 0,
+      "id_lookup": {
+        "N00": "info-1c5348a6a382405ba04af3384fde7848",
+        "N01": "info-af6cbfe710e044fc9446ed67f934ce83",
+        "N02": "info-2b220fb960f84829b214b93907510a41",
+        "N03": "info-53cef8bb891a41f1ab8eaccd2a836b6e",
+        "N04": "info-6a8e5f912b1a4f7c8c3c8902e2d1a411",
+        "N05": "info-540c4c88ef60439daece18aa1fa541c3",
+        "N06": "info-50a15da1bb604164b7d561f93c9b06e7",
+        "N07": "info-448a339f4ba644b7b9513608d24d1de0",
+        "N08": "info-a502c035e77148f8a54909b5d908c289",
+        "N09": "info-bab6f6f416f14558b28dfdaa713f9660",
+        "N10": "info-9733aa410ed348af998fe3b5a8e6cb1a",
+        "N11": "info-61d895ef9f0543cfb3b2d91c4c8c37d8",
+        "N12": "info-e7237239fdcf44c493d719cf5caf0b3d",
+        "N13": "info-1f0e3afb844f430c8e00eb0fb6c6ba48",
+        "N14": "info-49e0074d4d2e4abf983da288e6a8b7e0"
+      },
+      "allocation": {
+        "U001": {
+          "predicted_id": "info-1c5348a6a382405ba04af3384fde7848",
+          "match": "yes",
+          "review_comment": "Landlord identity present; clean identity unit."
+        },
+        "U002": {
+          "predicted_id": "info-af6cbfe710e044fc9446ed67f934ce83",
+          "match": "yes",
+          "review_comment": "Tenant identity present; appended actual payment duplicates unit 4 and pollutes the identity role."
+        },
+        "U004": {
+          "predicted_id": "info-53cef8bb891a41f1ab8eaccd2a836b6e",
+          "match": "no",
+          "review_comment": "Partial: lease dates present but monthly rent 3000 absent from structured content."
+        },
+        "U006": {
+          "predicted_id": null,
+          "match": "no",
+          "review_comment": "Missing: contractual deposit amount 2000 not expressed; actual transfer is not the agreed amount."
+        },
+        "U008": {
+          "predicted_id": "info-2b220fb960f84829b214b93907510a41",
+          "match": "no",
+          "review_comment": "Partial: early-termination no-refund mentioned; normal-expiry/no-breach full-refund condition absent from content."
+        },
+        "U010": {
+          "predicted_id": "info-6a8e5f912b1a4f7c8c3c8902e2d1a411",
+          "match": "yes",
+          "review_comment": "Transfer date, payer, payee, amount and deposit note present; original bank evidence is not verified."
+        },
+        "U012": {
+          "predicted_id": "info-e7237239fdcf44c493d719cf5caf0b3d",
+          "match": "yes",
+          "review_comment": "Possible early move due to work change is present, but combined with landlord conditional negotiation; speaker is null."
+        },
+        "U015": {
+          "predicted_id": "info-e7237239fdcf44c493d719cf5caf0b3d",
+          "match": "no",
+          "review_comment": "Conditional negotiation appears but shares this multi-party node with U012; one-to-one allocation to U012 blocks a second match. Vague later reply is not required."
+        },
+        "U016": {
+          "predicted_id": "info-1f0e3afb844f430c8e00eb0fb6c6ba48",
+          "match": "yes",
+          "review_comment": "Already-found willing friend is explicit. A vague landlord reply may remain as negotiation context; it does not itself require splitting. Repeated finding-a-friend also occurs in unit 10."
+        },
+        "U019": {
+          "predicted_id": "info-a502c035e77148f8a54909b5d908c289",
+          "match": "yes",
+          "review_comment": "Landlord overall refusal and its contractual justification are present across units 5/8/14, fragmented rather than integrated. Core stance matches once."
+        },
+        "U022": {
+          "predicted_id": "info-bab6f6f416f14558b28dfdaa713f9660",
+          "match": "yes",
+          "review_comment": "Self-reported March 5 move-out is explicit. Cleaning/no damage are useful handover attributes, not an automatic overmerge."
+        },
+        "U026": {
+          "predicted_id": "info-9733aa410ed348af998fe3b5a8e6cb1a",
+          "match": "yes",
+          "review_comment": "Self-reported March 8 move-in present; finding a friend and later lease are also bundled. Match only move-in."
+        },
+        "U027": {
+          "predicted_id": "info-9733aa410ed348af998fe3b5a8e6cb1a",
+          "match": "no",
+          "review_comment": "Later separate lease is explicit, with no invented date, but same node already allocated to U026; not an independent unit."
+        },
+        "U029": {
+          "predicted_id": "info-61d895ef9f0543cfb3b2d91c4c8c37d8",
+          "match": "yes",
+          "review_comment": "Tenant no-loss assessment present; deposit remedy is an independent reasoning question bundled in this same unit."
+        },
+        "U030": {
+          "predicted_id": "info-61d895ef9f0543cfb3b2d91c4c8c37d8",
+          "match": "no",
+          "review_comment": "Do-not-deduct-all remedy is explicit but same unit used for U029; no duplicate credit."
+        },
+        "U035": {
+          "predicted_id": "info-448a339f4ba644b7b9513608d24d1de0",
+          "match": "yes",
+          "review_comment": "Vacancy over several days is present; immediate March 5 vacancy also appears in unit 14. These time-qualified sources may be integrated; their time difference alone is not an error."
+        },
+        "U036": {
+          "predicted_id": "info-448a339f4ba644b7b9513608d24d1de0",
+          "match": "no",
+          "review_comment": "Claim of actual loss is explicit but shares vacancy node U035. Vacancy and existence/extent of loss need distinct verification."
+        }
+      }
+    },
+    "v7": {
+      "nodes": 12,
+      "matched": 9,
+      "gold_total": 17,
+      "coverage": 0.5294,
+      "accepted": false,
+      "scope": "diagnostic contract-rejected candidate",
+      "matched_gold": [
+        "U001",
+        "U002",
+        "U010",
+        "U012",
+        "U019",
+        "U022",
+        "U026",
+        "U029",
+        "U035"
+      ],
+      "unmatched_gold": [
+        "U004",
+        "U006",
+        "U008",
+        "U015",
+        "U016",
+        "U027",
+        "U030",
+        "U036"
+      ],
+      "core_content_present": 15,
+      "core_content_absent": [],
+      "core_content_partial": [
+        "U004",
+        "U008"
+      ],
+      "merge_blocked_unmatched": [
+        "U006",
+        "U015",
+        "U016",
+        "U027",
+        "U030",
+        "U036"
+      ],
+      "harmful_merge_groups": 5,
+      "substantive_partial_redundancy_groups": 2,
+      "fragmented_stance_groups": 1,
+      "classification_definite_error_indices": [
+        4
+      ],
+      "exact_duplicate_nodes": 0,
+      "reference_count": 20,
+      "unlocatable_refs": 0,
+      "id_lookup": {
+        "N00": "info-1d1f1ac5982244c5878b0e5399eb9407",
+        "N01": "info-58a115c621634a26adf17ed055cc79f0",
+        "N02": "info-74de0f406ff14ac0b4cec52db631bc5f",
+        "N03": "info-55e49363c4414b06bb01f7c754512b86",
+        "N04": "info-03631d807bd34a3aadcb45ce4d9de9c4",
+        "N05": "info-144af9e13bfc4bd0a9578fe04b7cbb3b",
+        "N06": "info-7ca163549db44285b6c09407c484c33a",
+        "N07": "info-deab74123a7b47b2b11f32077560375e",
+        "N08": "info-a85e19a1175548cb9e38c8a675d4873a",
+        "N09": "info-38f592aae0b842bc94be45e25e894513",
+        "N10": "info-21b149950f6549ecbf3575fb9449f05e",
+        "N11": "info-217d39dc20654573a35c486ae4fe32d4"
+      },
+      "allocation": {
+        "U001": {
+          "predicted_id": "info-1d1f1ac5982244c5878b0e5399eb9407",
+          "match": "yes",
+          "review_comment": "Landlord identity present; generic identity-plus-positions summary is organizational pollution, not a second fact unit."
+        },
+        "U002": {
+          "predicted_id": "info-58a115c621634a26adf17ed055cc79f0",
+          "match": "yes",
+          "review_comment": "Tenant identity present; identity unit also summarizes moving, replacement and no-damage positions."
+        },
+        "U004": {
+          "predicted_id": "info-74de0f406ff14ac0b4cec52db631bc5f",
+          "match": "no",
+          "review_comment": "Lease dates only in quote, not structured content; monthly rent 3000 absent."
+        },
+        "U006": {
+          "predicted_id": "info-03631d807bd34a3aadcb45ce4d9de9c4",
+          "match": "no",
+          "review_comment": "Contractually agreed deposit amount 2000 is explicit but combined with performance. Allocate same node to complete transfer U010, not twice."
+        },
+        "U008": {
+          "predicted_id": "info-55e49363c4414b06bb01f7c754512b86",
+          "match": "no",
+          "review_comment": "Early-termination no-refund explicit; normal-expiry/no-breach refund condition absent."
+        },
+        "U010": {
+          "predicted_id": "info-03631d807bd34a3aadcb45ce4d9de9c4",
+          "match": "yes",
+          "review_comment": "Transfer date, payer/payee, amount and note present; classified state/quantitative despite the payment proposition. Core coverage and classification are reported separately."
+        },
+        "U012": {
+          "predicted_id": "info-21b149950f6549ecbf3575fb9449f05e",
+          "match": "yes",
+          "review_comment": "Possible early move is present inside full-chat summary. Work-change reason is only in quote, so detailed completeness remains partial."
+        },
+        "U015": {
+          "predicted_id": "info-21b149950f6549ecbf3575fb9449f05e",
+          "match": "no",
+          "review_comment": "Conditional proposal explicit but full multi-party chat already allocated to U012; deleted vague reply is not a scoring requirement."
+        },
+        "U016": {
+          "predicted_id": "info-7ca163549db44285b6c09407c484c33a",
+          "match": "no",
+          "review_comment": "Already-found friend is present in units 6 and 10, both allocated to independent U026 and U012. This is merge-blocked coverage, not an absent fact."
+        },
+        "U019": {
+          "predicted_id": "info-217d39dc20654573a35c486ae4fe32d4",
+          "match": "yes",
+          "review_comment": "Landlord refusal justified by contract is explicit; partial stance repetition in units 8/10, not forbidden mixing of fact and reason per se."
+        },
+        "U022": {
+          "predicted_id": "info-144af9e13bfc4bd0a9578fe04b7cbb3b",
+          "match": "yes",
+          "review_comment": "Self-reported March 5 move-out present; cleaning/no damage form useful handover context, not a mechanical split requirement."
+        },
+        "U026": {
+          "predicted_id": "info-7ca163549db44285b6c09407c484c33a",
+          "match": "yes",
+          "review_comment": "Self-reported March 8 move-in present. Finding replacement and later separate lease are bundled."
+        },
+        "U027": {
+          "predicted_id": "info-7ca163549db44285b6c09407c484c33a",
+          "match": "no",
+          "review_comment": "Later separate lease explicit, undated, but shares node with U026; no second credit."
+        },
+        "U029": {
+          "predicted_id": "info-deab74123a7b47b2b11f32077560375e",
+          "match": "yes",
+          "review_comment": "No-loss assessment explicit, combined with remedy request; independent reasoning questions remain entangled."
+        },
+        "U030": {
+          "predicted_id": "info-deab74123a7b47b2b11f32077560375e",
+          "match": "no",
+          "review_comment": "Do-not-deduct-all remedy present but shares U029 node."
+        },
+        "U035": {
+          "predicted_id": "info-38f592aae0b842bc94be45e25e894513",
+          "match": "yes",
+          "review_comment": "Days of vacancy and current vacancy can form a useful composite; March 5 temporal label missing. Loss assertion in the same unit is a separate verification matter."
+        },
+        "U036": {
+          "predicted_id": "info-38f592aae0b842bc94be45e25e894513",
+          "match": "no",
+          "review_comment": "Loss assertion present but same unit already used for vacancy U035."
+        }
+      }
+    },
+    "v7.1": {
+      "nodes": 16,
+      "matched": 11,
+      "gold_total": 17,
+      "coverage": 0.6471,
+      "accepted": true,
+      "scope": "validated offline first-round content",
+      "matched_gold": [
+        "U001",
+        "U002",
+        "U006",
+        "U010",
+        "U012",
+        "U015",
+        "U019",
+        "U022",
+        "U026",
+        "U029",
+        "U035"
+      ],
+      "unmatched_gold": [
+        "U004",
+        "U008",
+        "U016",
+        "U027",
+        "U030",
+        "U036"
+      ],
+      "core_content_present": 15,
+      "core_content_absent": [],
+      "core_content_partial": [
+        "U004",
+        "U008"
+      ],
+      "merge_blocked_unmatched": [
+        "U016",
+        "U027",
+        "U030",
+        "U036"
+      ],
+      "harmful_merge_groups": 4,
+      "substantive_partial_redundancy_groups": 2,
+      "fragmented_stance_groups": 1,
+      "classification_definite_error_indices": [
+        7
+      ],
+      "exact_duplicate_nodes": 0,
+      "reference_count": 23,
+      "unlocatable_refs": 0,
+      "id_lookup": {
+        "N00": "info-49abc7736eb9455baaade7de2698c8f6",
+        "N01": "info-b966a6f1331f40c5a6fddb9a9192e690",
+        "N02": "info-3ef40c5a9bee48d490e4c17318b3a189",
+        "N03": "info-f5a379927c604f34a3af04854919bb9e",
+        "N04": "info-ef507c926c524d0e9051bd23a04a0e1d",
+        "N05": "info-2787bac3b474459ab1de6f51fad8cc72",
+        "N06": "info-2c041a9028194fe8b923131aeb8859e4",
+        "N07": "info-4d8234ef12a64f9c869568542712b659",
+        "N08": "info-4cdfb077a72c48a4ba91d7bf21f62265",
+        "N09": "info-402c1f3418f348cdb3de2f93d17a204b",
+        "N10": "info-eef75a63f9f1463299fd7164dc024e04",
+        "N11": "info-fb988966d1384dbba6bb8dadac339738",
+        "N12": "info-03c068d4a79a43e1b367c1e7639cb642",
+        "N13": "info-ea8655d1a72e40b19c0c3ca8e610e163",
+        "N14": "info-8a0b13c9289140d485c48014e1df46ba",
+        "N15": "info-af802cd6e456496992116891c17f605b"
+      },
+      "allocation": {
+        "U001": {
+          "predicted_id": "info-49abc7736eb9455baaade7de2698c8f6",
+          "match": "yes",
+          "review_comment": "Landlord identity present; identity card also bundles refusal, vacancy/loss and finding-a-tenant positions."
+        },
+        "U002": {
+          "predicted_id": "info-b966a6f1331f40c5a6fddb9a9192e690",
+          "match": "yes",
+          "review_comment": "Tenant identity present; identity card bundles payment, move-out, replacement, later lease and remedy. Do not allocate this polluted identity to additional Gold."
+        },
+        "U004": {
+          "predicted_id": "info-f5a379927c604f34a3af04854919bb9e",
+          "match": "no",
+          "review_comment": "Lease dates present, monthly rent 3000 missing. Added inference about early leaving exceeds the cited lease-date fragment."
+        },
+        "U006": {
+          "predicted_id": "info-ef507c926c524d0e9051bd23a04a0e1d",
+          "match": "yes",
+          "review_comment": "Contractual deposit 2000 explicit; independent transfer unit 6 allows separate U010 match. This unit still repeats actual payment, so coverage does not prove clean separation."
+        },
+        "U008": {
+          "predicted_id": "info-2787bac3b474459ab1de6f51fad8cc72",
+          "match": "no",
+          "review_comment": "Early-termination no-refund provision present; normal-expiry/no-breach full-refund condition absent."
+        },
+        "U010": {
+          "predicted_id": "info-2c041a9028194fe8b923131aeb8859e4",
+          "match": "yes",
+          "review_comment": "Independent transfer node includes date, parties, 2000 and note; payment repeated in unit 4."
+        },
+        "U012": {
+          "predicted_id": "info-ea8655d1a72e40b19c0c3ca8e610e163",
+          "match": "yes",
+          "review_comment": "Work change and possible early move dated February 25 present. Willingness to help find someone may remain context, not a required standalone node."
+        },
+        "U015": {
+          "predicted_id": "info-8a0b13c9289140d485c48014e1df46ba",
+          "match": "yes",
+          "review_comment": "Independent attributed conditional negotiation proposal is sufficient under v1.7; no penalty for omitting vague March 1 reply."
+        },
+        "U016": {
+          "predicted_id": "info-fb988966d1384dbba6bb8dadac339738",
+          "match": "no",
+          "review_comment": "Already-found friend present but grouped with move-in and later lease in same node allocated to U026; cannot substitute willingness to help in unit 13."
+        },
+        "U019": {
+          "predicted_id": "info-4d8234ef12a64f9c869568542712b659",
+          "match": "yes",
+          "review_comment": "Overall contractual refusal stance explicit but fact_assertion classification is wrong and quoted fragment omits the reasonable-assessment wording; repeated in unit 15."
+        },
+        "U022": {
+          "predicted_id": "info-eef75a63f9f1463299fd7164dc024e04",
+          "match": "yes",
+          "review_comment": "Self-reported March 5 move-out present; cleaning/no damage may be useful handover attributes."
+        },
+        "U026": {
+          "predicted_id": "info-fb988966d1384dbba6bb8dadac339738",
+          "match": "yes",
+          "review_comment": "March 8 move-in explicit; allocation to U026 does not also credit found-friend or later-lease propositions."
+        },
+        "U027": {
+          "predicted_id": "info-fb988966d1384dbba6bb8dadac339738",
+          "match": "no",
+          "review_comment": "Later lease explicit and undated but combined with U026 in one node."
+        },
+        "U029": {
+          "predicted_id": "info-03c068d4a79a43e1b367c1e7639cb642",
+          "match": "yes",
+          "review_comment": "No-loss assessment present, based on short vacancy; same node bundles deposit remedy."
+        },
+        "U030": {
+          "predicted_id": "info-03c068d4a79a43e1b367c1e7639cb642",
+          "match": "no",
+          "review_comment": "Do-not-deduct-all remedy present but node allocated to U029."
+        },
+        "U035": {
+          "predicted_id": "info-402c1f3418f348cdb3de2f93d17a204b",
+          "match": "yes",
+          "review_comment": "Several-day vacancy present; immediate March 5 vacancy elsewhere in unit 15. Multi-time integration is allowed but not completed."
+        },
+        "U036": {
+          "predicted_id": "info-402c1f3418f348cdb3de2f93d17a204b",
+          "match": "no",
+          "review_comment": "Actual-loss claim present but same node used for U035; existence/amount of loss needs independent verification."
+        }
+      }
+    },
+    "v7.2": {
+      "nodes": 11,
+      "matched": 11,
+      "gold_total": 17,
+      "coverage": 0.6471,
+      "accepted": false,
+      "scope": "diagnostic contract-rejected candidate",
+      "matched_gold": [
+        "U001",
+        "U002",
+        "U008",
+        "U010",
+        "U012",
+        "U019",
+        "U022",
+        "U026",
+        "U027",
+        "U030",
+        "U035"
+      ],
+      "unmatched_gold": [
+        "U004",
+        "U006",
+        "U015",
+        "U016",
+        "U029",
+        "U036"
+      ],
+      "core_content_present": 17,
+      "core_content_absent": [],
+      "core_content_partial": [],
+      "merge_blocked_unmatched": [
+        "U004",
+        "U006",
+        "U015",
+        "U016",
+        "U029",
+        "U036"
+      ],
+      "harmful_merge_groups": 5,
+      "substantive_partial_redundancy_groups": 2,
+      "fragmented_stance_groups": 1,
+      "classification_definite_error_indices": [
+        4
+      ],
+      "exact_duplicate_nodes": 0,
+      "reference_count": 15,
+      "unlocatable_refs": 1,
+      "id_lookup": {
+        "N00": "info-e35725dc4bbe5d1a8a1ce016ef27cc78",
+        "N01": "info-da51e399b66b54d9a50acd7192f3328d",
+        "N02": "info-19eaf8936ed15f1495d2c85b98a1adab",
+        "N03": "info-bf270e79baa953ed91269bdf29fd822e",
+        "N04": "info-03086c43da5a5061bc90ac15ad31a166",
+        "N05": "info-0e4071b2429f52a68a04e57ba4aa7490",
+        "N06": "info-e978b1c97a675941ab820b752824aaf4",
+        "N07": "info-e97b4ae97973564f8364c8927740076a",
+        "N08": "info-fc19c572bd7955f2af30e46c037f8843",
+        "N09": "info-9a24ca16199751a4be491be4a868f511",
+        "N10": "info-fd36a4d5ff185eacb6a5db4e4335e84f"
+      },
+      "allocation": {
+        "U001": {
+          "predicted_id": "info-e35725dc4bbe5d1a8a1ce016ef27cc78",
+          "match": "yes",
+          "review_comment": "Landlord identity supported by contract. Full testimony also cited, but does not make it an independent proof source."
+        },
+        "U002": {
+          "predicted_id": "info-da51e399b66b54d9a50acd7192f3328d",
+          "match": "yes",
+          "review_comment": "Tenant identity supported by contract. This identity node improperly also summarizes move-out and replacement/lease claims."
+        },
+        "U004": {
+          "predicted_id": "info-19eaf8936ed15f1495d2c85b98a1adab",
+          "match": "no",
+          "review_comment": "Both lease dates and monthly rent 3000 now appear, but are inside the same contract-rules node allocated to U008. Not missing content; merge-blocked independent background/amount use."
+        },
+        "U006": {
+          "predicted_id": "info-19eaf8936ed15f1495d2c85b98a1adab",
+          "match": "no",
+          "review_comment": "Contractually agreed deposit 2000 now appears, distinct from actual transfer in unit 3, but is not an independent node because contract unit 2 already matches U008."
+        },
+        "U008": {
+          "predicted_id": "info-19eaf8936ed15f1495d2c85b98a1adab",
+          "match": "yes",
+          "review_comment": "Both normal-expiry/no-breach full refund and early-termination no refund now explicit. Combining these two rules is appropriate; additional bundling of lease/rent/deposit is reviewed separately."
+        },
+        "U010": {
+          "predicted_id": "info-bf270e79baa953ed91269bdf29fd822e",
+          "match": "yes",
+          "review_comment": "Date, payer, payee, amount and deposit note supported by transfer text transcription; this is not independent verification of original banking evidence."
+        },
+        "U012": {
+          "predicted_id": "info-e978b1c97a675941ab820b752824aaf4",
+          "match": "yes",
+          "review_comment": "February 25 possible departure due to work change explicit. Other party conditional proposal shares same communication node; one match only."
+        },
+        "U015": {
+          "predicted_id": "info-e978b1c97a675941ab820b752824aaf4",
+          "match": "no",
+          "review_comment": "Conditional negotiation proposal explicit in unit 6, but same node allocated to U012. Omission of vague March 1 reply is not penalized."
+        },
+        "U016": {
+          "predicted_id": "info-0e4071b2429f52a68a04e57ba4aa7490",
+          "match": "no",
+          "review_comment": "Already-found friend explicit in units 1/5, allocated to U002/U027. Unit 6 only says willingness to help, not already found. March 1 chat detail omitted, not replaced by willingness."
+        },
+        "U019": {
+          "predicted_id": "info-e97b4ae97973564f8364c8927740076a",
+          "match": "yes",
+          "review_comment": "March 5 chat explicitly conveys refusal due to early termination. Overall stance also appears in unit 8; do not score it twice. This choice leaves unit 8 available for its explicit several-day vacancy claim."
+        },
+        "U022": {
+          "predicted_id": "info-03086c43da5a5061bc90ac15ad31a166",
+          "match": "yes",
+          "review_comment": "Self-reported March 5 move-out supported by Zhang testimony. Cleaning/no damage can remain useful handover attributes; event/action classification incorrectly reifies testimony, but coverage is separate."
+        },
+        "U026": {
+          "predicted_id": "info-fd36a4d5ff185eacb6a5db4e4335e84f",
+          "match": "yes",
+          "review_comment": "The model-generated timeline explicitly says Zhang claims March 8 move-in, with a valid Zhang-testimony quote. Its unrelated contract quote is invalid: the entire batch is rejected, and this is diagnostic content credit only. No node was split or repaired."
+        },
+        "U027": {
+          "predicted_id": "info-0e4071b2429f52a68a04e57ba4aa7490",
+          "match": "yes",
+          "review_comment": "Later separate lease explicit in original content; assigned to this existing node, with move-in assigned to existing timeline node 10. This allocation does not mean finding/move-in/signing were cleanly separated. Title/summary wrongly suggest March 8 signing."
+        },
+        "U029": {
+          "predicted_id": "info-9a24ca16199751a4be491be4a868f511",
+          "match": "no",
+          "review_comment": "No-loss assessment explicit, but same unit primarily titled deposit-remedy stance and allocated to U030. Still a harmful merge; changing the allocation would swap the credited Gold without adding coverage."
+        },
+        "U030": {
+          "predicted_id": "info-9a24ca16199751a4be491be4a868f511",
+          "match": "yes",
+          "review_comment": "Do-not-deduct-all remedy explicit as primary stance. Also bundles no-loss assessment, so no second Gold credit."
+        },
+        "U035": {
+          "predicted_id": "info-fc19c572bd7955f2af30e46c037f8843",
+          "match": "yes",
+          "review_comment": "Several-day vacancy explicit in Li testimony; March 5 current vacancy also appears in unit 7. Both temporal scopes may be combined; still not integrated into one useful vacancy node. This content match is separate from ideal node organization."
+        },
+        "U036": {
+          "predicted_id": "info-fc19c572bd7955f2af30e46c037f8843",
+          "match": "no",
+          "review_comment": "Loss assertion explicit but unit 8 allocated to U035. Lack of an independently addressable loss claim impairs comparison with the tenant loss assessment."
+        }
+      }
+    }
+  },
+  "gold_comparison": [
+    {
+      "gold_id": "U001",
+      "title": "出租人李某",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-1c5348a6a382405ba04af3384fde7848",
+          "match": "yes",
+          "review_comment": "Landlord identity present; clean identity unit."
+        },
+        "v7": {
+          "predicted_id": "info-1d1f1ac5982244c5878b0e5399eb9407",
+          "match": "yes",
+          "review_comment": "Landlord identity present; generic identity-plus-positions summary is organizational pollution, not a second fact unit."
+        },
+        "v7.1": {
+          "predicted_id": "info-49abc7736eb9455baaade7de2698c8f6",
+          "match": "yes",
+          "review_comment": "Landlord identity present; identity card also bundles refusal, vacancy/loss and finding-a-tenant positions."
+        },
+        "v7.2": {
+          "predicted_id": "info-e35725dc4bbe5d1a8a1ce016ef27cc78",
+          "match": "yes",
+          "review_comment": "Landlord identity supported by contract. Full testimony also cited, but does not make it an independent proof source."
+        }
+      }
+    },
+    {
+      "gold_id": "U002",
+      "title": "承租人张某",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-af6cbfe710e044fc9446ed67f934ce83",
+          "match": "yes",
+          "review_comment": "Tenant identity present; appended actual payment duplicates unit 4 and pollutes the identity role."
+        },
+        "v7": {
+          "predicted_id": "info-58a115c621634a26adf17ed055cc79f0",
+          "match": "yes",
+          "review_comment": "Tenant identity present; identity unit also summarizes moving, replacement and no-damage positions."
+        },
+        "v7.1": {
+          "predicted_id": "info-b966a6f1331f40c5a6fddb9a9192e690",
+          "match": "yes",
+          "review_comment": "Tenant identity present; identity card bundles payment, move-out, replacement, later lease and remedy. Do not allocate this polluted identity to additional Gold."
+        },
+        "v7.2": {
+          "predicted_id": "info-da51e399b66b54d9a50acd7192f3328d",
+          "match": "yes",
+          "review_comment": "Tenant identity supported by contract. This identity node improperly also summarizes move-out and replacement/lease claims."
+        }
+      }
+    },
+    {
+      "gold_id": "U004",
+      "title": "合同租期与月租条件",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-53cef8bb891a41f1ab8eaccd2a836b6e",
+          "match": "no",
+          "review_comment": "Partial: lease dates present but monthly rent 3000 absent from structured content."
+        },
+        "v7": {
+          "predicted_id": "info-74de0f406ff14ac0b4cec52db631bc5f",
+          "match": "no",
+          "review_comment": "Lease dates only in quote, not structured content; monthly rent 3000 absent."
+        },
+        "v7.1": {
+          "predicted_id": "info-f5a379927c604f34a3af04854919bb9e",
+          "match": "no",
+          "review_comment": "Lease dates present, monthly rent 3000 missing. Added inference about early leaving exceeds the cited lease-date fragment."
+        },
+        "v7.2": {
+          "predicted_id": "info-19eaf8936ed15f1495d2c85b98a1adab",
+          "match": "no",
+          "review_comment": "Both lease dates and monthly rent 3000 now appear, but are inside the same contract-rules node allocated to U008. Not missing content; merge-blocked independent background/amount use."
+        }
+      }
+    },
+    {
+      "gold_id": "U006",
+      "title": "约定押金",
+      "runs": {
+        "v6": {
+          "predicted_id": null,
+          "match": "no",
+          "review_comment": "Missing: contractual deposit amount 2000 not expressed; actual transfer is not the agreed amount."
+        },
+        "v7": {
+          "predicted_id": "info-03631d807bd34a3aadcb45ce4d9de9c4",
+          "match": "no",
+          "review_comment": "Contractually agreed deposit amount 2000 is explicit but combined with performance. Allocate same node to complete transfer U010, not twice."
+        },
+        "v7.1": {
+          "predicted_id": "info-ef507c926c524d0e9051bd23a04a0e1d",
+          "match": "yes",
+          "review_comment": "Contractual deposit 2000 explicit; independent transfer unit 6 allows separate U010 match. This unit still repeats actual payment, so coverage does not prove clean separation."
+        },
+        "v7.2": {
+          "predicted_id": "info-19eaf8936ed15f1495d2c85b98a1adab",
+          "match": "no",
+          "review_comment": "Contractually agreed deposit 2000 now appears, distinct from actual transfer in unit 3, but is not an independent node because contract unit 2 already matches U008."
+        }
+      }
+    },
+    {
+      "gold_id": "U008",
+      "title": "合同约定的押金返还规则",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-2b220fb960f84829b214b93907510a41",
+          "match": "no",
+          "review_comment": "Partial: early-termination no-refund mentioned; normal-expiry/no-breach full-refund condition absent from content."
+        },
+        "v7": {
+          "predicted_id": "info-55e49363c4414b06bb01f7c754512b86",
+          "match": "no",
+          "review_comment": "Early-termination no-refund explicit; normal-expiry/no-breach refund condition absent."
+        },
+        "v7.1": {
+          "predicted_id": "info-2787bac3b474459ab1de6f51fad8cc72",
+          "match": "no",
+          "review_comment": "Early-termination no-refund provision present; normal-expiry/no-breach full-refund condition absent."
+        },
+        "v7.2": {
+          "predicted_id": "info-19eaf8936ed15f1495d2c85b98a1adab",
+          "match": "yes",
+          "review_comment": "Both normal-expiry/no-breach full refund and early-termination no refund now explicit. Combining these two rules is appropriate; additional bundling of lease/rent/deposit is reviewed separately."
+        }
+      }
+    },
+    {
+      "gold_id": "U010",
+      "title": "押金转账文字记录",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-6a8e5f912b1a4f7c8c3c8902e2d1a411",
+          "match": "yes",
+          "review_comment": "Transfer date, payer, payee, amount and deposit note present; original bank evidence is not verified."
+        },
+        "v7": {
+          "predicted_id": "info-03631d807bd34a3aadcb45ce4d9de9c4",
+          "match": "yes",
+          "review_comment": "Transfer date, payer/payee, amount and note present; classified state/quantitative despite the payment proposition. Core coverage and classification are reported separately."
+        },
+        "v7.1": {
+          "predicted_id": "info-2c041a9028194fe8b923131aeb8859e4",
+          "match": "yes",
+          "review_comment": "Independent transfer node includes date, parties, 2000 and note; payment repeated in unit 4."
+        },
+        "v7.2": {
+          "predicted_id": "info-bf270e79baa953ed91269bdf29fd822e",
+          "match": "yes",
+          "review_comment": "Date, payer, payee, amount and deposit note supported by transfer text transcription; this is not independent verification of original banking evidence."
+        }
+      }
+    },
+    {
+      "gold_id": "U012",
+      "title": "张某提出可能提前搬走",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-e7237239fdcf44c493d719cf5caf0b3d",
+          "match": "yes",
+          "review_comment": "Possible early move due to work change is present, but combined with landlord conditional negotiation; speaker is null."
+        },
+        "v7": {
+          "predicted_id": "info-21b149950f6549ecbf3575fb9449f05e",
+          "match": "yes",
+          "review_comment": "Possible early move is present inside full-chat summary. Work-change reason is only in quote, so detailed completeness remains partial."
+        },
+        "v7.1": {
+          "predicted_id": "info-ea8655d1a72e40b19c0c3ca8e610e163",
+          "match": "yes",
+          "review_comment": "Work change and possible early move dated February 25 present. Willingness to help find someone may remain context, not a required standalone node."
+        },
+        "v7.2": {
+          "predicted_id": "info-e978b1c97a675941ab820b752824aaf4",
+          "match": "yes",
+          "review_comment": "February 25 possible departure due to work change explicit. Other party conditional proposal shares same communication node; one match only."
+        }
+      }
+    },
+    {
+      "gold_id": "U015",
+      "title": "李某提出条件式协商",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-e7237239fdcf44c493d719cf5caf0b3d",
+          "match": "no",
+          "review_comment": "Conditional negotiation appears but shares this multi-party node with U012; one-to-one allocation to U012 blocks a second match. Vague later reply is not required."
+        },
+        "v7": {
+          "predicted_id": "info-21b149950f6549ecbf3575fb9449f05e",
+          "match": "no",
+          "review_comment": "Conditional proposal explicit but full multi-party chat already allocated to U012; deleted vague reply is not a scoring requirement."
+        },
+        "v7.1": {
+          "predicted_id": "info-8a0b13c9289140d485c48014e1df46ba",
+          "match": "yes",
+          "review_comment": "Independent attributed conditional negotiation proposal is sufficient under v1.7; no penalty for omitting vague March 1 reply."
+        },
+        "v7.2": {
+          "predicted_id": "info-e978b1c97a675941ab820b752824aaf4",
+          "match": "no",
+          "review_comment": "Conditional negotiation proposal explicit in unit 6, but same node allocated to U012. Omission of vague March 1 reply is not penalized."
+        }
+      }
+    },
+    {
+      "gold_id": "U016",
+      "title": "张某称找到愿接租的朋友",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-1f0e3afb844f430c8e00eb0fb6c6ba48",
+          "match": "yes",
+          "review_comment": "Already-found willing friend is explicit. A vague landlord reply may remain as negotiation context; it does not itself require splitting. Repeated finding-a-friend also occurs in unit 10."
+        },
+        "v7": {
+          "predicted_id": "info-7ca163549db44285b6c09407c484c33a",
+          "match": "no",
+          "review_comment": "Already-found friend is present in units 6 and 10, both allocated to independent U026 and U012. This is merge-blocked coverage, not an absent fact."
+        },
+        "v7.1": {
+          "predicted_id": "info-fb988966d1384dbba6bb8dadac339738",
+          "match": "no",
+          "review_comment": "Already-found friend present but grouped with move-in and later lease in same node allocated to U026; cannot substitute willingness to help in unit 13."
+        },
+        "v7.2": {
+          "predicted_id": "info-0e4071b2429f52a68a04e57ba4aa7490",
+          "match": "no",
+          "review_comment": "Already-found friend explicit in units 1/5, allocated to U002/U027. Unit 6 only says willingness to help, not already found. March 1 chat detail omitted, not replaced by willingness."
+        }
+      }
+    },
+    {
+      "gold_id": "U019",
+      "title": "李某拒绝退押金",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-a502c035e77148f8a54909b5d908c289",
+          "match": "yes",
+          "review_comment": "Landlord overall refusal and its contractual justification are present across units 5/8/14, fragmented rather than integrated. Core stance matches once."
+        },
+        "v7": {
+          "predicted_id": "info-217d39dc20654573a35c486ae4fe32d4",
+          "match": "yes",
+          "review_comment": "Landlord refusal justified by contract is explicit; partial stance repetition in units 8/10, not forbidden mixing of fact and reason per se."
+        },
+        "v7.1": {
+          "predicted_id": "info-4d8234ef12a64f9c869568542712b659",
+          "match": "yes",
+          "review_comment": "Overall contractual refusal stance explicit but fact_assertion classification is wrong and quoted fragment omits the reasonable-assessment wording; repeated in unit 15."
+        },
+        "v7.2": {
+          "predicted_id": "info-e97b4ae97973564f8364c8927740076a",
+          "match": "yes",
+          "review_comment": "March 5 chat explicitly conveys refusal due to early termination. Overall stance also appears in unit 8; do not score it twice. This choice leaves unit 8 available for its explicit several-day vacancy claim."
+        }
+      }
+    },
+    {
+      "gold_id": "U022",
+      "title": "张某自述3月5日搬离",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-bab6f6f416f14558b28dfdaa713f9660",
+          "match": "yes",
+          "review_comment": "Self-reported March 5 move-out is explicit. Cleaning/no damage are useful handover attributes, not an automatic overmerge."
+        },
+        "v7": {
+          "predicted_id": "info-144af9e13bfc4bd0a9578fe04b7cbb3b",
+          "match": "yes",
+          "review_comment": "Self-reported March 5 move-out present; cleaning/no damage form useful handover context, not a mechanical split requirement."
+        },
+        "v7.1": {
+          "predicted_id": "info-eef75a63f9f1463299fd7164dc024e04",
+          "match": "yes",
+          "review_comment": "Self-reported March 5 move-out present; cleaning/no damage may be useful handover attributes."
+        },
+        "v7.2": {
+          "predicted_id": "info-03086c43da5a5061bc90ac15ad31a166",
+          "match": "yes",
+          "review_comment": "Self-reported March 5 move-out supported by Zhang testimony. Cleaning/no damage can remain useful handover attributes; event/action classification incorrectly reifies testimony, but coverage is separate."
+        }
+      }
+    },
+    {
+      "gold_id": "U026",
+      "title": "张某称新租客3月8日入住",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-9733aa410ed348af998fe3b5a8e6cb1a",
+          "match": "yes",
+          "review_comment": "Self-reported March 8 move-in present; finding a friend and later lease are also bundled. Match only move-in."
+        },
+        "v7": {
+          "predicted_id": "info-7ca163549db44285b6c09407c484c33a",
+          "match": "yes",
+          "review_comment": "Self-reported March 8 move-in present. Finding replacement and later separate lease are bundled."
+        },
+        "v7.1": {
+          "predicted_id": "info-fb988966d1384dbba6bb8dadac339738",
+          "match": "yes",
+          "review_comment": "March 8 move-in explicit; allocation to U026 does not also credit found-friend or later-lease propositions."
+        },
+        "v7.2": {
+          "predicted_id": "info-fd36a4d5ff185eacb6a5db4e4335e84f",
+          "match": "yes",
+          "review_comment": "The model-generated timeline explicitly says Zhang claims March 8 move-in, with a valid Zhang-testimony quote. Its unrelated contract quote is invalid: the entire batch is rejected, and this is diagnostic content credit only. No node was split or repaired."
+        }
+      }
+    },
+    {
+      "gold_id": "U027",
+      "title": "张某称新租客另签租约",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-9733aa410ed348af998fe3b5a8e6cb1a",
+          "match": "no",
+          "review_comment": "Later separate lease is explicit, with no invented date, but same node already allocated to U026; not an independent unit."
+        },
+        "v7": {
+          "predicted_id": "info-7ca163549db44285b6c09407c484c33a",
+          "match": "no",
+          "review_comment": "Later separate lease explicit, undated, but shares node with U026; no second credit."
+        },
+        "v7.1": {
+          "predicted_id": "info-fb988966d1384dbba6bb8dadac339738",
+          "match": "no",
+          "review_comment": "Later lease explicit and undated but combined with U026 in one node."
+        },
+        "v7.2": {
+          "predicted_id": "info-0e4071b2429f52a68a04e57ba4aa7490",
+          "match": "yes",
+          "review_comment": "Later separate lease explicit in original content; assigned to this existing node, with move-in assigned to existing timeline node 10. This allocation does not mean finding/move-in/signing were cleanly separated. Title/summary wrongly suggest March 8 signing."
+        }
+      }
+    },
+    {
+      "gold_id": "U029",
+      "title": "张某认为没有实际损失",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-61d895ef9f0543cfb3b2d91c4c8c37d8",
+          "match": "yes",
+          "review_comment": "Tenant no-loss assessment present; deposit remedy is an independent reasoning question bundled in this same unit."
+        },
+        "v7": {
+          "predicted_id": "info-deab74123a7b47b2b11f32077560375e",
+          "match": "yes",
+          "review_comment": "No-loss assessment explicit, combined with remedy request; independent reasoning questions remain entangled."
+        },
+        "v7.1": {
+          "predicted_id": "info-03c068d4a79a43e1b367c1e7639cb642",
+          "match": "yes",
+          "review_comment": "No-loss assessment present, based on short vacancy; same node bundles deposit remedy."
+        },
+        "v7.2": {
+          "predicted_id": "info-9a24ca16199751a4be491be4a868f511",
+          "match": "no",
+          "review_comment": "No-loss assessment explicit, but same unit primarily titled deposit-remedy stance and allocated to U030. Still a harmful merge; changing the allocation would swap the credited Gold without adding coverage."
+        }
+      }
+    },
+    {
+      "gold_id": "U030",
+      "title": "张某主张不应全扣押金",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-61d895ef9f0543cfb3b2d91c4c8c37d8",
+          "match": "no",
+          "review_comment": "Do-not-deduct-all remedy is explicit but same unit used for U029; no duplicate credit."
+        },
+        "v7": {
+          "predicted_id": "info-deab74123a7b47b2b11f32077560375e",
+          "match": "no",
+          "review_comment": "Do-not-deduct-all remedy present but shares U029 node."
+        },
+        "v7.1": {
+          "predicted_id": "info-03c068d4a79a43e1b367c1e7639cb642",
+          "match": "no",
+          "review_comment": "Do-not-deduct-all remedy present but node allocated to U029."
+        },
+        "v7.2": {
+          "predicted_id": "info-9a24ca16199751a4be491be4a868f511",
+          "match": "yes",
+          "review_comment": "Do-not-deduct-all remedy explicit as primary stance. Also bundles no-loss assessment, so no second Gold credit."
+        }
+      }
+    },
+    {
+      "gold_id": "U035",
+      "title": "李某称房屋空置数日",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-448a339f4ba644b7b9513608d24d1de0",
+          "match": "yes",
+          "review_comment": "Vacancy over several days is present; immediate March 5 vacancy also appears in unit 14. These time-qualified sources may be integrated; their time difference alone is not an error."
+        },
+        "v7": {
+          "predicted_id": "info-38f592aae0b842bc94be45e25e894513",
+          "match": "yes",
+          "review_comment": "Days of vacancy and current vacancy can form a useful composite; March 5 temporal label missing. Loss assertion in the same unit is a separate verification matter."
+        },
+        "v7.1": {
+          "predicted_id": "info-402c1f3418f348cdb3de2f93d17a204b",
+          "match": "yes",
+          "review_comment": "Several-day vacancy present; immediate March 5 vacancy elsewhere in unit 15. Multi-time integration is allowed but not completed."
+        },
+        "v7.2": {
+          "predicted_id": "info-fc19c572bd7955f2af30e46c037f8843",
+          "match": "yes",
+          "review_comment": "Several-day vacancy explicit in Li testimony; March 5 current vacancy also appears in unit 7. Both temporal scopes may be combined; still not integrated into one useful vacancy node. This content match is separate from ideal node organization."
+        }
+      }
+    },
+    {
+      "gold_id": "U036",
+      "title": "李某声称空置导致损失",
+      "runs": {
+        "v6": {
+          "predicted_id": "info-448a339f4ba644b7b9513608d24d1de0",
+          "match": "no",
+          "review_comment": "Claim of actual loss is explicit but shares vacancy node U035. Vacancy and existence/extent of loss need distinct verification."
+        },
+        "v7": {
+          "predicted_id": "info-38f592aae0b842bc94be45e25e894513",
+          "match": "no",
+          "review_comment": "Loss assertion present but same unit already used for vacancy U035."
+        },
+        "v7.1": {
+          "predicted_id": "info-402c1f3418f348cdb3de2f93d17a204b",
+          "match": "no",
+          "review_comment": "Actual-loss claim present but same node used for U035; existence/amount of loss needs independent verification."
+        },
+        "v7.2": {
+          "predicted_id": "info-fc19c572bd7955f2af30e46c037f8843",
+          "match": "no",
+          "review_comment": "Loss assertion explicit but unit 8 allocated to U035. Lack of an independently addressable loss claim impairs comparison with the tenant loss assessment."
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "provider": "azure",
+    "base_url": "https://443663078-0974-resource.services.ai.azure.com/openai/v1",
+    "model": "gpt-5-mini",
+    "timeout_seconds": 120.0,
+    "max_completion_tokens": 20000
+  },
+  "current_prompt_sha256": "668248a9e57da6232cd479fa34f9164cbeb00d180acc6f0476e73b2a05eeb4ac",
+  "schema_sha256": "71ba5696091a0adb0956cd95046c27bad27b71dead7f3f60b23f1e3ffe932b84"
+}

@@ -1,0 +1,70 @@
+{
+  "wire_schema_validator": "Pydantic field-schema projection, identical JSON Schema except root title",
+  "json_schema_valid": true,
+  "model_contract_valid": false,
+  "extraction_contract_valid": false,
+  "source_location_valid": true,
+  "errors": [
+    {
+      "stage": "model_contract",
+      "code": "extraction_schema_invalid",
+      "details": [
+        {
+          "type": "value_error",
+          "loc": [],
+          "msg": "Value error, core_issue must occur in issue_set"
+        }
+      ]
+    },
+    {
+      "stage": "extraction_contract",
+      "message": "1 validation error for ExtractionOutput\n  Value error, core_issue must occur in issue_set [type=value_error, input_value={'core_issue': '张某于...-20T12:59:56.738649Z'}]}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.10/v/value_error"
+    }
+  ],
+  "semantic_rewrites": 0,
+  "merges": 0,
+  "source_errors": [],
+  "core_issue_in_issue_set": false,
+  "invalid_stance_targets": [
+    {
+      "index": 3,
+      "value": "张某于租期内提前退租后押金是否应退还"
+    },
+    {
+      "index": 4,
+      "value": "张某于租期内提前退租后押金是否应退还"
+    },
+    {
+      "index": 5,
+      "value": "张某于租期内提前退租后押金是否应退还"
+    },
+    {
+      "index": 6,
+      "value": "张某于租期内提前退租后押金是否应退还"
+    },
+    {
+      "index": 7,
+      "value": "张某于租期内提前退租后押金是否应退还"
+    },
+    {
+      "index": 8,
+      "value": "张某于租期内提前退租后押金是否应退还"
+    },
+    {
+      "index": 9,
+      "value": "张某于租期内提前退租后押金是否应退还"
+    },
+    {
+      "index": 10,
+      "value": "张某于租期内提前退租后押金是否应退还"
+    },
+    {
+      "index": 11,
+      "value": "张某于租期内提前退租后押金是否应退还"
+    }
+  ],
+  "accepted": false,
+  "unit_count": 12,
+  "source_ref_count": 20,
+  "ids_unique": true
+}

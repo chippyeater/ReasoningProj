@@ -1,0 +1,263 @@
+{
+  "gold_basis": {
+    "version": "1.7",
+    "gold_units": 17,
+    "file_sha256": {
+      "gold/evaluation_rubric.json": "a54f19d994fd46ce4d0649816b2186c279868b3fc61d2847be833cab97bc81be",
+      "gold/gold_end_to_end.jsonl": "9b3bf7b69e6832792ba19d089929a0b3a4eff7f6738506bce2148c2925dfe3be",
+      "gold/gold_info_units.jsonl": "fdf3b21ecc9336bd19b6e9c4090d1c49d03e190a4e0ff22b5875d9cbc2820c63",
+      "gold/gold_issues.json": "7247267f3ddb27112db2a603811c24de9221fec7cffbfa3cb766b397ffefd4f4",
+      "gold/gold_law_cases.jsonl": "8b048b67e6b6167b8442f38b2270c9c686fd7b0a83657bdeede25ff5b1ed5078",
+      "gold/gold_parse_cases.jsonl": "fdb2ec1b1c6da85a523f59f81b3066d4ae23c4a29f1f3ffe04e8e61f85c44dd8",
+      "gold/gold_relations.jsonl": "66fa59b7606eeaa680ae88818b3871a44b7d2f056344cef247d65921bab83539",
+      "gold/gold_view_cases.jsonl": "44f95c4e11bafaca1c77bdf9061d7d8bb6c2006ebb5f03a0141f8790c994d168",
+      "gold/gold_view_selection.jsonl": "f69cc35e4b82687b2f9bc637e969bf3d18f15d055df571271afe9bcc3d7137e3",
+      "gold/negative_relations.jsonl": "4b1289adce1ac1455787e700df6c0e6e3b1b718fa37ecf3bdae85ebd9981f84c",
+      "gold/verified_laws.json": "ee68236c513bcacf41ae93b6041a3dd6999474506708aece105eae427caf69a5",
+      "fixtures/file_manifest.json": "d73d497a5b44775bf1c82b73fadafe2b3b8ce54b902b98df4755f5557203e3c5",
+      "fixtures/parsed/file-06b00bee7b.txt": "bf078aff9224eeab6a7e499d761c6a4b7018879af3df7da9aa4e6b3583b81f9d",
+      "fixtures/parsed/file-16d4ace3c7.txt": "06705e197980a5ba7aa4a6129fb7a976e52080e40e38c1fc0a9d80d2a0f7b7b4",
+      "fixtures/parsed/file-31ebd1366e.txt": "158923aae89e45b7bdecea4c973f317eb4636f9484805597cbf60a038a082706",
+      "fixtures/parsed/file-3a4acd1eac.txt": "40dc9152e80193833776b57fc4d0040b96838fe8428222fc9a688d52e54eaa25",
+      "fixtures/parsed/file-e256bb1ee8.txt": "76e3db737794a41f78a7d8c13cab4d1526310a224b8b31fdb3309d1c71ac64fb"
+    },
+    "sha256": "198069edcf222a0bd61a4a464c6dd5521f055b8a2f5903c8ed4d07e43b411c57"
+  },
+  "scope": "diagnostic_rejected_raw_candidate",
+  "key_core_content_present": 17,
+  "key_core_content_absent": [],
+  "merge_blocked_unmatched_gold": [
+    "U004",
+    "U006",
+    "U015",
+    "U016",
+    "U029",
+    "U036"
+  ],
+  "detailed_completeness_notes": [
+    "U016 exact March 1 already-found statement and its communication source are absent; early-March contact claim remains.",
+    "U022 precise move-out date is testimony, while March 5 chat says this week; no independent third-party date proof.",
+    "U035 immediate vacancy and several-day vacancy are available across nodes, but are not integrated or independently verified."
+  ],
+  "reasonable_composites": [
+    {
+      "indices": [
+        2
+      ],
+      "gold_ids": [
+        "U008"
+      ],
+      "verdict": "appropriate",
+      "detail": "Mutually exclusive refund conditions form one complete useful deposit rule.",
+      "predicted_ids": [
+        "info-19eaf8936ed15f1495d2c85b98a1adab"
+      ]
+    },
+    {
+      "indices": [
+        8
+      ],
+      "gold_ids": [
+        "U019"
+      ],
+      "verdict": "partly_appropriate",
+      "detail": "Contractual justification and overall refusal can be grouped; embedding the only several-day vacancy and loss assertion blocks independent checking.",
+      "predicted_ids": [
+        "info-fc19c572bd7955f2af30e46c037f8843"
+      ]
+    },
+    {
+      "indices": [
+        7,
+        8
+      ],
+      "gold_ids": [
+        "U035"
+      ],
+      "verdict": "allowed_but_not_achieved",
+      "detail": "Different-time vacancy sources may be grouped, but remain distributed across a chat summary and broad landlord statement.",
+      "predicted_ids": [
+        "info-e97b4ae97973564f8364c8927740076a",
+        "info-fc19c572bd7955f2af30e46c037f8843"
+      ]
+    },
+    {
+      "indices": [
+        4
+      ],
+      "gold_ids": [
+        "U022"
+      ],
+      "verdict": "appropriate_attributes",
+      "detail": "Cleaning/no damage are useful move-out handover attributes, not a mandatory sentence-level split.",
+      "predicted_ids": [
+        "info-03086c43da5a5061bc90ac15ad31a166"
+      ]
+    }
+  ],
+  "harmful_merge_groups": [
+    {
+      "indices": [
+        2
+      ],
+      "gold_ids": [
+        "U004",
+        "U006",
+        "U008"
+      ],
+      "detail": "Lease/rent for loss calculation, contractual deposit amount and refund rules need separately addressable uses. Error is not merely mixed semantic categories.",
+      "predicted_ids": [
+        "info-19eaf8936ed15f1495d2c85b98a1adab"
+      ]
+    },
+    {
+      "indices": [
+        5
+      ],
+      "gold_ids": [
+        "U016",
+        "U026",
+        "U027"
+      ],
+      "detail": "Finding replacement, move-in and later lease have distinct verification evidence; timeline overlap enables two diagnostic matches without resolving this merge.",
+      "predicted_ids": [
+        "info-0e4071b2429f52a68a04e57ba4aa7490"
+      ]
+    },
+    {
+      "indices": [
+        6
+      ],
+      "gold_ids": [
+        "U012",
+        "U015"
+      ],
+      "detail": "Tenant possible departure and landlord conditional proposal need distinct attribution and independent use.",
+      "predicted_ids": [
+        "info-e978b1c97a675941ab820b752824aaf4"
+      ]
+    },
+    {
+      "indices": [
+        8
+      ],
+      "gold_ids": [
+        "U019",
+        "U035",
+        "U036"
+      ],
+      "detail": "Refusal stance with reasons may be grouped, but vacancy and actual loss need independent checking; repeated chat stance enables one-to-one allocation, not clean structure.",
+      "predicted_ids": [
+        "info-fc19c572bd7955f2af30e46c037f8843"
+      ]
+    },
+    {
+      "indices": [
+        9
+      ],
+      "gold_ids": [
+        "U029",
+        "U030"
+      ],
+      "detail": "No-loss assessment and requested deposit remedy are independent reasoning questions.",
+      "predicted_ids": [
+        "info-9a24ca16199751a4be491be4a868f511"
+      ]
+    }
+  ],
+  "fragmented_stance_groups": [
+    [
+      7,
+      8
+    ]
+  ],
+  "substantive_redundancy_groups": [
+    [
+      7,
+      8
+    ],
+    [
+      2,
+      3,
+      4,
+      5,
+      10
+    ]
+  ],
+  "redundant_summary_indices": [
+    10
+  ],
+  "identity_pollution_indices": [
+    1
+  ],
+  "exact_duplicate_nodes": 0,
+  "classification_definite_error_indices": [
+    4
+  ],
+  "classification_note": "Unit 4 is an event/action even though its source and own content are an unverified first-person assertion; should be statement/fact_assertion. Communication-event labels are not automatically invalid.",
+  "source_location": {
+    "references": 15,
+    "exact_unique_locations": 14,
+    "unlocatable": 1,
+    "unknown_file_ids": 0,
+    "located_source_kinds_match_upload_metadata": true,
+    "failed_reference": {
+      "index": 10,
+      "reference_index": 0,
+      "reason": "Contract quote rearranges noncontiguous text and adds blank lines."
+    }
+  },
+  "source_semantic_findings": [
+    {
+      "indices": [
+        1,
+        5
+      ],
+      "kind": "time_scope",
+      "detail": "Title/summary attach new-lease signing to March 8, whereas original content says later; no signing date is established.",
+      "predicted_ids": [
+        "info-da51e399b66b54d9a50acd7192f3328d",
+        "info-0e4071b2429f52a68a04e57ba4aa7490"
+      ]
+    },
+    {
+      "indices": [
+        7
+      ],
+      "kind": "verification_strength",
+      "detail": "Title calls March 5 the move-out day; chat itself only says this week. Precise day is Zhang testimony elsewhere, not independently verified.",
+      "predicted_ids": [
+        "info-e97b4ae97973564f8364c8927740076a"
+      ]
+    },
+    {
+      "indices": [
+        9
+      ],
+      "kind": "citation_coverage",
+      "detail": "Summary adds no damage, but this node cites only loss/remedy paragraphs; no-damage is supported elsewhere in TXT, not by its bound reference.",
+      "predicted_ids": [
+        "info-9a24ca16199751a4be491be4a868f511"
+      ]
+    },
+    {
+      "indices": [
+        0,
+        1,
+        8
+      ],
+      "kind": "overbroad_quote",
+      "detail": "Identity nodes cite entire testimony and Li stance pastes entire testimony; exact quote locating succeeds but does not ensure minimal task-oriented organization.",
+      "predicted_ids": [
+        "info-e35725dc4bbe5d1a8a1ce016ef27cc78",
+        "info-da51e399b66b54d9a50acd7192f3328d",
+        "info-fc19c572bd7955f2af30e46c037f8843"
+      ]
+    }
+  ],
+  "wholly_invented_factual_nodes": 0,
+  "invented_quote_count": 1,
+  "truth_verification": "No party statement, transcript or screenshot transcription was externally corroborated.",
+  "allocation_caution": "U026/U027 both score because TWO unchanged, overlapping model nodes carry them. One prediction still matches at most one Gold. This is content coverage, not proof of clean independent units; source failure rejects the whole output.",
+  "causal_inference": "Exploratory single-run comparison only; does not establish stable Prompt effects."
+}

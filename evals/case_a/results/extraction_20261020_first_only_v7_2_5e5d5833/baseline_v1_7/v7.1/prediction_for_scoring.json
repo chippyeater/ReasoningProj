@@ -1,0 +1,427 @@
+{
+  "core_issue": "押金是否应退还",
+  "issue_set": [
+    "押金是否应退还",
+    "是否存在房屋空置和损失",
+    "张某是否已找到并安排接替租客"
+  ],
+  "info_units": [
+    {
+      "type": "entity",
+      "subtype": "person",
+      "title": "李某（出租方/房东）",
+      "summary": "合同中记载的出租方，案件中主张按合同不退押金并称房屋曾空置导致损失。",
+      "content": "李某为本案房屋合同中的出租方（甲方）。在笔录与聊天记录中，李某多次表示押金不退、房屋曾空置并造成损失，且称没有要求承租人必须帮忙找人接替。",
+      "source_refs": [
+        {
+          "file_id": "file-3a4acd1eac",
+          "source_kind": "document",
+          "quote": "出租方（甲方）：李某",
+          "start": 9,
+          "end": 19
+        },
+        {
+          "file_id": "file-06b00bee7b",
+          "source_kind": "testimony",
+          "quote": "这个事情其实很简单，他就是提前退租了，这个在合同里面是写得很清楚的，提前退的话押金是不退的。",
+          "start": 0,
+          "end": 46
+        }
+      ],
+      "speaker": null,
+      "side": "房东",
+      "actor": null,
+      "target": null,
+      "stance_target": null,
+      "id": "info-49abc7736eb9455baaade7de2698c8f6",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "entity",
+      "subtype": "person",
+      "title": "张某（承租方/租客）",
+      "summary": "合同中记载的承租方，已支付押金并称已在3月5日搬出且安排了接替租客（朋友于3月8日入住并与房东重新签约）。",
+      "content": "张某为本案房屋合同中的承租方（乙方）。转账记录记载张某于2026-01-05向李某支付押金2000元；张某称已于2026-03-05搬出并表示其已找到一名朋友于2026-03-08接替入住并与房东重新签约，因而主张押金不应全部扣除。",
+      "source_refs": [
+        {
+          "file_id": "file-3a4acd1eac",
+          "source_kind": "document",
+          "quote": "承租方（乙方）：张某",
+          "start": 20,
+          "end": 30
+        },
+        {
+          "file_id": "file-31ebd1366e",
+          "source_kind": "record",
+          "quote": "时间：2026-01-05 \n付款人：张某 \n收款人：李某 \n金额：2000 元 \n备注：房屋押金",
+          "start": 14,
+          "end": 63
+        }
+      ],
+      "speaker": null,
+      "side": "租客",
+      "actor": null,
+      "target": null,
+      "stance_target": null,
+      "id": "info-b966a6f1331f40c5a6fddb9a9192e690",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "entity",
+      "subtype": "object",
+      "title": "房屋租赁合同（2026-01-05）",
+      "summary": "合同载明租赁双方、期限、押金金额及押金条款：乙方提前退租押金不予退还。",
+      "content": "合同签订于2026-01-05，载明出租方为李某、承租方为张某，租赁期限、押金金额与押金条款（含提前退租押金不退）均记载于合同文本中。",
+      "source_refs": [
+        {
+          "file_id": "file-3a4acd1eac",
+          "source_kind": "document",
+          "quote": "《房屋租赁合同》",
+          "start": 0,
+          "end": 8
+        },
+        {
+          "file_id": "file-3a4acd1eac",
+          "source_kind": "document",
+          "quote": "甲方：李某\n乙方：张某\n签订时间：2026 年 1 月 5 日",
+          "start": 211,
+          "end": 242
+        }
+      ],
+      "speaker": null,
+      "side": null,
+      "actor": null,
+      "target": null,
+      "stance_target": null,
+      "id": "info-3ef40c5a9bee48d490e4c17318b3a189",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "state",
+      "subtype": "temporal",
+      "title": "租赁期限（合同约定）",
+      "summary": "合同约定的租赁起止时间为2026-01-05至2026-07-05。",
+      "content": "合同中记载的租赁期限为 2026 年 1 月 5 日 至 2026 年 7 月 5 日，表明合同原定租期未至时张某提出提前退租属于提前退出租赁期的行为。",
+      "source_refs": [
+        {
+          "file_id": "file-3a4acd1eac",
+          "source_kind": "document",
+          "quote": "租赁期限：2026 年 1 月 5 日 至 2026 年 7 月 5 日",
+          "start": 70,
+          "end": 106
+        }
+      ],
+      "speaker": null,
+      "side": null,
+      "actor": null,
+      "target": null,
+      "stance_target": null,
+      "id": "info-f5a379927c604f34a3af04854919bb9e",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "state",
+      "subtype": "quantitative",
+      "title": "押金金额（合同记载）",
+      "summary": "合同约定押金为人民币2000元，转账记录显示张某已支付该押金给李某。",
+      "content": "合同条款记载押金金额为人民币2000元；转账记录记载张某于2026-01-05向李某支付金额2000元，备注为房屋押金，表明押金已实际支付。",
+      "source_refs": [
+        {
+          "file_id": "file-3a4acd1eac",
+          "source_kind": "document",
+          "quote": "押金：人民币 2000 元",
+          "start": 115,
+          "end": 128
+        },
+        {
+          "file_id": "file-31ebd1366e",
+          "source_kind": "record",
+          "quote": "时间：2026-01-05 \n付款人：张某 \n收款人：李某 \n金额：2000 元 \n备注：房屋押金",
+          "start": 14,
+          "end": 63
+        }
+      ],
+      "speaker": null,
+      "side": null,
+      "actor": null,
+      "target": null,
+      "stance_target": null,
+      "id": "info-ef507c926c524d0e9051bd23a04a0e1d",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "statement",
+      "subtype": "provision",
+      "title": "合同条款：乙方提前退租押金不予退还",
+      "summary": "合同明确约定若承租方提前退租，押金不予退还。",
+      "content": "合同条款明确规定：若乙方提前退租，押金不予退还，作为双方书面约定的押金处理规则。",
+      "source_refs": [
+        {
+          "file_id": "file-3a4acd1eac",
+          "source_kind": "document",
+          "quote": "若乙方提前退租，押金不予退还",
+          "start": 177,
+          "end": 191
+        }
+      ],
+      "speaker": null,
+      "side": null,
+      "actor": null,
+      "target": null,
+      "stance_target": "押金是否应退还",
+      "id": "info-2787bac3b474459ab1de6f51fad8cc72",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "event",
+      "subtype": "transfer",
+      "title": "押金支付（张某 -> 李某，2026-01-05）",
+      "summary": "转账记录显示张某于2026-01-05向李某支付押金2000元，备注为房屋押金。",
+      "content": "根据转账记录，2026-01-05张某向李某支付2000元，备注为房屋押金，表明合同约定的押金已由张某实际支付给李某。",
+      "source_refs": [
+        {
+          "file_id": "file-31ebd1366e",
+          "source_kind": "record",
+          "quote": "时间：2026-01-05 \n付款人：张某 \n收款人：李某 \n金额：2000 元 \n备注：房屋押金",
+          "start": 14,
+          "end": 63
+        }
+      ],
+      "speaker": null,
+      "side": null,
+      "actor": "张某",
+      "target": "李某",
+      "stance_target": "押金是否应退还",
+      "id": "info-2c041a9028194fe8b923131aeb8859e4",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "statement",
+      "subtype": "fact_assertion",
+      "title": "李某主张：合同写明提前退租押金不退",
+      "summary": "李某在笔录中指出合同明确写有提前退租押金不退，并据此认为押金不退合理。",
+      "content": "李某在笔录中表示合同中写明提前退租押金不退，并认为按合同处理、押金不退是合理的主张（李某的陈述）。",
+      "source_refs": [
+        {
+          "file_id": "file-06b00bee7b",
+          "source_kind": "testimony",
+          "quote": "这个事情其实很简单，他就是提前退租了，这个在合同里面是写得很清楚的，提前退的话押金是不退的。",
+          "start": 0,
+          "end": 46
+        }
+      ],
+      "speaker": "李某",
+      "side": "房东",
+      "actor": null,
+      "target": null,
+      "stance_target": "押金是否应退还",
+      "id": "info-4d8234ef12a64f9c869568542712b659",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "statement",
+      "subtype": "fact_assertion",
+      "title": "李某称张某虽说帮忙找人但房东未要求并认为张某先违约",
+      "summary": "李某表示张某确实说会帮忙找接替租客，但该事情应由张某负责，李某未要求其必须帮忙，认为张某在先违约。",
+      "content": "李某在笔录中称：张某确实说帮他找了下一个租客，但这本来是张某自己的事情，因为张某违约在先，李某并未要求张某一定要帮忙找人（李某的陈述）。",
+      "source_refs": [
+        {
+          "file_id": "file-06b00bee7b",
+          "source_kind": "testimony",
+          "quote": "他确实是说帮我找了下一个租客，但这个事情本来就是他自己的事情，因为他违约在先，我也没有要求他一定要帮我找人。",
+          "start": 47,
+          "end": 101
+        }
+      ],
+      "speaker": "李某",
+      "side": "房东",
+      "actor": null,
+      "target": "张某",
+      "stance_target": "张某是否已找到并安排接替租客",
+      "id": "info-4cdfb077a72c48a4ba91d7bf21f62265",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "statement",
+      "subtype": "fact_assertion",
+      "title": "李某称房屋中间有空置几天且造成损失",
+      "summary": "李某称房屋并非无缝衔接，中间空置了几天，期间李某有损失，因此支持不退押金的处理。",
+      "content": "李某在笔录中表示：中间其实还是有空了几天的，不是完全无缝衔接的，这段时间我这边也是有损失的（李某的陈述）。",
+      "source_refs": [
+        {
+          "file_id": "file-06b00bee7b",
+          "source_kind": "testimony",
+          "quote": "而且中间其实还是有空了几天的，不是完全无缝衔接的，这段时间我这边也是有损失的。",
+          "start": 102,
+          "end": 141
+        }
+      ],
+      "speaker": "李某",
+      "side": "房东",
+      "actor": null,
+      "target": null,
+      "stance_target": "是否存在房屋空置和损失",
+      "id": "info-402c1f3418f348cdb3de2f93d17a204b",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "statement",
+      "subtype": "fact_assertion",
+      "title": "张某称于2026-03-05搬出且房屋无损坏",
+      "summary": "张某在笔录中称其于3月5日正式搬走，搬出时房屋已打扫干净且无损坏。",
+      "content": "张某在笔录中称：他于 3 月 5 号正式搬走，当时房子已经打扫干净，也没有什么损坏（张某的陈述）。",
+      "source_refs": [
+        {
+          "file_id": "file-e256bb1ee8",
+          "source_kind": "testimony",
+          "quote": "我是在 3 月 5 号那天正式搬走的，当时房子我已经打扫干净了，也没有什么损坏的地方。",
+          "start": 0,
+          "end": 43
+        }
+      ],
+      "speaker": "张某",
+      "side": "租客",
+      "actor": null,
+      "target": null,
+      "stance_target": null,
+      "id": "info-eef75a63f9f1463299fd7164dc024e04",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "statement",
+      "subtype": "fact_assertion",
+      "title": "张某称已联系并安排朋友于2026-03-08接替入住并与房东重新签约",
+      "summary": "张某表示在3月初已联系好下一个租客（朋友），该朋友于3月8日直接搬入并与房东重新签合同。",
+      "content": "张某在笔录中表示：他在3月初已联系好了下一个租客，对方是他的朋友，3月8号就直接搬进去住了，后来也跟房东重新签了合同（张某的陈述）。",
+      "source_refs": [
+        {
+          "file_id": "file-e256bb1ee8",
+          "source_kind": "testimony",
+          "quote": "其实我在 3 月初的时候就已经帮忙联系好了下一个租客，对方是我朋友，他 3 月 8 号就直接搬进去住了，后来也是跟房东重新签了合同。",
+          "start": 44,
+          "end": 110
+        }
+      ],
+      "speaker": "张某",
+      "side": "租客",
+      "actor": null,
+      "target": "李某",
+      "stance_target": "张某是否已找到并安排接替租客",
+      "id": "info-fb988966d1384dbba6bb8dadac339738",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "statement",
+      "subtype": "assessment",
+      "title": "张某主张：房屋基本无缝衔接且房东应无实际损失，押金不应全部扣除",
+      "summary": "张某认为房屋没有长时间空置，接替租客已入住房屋，故房东没有实际损失，押金不应被全部扣除。",
+      "content": "张某在笔录中表示：房子其实没有空置多久，基本是无缝接上的；在这种情况下他理解房东应该不会有什么实际损失，所以认为押金不应该被全部扣掉（张某的主张）。",
+      "source_refs": [
+        {
+          "file_id": "file-e256bb1ee8",
+          "source_kind": "testimony",
+          "quote": "所以我觉得这个房子其实也没有空置多久，基本是无缝接上的。",
+          "start": 111,
+          "end": 139
+        },
+        {
+          "file_id": "file-e256bb1ee8",
+          "source_kind": "testimony",
+          "quote": "这种情况下，我理解房东应该不会有什么实际损失，所以我才觉得押金不应该被全部扣掉。",
+          "start": 140,
+          "end": 180
+        }
+      ],
+      "speaker": "张某",
+      "side": "租客",
+      "actor": null,
+      "target": "李某",
+      "stance_target": "押金是否应退还",
+      "id": "info-03c068d4a79a43e1b367c1e7639cb642",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "statement",
+      "subtype": "fact_assertion",
+      "title": "聊天记录：张某2月25日表示将提前搬走并愿意帮忙找接替租客",
+      "summary": "微信聊天中张某于2026-02-25表示工作有变将提前搬走并表示愿意帮忙找下一个租客。",
+      "content": "聊天记录（节选）显示2026-02-25张某称工作有变可能提前搬走，并表示可以帮忙找下一个租客（张某的即时陈述）。",
+      "source_refs": [
+        {
+          "file_id": "file-16d4ace3c7",
+          "source_kind": "communication",
+          "quote": "张某：我这边工作有变动，可能要提前搬走",
+          "start": 22,
+          "end": 41
+        },
+        {
+          "file_id": "file-16d4ace3c7",
+          "source_kind": "communication",
+          "quote": "张某：嗯，我可以帮忙找下一个租客",
+          "start": 57,
+          "end": 73
+        }
+      ],
+      "speaker": "张某",
+      "side": "租客",
+      "actor": null,
+      "target": "李某",
+      "stance_target": "张某是否已找到并安排接替租客",
+      "id": "info-ea8655d1a72e40b19c0c3ca8e610e163",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "statement",
+      "subtype": "fact_assertion",
+      "title": "聊天记录：李某2月25日表示若找到人可协商退部分押金",
+      "summary": "微信聊天中李某在2026-02-25表示若张某能找到接替租客，可以协商退部分押金。",
+      "content": "聊天记录（节选）显示李某在2026-02-25表示：\"你要是能找到人接着租，可以协商退你一部分押金\"，体现出事前对是否退押金存在可协商情形的沟通。",
+      "source_refs": [
+        {
+          "file_id": "file-16d4ace3c7",
+          "source_kind": "communication",
+          "quote": "李某：你要是能找到人接着租，可以协商退你一部分押金",
+          "start": 74,
+          "end": 99
+        }
+      ],
+      "speaker": "李某",
+      "side": "房东",
+      "actor": null,
+      "target": "张某",
+      "stance_target": "押金是否应退还",
+      "id": "info-8a0b13c9289140d485c48014e1df46ba",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    },
+    {
+      "type": "statement",
+      "subtype": "fact_assertion",
+      "title": "聊天记录：李某3月5日称押金不退并表示房子当前空置",
+      "summary": "微信聊天中2026-03-05李某一方面称张某提前退租押金不退，另一方面又称房子当前是空着的，需看情况处理。",
+      "content": "聊天记录（节选）显示2026-03-05李某向张某表示：\"你是提前退租，押金不退的\"；并在同一日又说\"那要看情况，我现在房子空着呢\"，反映李某对押金处理的即时表态及房屋是否空置的说明。",
+      "source_refs": [
+        {
+          "file_id": "file-16d4ace3c7",
+          "source_kind": "communication",
+          "quote": "李某：你是提前退租，押金不退的",
+          "start": 182,
+          "end": 197
+        },
+        {
+          "file_id": "file-16d4ace3c7",
+          "source_kind": "communication",
+          "quote": "李某：那要看情况，我现在房子空着呢",
+          "start": 212,
+          "end": 229
+        }
+      ],
+      "speaker": "李某",
+      "side": "房东",
+      "actor": null,
+      "target": "张某",
+      "stance_target": "押金是否应退还",
+      "id": "info-af802cd6e456496992116891c17f605b",
+      "created_at": "2026-10-20T13:26:36.878909Z"
+    }
+  ]
+}

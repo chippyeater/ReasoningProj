@@ -1,0 +1,29 @@
+{
+  "wire_schema_validator": "Pydantic field-schema projection, identical JSON Schema except root title",
+  "json_schema_valid": true,
+  "model_contract_valid": true,
+  "extraction_contract_valid": false,
+  "source_location_valid": false,
+  "errors": [
+    {
+      "stage": "extraction_contract",
+      "message": "3 validation errors for ExtractionOutput\ninfo_units.10.source_refs.0.source_kind\n  Field required [type=missing, input_value={'file_id': 'file-e9f10d2... 2026 年 7 月 5 日'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.10/v/missing\ninfo_units.10.source_refs.0.start\n  Field required [type=missing, input_value={'file_id': 'file-e9f10d2... 2026 年 7 月 5 日'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.10/v/missing\ninfo_units.10.source_refs.0.end\n  Field required [type=missing, input_value={'file_id': 'file-e9f10d2... 2026 年 7 月 5 日'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.10/v/missing"
+    }
+  ],
+  "semantic_rewrites": 0,
+  "merges": 0,
+  "source_errors": [
+    {
+      "index": 10,
+      "reference_index": 0,
+      "code": "quote_not_found",
+      "message": "file-e9f10d2b958349d49ea74d6192549e68: quote does not occur in cached TXT"
+    }
+  ],
+  "core_issue_in_issue_set": true,
+  "invalid_stance_targets": [],
+  "accepted": false,
+  "unit_count": 11,
+  "source_ref_count": 15,
+  "ids_unique": true
+}

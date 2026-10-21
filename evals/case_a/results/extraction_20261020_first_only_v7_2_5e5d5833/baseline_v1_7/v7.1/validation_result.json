@@ -1,0 +1,17 @@
+{
+  "wire_schema_validator": "Pydantic field-schema projection, identical JSON Schema except root title",
+  "json_schema_valid": true,
+  "model_contract_valid": true,
+  "extraction_contract_valid": true,
+  "source_location_valid": true,
+  "errors": [],
+  "semantic_rewrites": 0,
+  "merges": 0,
+  "source_errors": [],
+  "core_issue_in_issue_set": true,
+  "invalid_stance_targets": [],
+  "accepted": true,
+  "unit_count": 16,
+  "source_ref_count": 23,
+  "ids_unique": true
+}
