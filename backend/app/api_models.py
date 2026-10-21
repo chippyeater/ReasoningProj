@@ -62,20 +62,25 @@ class UpdateInfoUnitInput(ContractModel):
 class InfoUnitAgentAction(str, Enum):
     create = "create"
     update = "update"
+    clarify = "clarify"
+    unsupported = "unsupported"
+
+
+class InfoUnitMutationAction(str, Enum):
+    create = "create"
+    update = "update"
 
 
 class InfoUnitAgentRequest(ContractModel):
-    action: InfoUnitAgentAction
     instruction: Annotated[str, Field(min_length=1, max_length=2000, pattern=r"\S")]
-    target_info_unit_id: Text | None = None
+    selected_info_unit_ids: list[Text] = Field(default_factory=list)
 
-    @model_validator(mode="after")
-    def check_target(self) -> "InfoUnitAgentRequest":
-        if self.action == InfoUnitAgentAction.create and self.target_info_unit_id is not None:
-            raise ValueError("create must not specify target_info_unit_id")
-        if self.action == InfoUnitAgentAction.update and self.target_info_unit_id is None:
-            raise ValueError("update requires target_info_unit_id")
-        return self
+    @field_validator("selected_info_unit_ids")
+    @classmethod
+    def unique_selected_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("selected_info_unit_ids must be unique")
+        return value
 
 
 class InfoUnitAgentDraft(ContractModel):
@@ -104,7 +109,20 @@ class ModelInfoUnitAgentProposal(ContractModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     action: InfoUnitAgentAction
     target_info_unit_id: Text | None
-    proposed: InfoUnitAgentDraft
+    proposed: InfoUnitAgentDraft | None
+    message: Text | None
+
+    @model_validator(mode="after")
+    def check_action_payload(self) -> "ModelInfoUnitAgentProposal":
+        if self.action == InfoUnitAgentAction.create:
+            if self.target_info_unit_id is not None or self.proposed is None or self.message is not None:
+                raise ValueError("create requires a proposal and no target or message")
+        elif self.action == InfoUnitAgentAction.update:
+            if self.target_info_unit_id is None or self.proposed is None or self.message is not None:
+                raise ValueError("update requires a target and proposal, and no message")
+        elif self.target_info_unit_id is not None or self.proposed is not None or self.message is None:
+            raise ValueError("clarify/unsupported require only a nonempty message")
+        return self
 
 
 ProposalValue = str | list[str] | None
@@ -131,24 +149,25 @@ class InfoUnitAgentEvidence(ContractModel):
 class InfoUnitAgentProposalResponse(ContractModel):
     action: InfoUnitAgentAction
     target_info_unit_id: Text | None
-    proposed: InfoUnitAgentDraft
+    proposed: InfoUnitAgentDraft | None
     changes: list[InfoUnitAgentChange]
     unchanged_fields: list[Text]
     evidence: list[InfoUnitAgentEvidence]
     base_case_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    message: Text | None
 
 
 class ConfirmInfoUnitAgentProposalInput(ContractModel):
-    action: InfoUnitAgentAction
+    action: InfoUnitMutationAction
     target_info_unit_id: Text | None
     proposed: InfoUnitAgentDraft
     base_case_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
     @model_validator(mode="after")
     def check_target(self) -> "ConfirmInfoUnitAgentProposalInput":
-        if self.action == InfoUnitAgentAction.create and self.target_info_unit_id is not None:
+        if self.action == InfoUnitMutationAction.create and self.target_info_unit_id is not None:
             raise ValueError("create must not specify target_info_unit_id")
-        if self.action == InfoUnitAgentAction.update and self.target_info_unit_id is None:
+        if self.action == InfoUnitMutationAction.update and self.target_info_unit_id is None:
             raise ValueError("update requires target_info_unit_id")
         return self
 

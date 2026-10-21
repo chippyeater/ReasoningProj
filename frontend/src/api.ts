@@ -91,7 +91,7 @@ export type InfoUnitMutationInput = {
 export type CreateInfoUnitInput = InfoUnitMutationInput & { evidence_ids: string[] };
 export type UpdateInfoUnitInput = InfoUnitMutationInput & { evidence_ids?: string[] };
 
-export type InfoUnitAgentAction = "create" | "update";
+export type InfoUnitAgentAction = "create" | "update" | "clarify" | "unsupported";
 export type InfoUnitAgentDraft = InfoUnitMutationInput & { evidence_ids: string[] };
 export type InfoUnitAgentChange = {
   field: keyof InfoUnitAgentDraft;
@@ -101,7 +101,7 @@ export type InfoUnitAgentChange = {
 export type InfoUnitAgentProposal = {
   action: InfoUnitAgentAction;
   target_info_unit_id: string | null;
-  proposed: InfoUnitAgentDraft;
+  proposed: InfoUnitAgentDraft | null;
   changes: InfoUnitAgentChange[];
   unchanged_fields: string[];
   evidence: Array<{
@@ -113,6 +113,7 @@ export type InfoUnitAgentProposal = {
     context_quote_ids: string[];
   }>;
   base_case_hash: string;
+  message: string | null;
 };
 
 export type CaseFile = {
@@ -659,7 +660,7 @@ export async function deleteInfoUnit(caseId: string, infoUnitId: string): Promis
 
 export async function proposeInfoUnit(
   caseId: string,
-  payload: { action: InfoUnitAgentAction; instruction: string; target_info_unit_id: string | null },
+  payload: { instruction: string; selected_info_unit_ids: string[] },
 ): Promise<InfoUnitAgentProposal> {
   return readJson<InfoUnitAgentProposal>(await fetch(
     `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/info-unit-agent/proposals`,
@@ -675,6 +676,9 @@ export async function confirmInfoUnitProposal(
   caseId: string,
   proposal: InfoUnitAgentProposal,
 ): Promise<{ case: CaseData }> {
+  if ((proposal.action !== "create" && proposal.action !== "update") || !proposal.proposed) {
+    throw new Error("Only create/update proposals can be confirmed");
+  }
   const data = await readJson<{ case: CaseData }>(await fetch(
     `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/info-unit-agent/proposals/confirm`,
     {

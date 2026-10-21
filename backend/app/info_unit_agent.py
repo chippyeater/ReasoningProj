@@ -16,6 +16,7 @@ from app.api_models import (
     InfoUnitAgentEvidence,
     InfoUnitAgentProposalResponse,
     InfoUnitAgentRequest,
+    InfoUnitMutationAction,
     ModelInfoUnitAgentProposal,
     UpdateInfoUnitInput,
 )
@@ -122,9 +123,9 @@ def _update_payload(proposed) -> UpdateInfoUnitInput:
     return UpdateInfoUnitInput.model_validate(proposed.model_dump(mode="json"))
 
 
-def _validate_operation(case: CaseData, action: InfoUnitAgentAction,
+def _validate_operation(case: CaseData, action: InfoUnitMutationAction,
                         target_info_unit_id: str | None, proposed) -> None:
-    if action == InfoUnitAgentAction.create:
+    if action == InfoUnitMutationAction.create:
         if target_info_unit_id is not None:
             raise AppError("invalid_info_unit_agent_target", "Create proposal must not specify a target InfoUnit")
         prepare_info_unit_creation(case, _create_payload(proposed))
@@ -140,12 +141,12 @@ def _validate_operation(case: CaseData, action: InfoUnitAgentAction,
         raise AppError("info_unit_agent_no_changes", "Update proposal does not change the target InfoUnit")
 
 
-def _proposal_response(case: CaseData, action: InfoUnitAgentAction,
+def _proposal_response(case: CaseData, action: InfoUnitMutationAction,
                        target_info_unit_id: str | None, proposed,
                        base_case_hash: str) -> InfoUnitAgentProposalResponse:
     proposed_values = proposed.model_dump(mode="json")
     old_values = {field: None for field in MUTABLE_FIELDS}
-    if action == InfoUnitAgentAction.update:
+    if action == InfoUnitMutationAction.update:
         current = next(unit for unit in case.info_units if unit.id == target_info_unit_id)
         old_values.update(current.model_dump(mode="json"))
         old_values["evidence_ids"] = evidence_ids_for_info_unit(case, current)
@@ -169,15 +170,19 @@ def _proposal_response(case: CaseData, action: InfoUnitAgentAction,
     return InfoUnitAgentProposalResponse(
         action=action, target_info_unit_id=target_info_unit_id, proposed=proposed,
         changes=changes, unchanged_fields=unchanged, evidence=evidence,
-        base_case_hash=base_case_hash,
+        base_case_hash=base_case_hash, message=None,
     )
 
 
 async def generate_info_unit_proposal(case: CaseData,
                                       request: InfoUnitAgentRequest) -> InfoUnitAgentProposalResponse:
-    if request.action == InfoUnitAgentAction.update and not any(
-            unit.id == request.target_info_unit_id for unit in case.info_units):
-        raise AppError("info_unit_not_found", f"InfoUnit not found: {request.target_info_unit_id}", 404)
+    known_ids = {unit.id for unit in case.info_units}
+    unknown_context = set(request.selected_info_unit_ids) - known_ids
+    if unknown_context:
+        raise AppError(
+            "invalid_info_unit_agent_context",
+            f"Unknown current-case selected InfoUnit IDs: {sorted(unknown_context)}",
+        )
     base_hash = case_content_hash(case)
     model_input = {
         **_model_context(case),
@@ -187,10 +192,6 @@ async def generate_info_unit_proposal(case: CaseData,
     reply = await llm_client.call_structured(
         config, _prompt(), model_input, ModelInfoUnitAgentProposal.model_json_schema())
     result = _strict_model_proposal(reply.content)
-    if result.action != request.action:
-        raise AppError("info_unit_agent_action_mismatch", "Model proposal action differs from the requested action")
-    if result.target_info_unit_id != request.target_info_unit_id:
-        raise AppError("info_unit_agent_target_mismatch", "Model proposal target differs from the requested InfoUnit")
     latest = load_case_snapshot(case.case_id)
     if latest is None or case_content_hash(latest) != base_hash:
         raise AppError(
@@ -198,8 +199,18 @@ async def generate_info_unit_proposal(case: CaseData,
             "Case changed while the proposal was being generated; generate a new proposal",
             409,
         )
-    _validate_operation(latest, result.action, result.target_info_unit_id, result.proposed)
-    return _proposal_response(latest, result.action, result.target_info_unit_id, result.proposed, base_hash)
+    if result.action in {InfoUnitAgentAction.clarify, InfoUnitAgentAction.unsupported}:
+        return InfoUnitAgentProposalResponse(
+            action=result.action, target_info_unit_id=None, proposed=None,
+            changes=[], unchanged_fields=[], evidence=[], base_case_hash=base_hash,
+            message=result.message,
+        )
+    if result.target_info_unit_id is not None and result.target_info_unit_id not in known_ids:
+        raise AppError(
+            "info_unit_not_found", f"InfoUnit not found: {result.target_info_unit_id}", 404)
+    action = InfoUnitMutationAction(result.action.value)
+    _validate_operation(latest, action, result.target_info_unit_id, result.proposed)
+    return _proposal_response(latest, action, result.target_info_unit_id, result.proposed, base_hash)
 
 
 def confirm_info_unit_proposal(case: CaseData,
@@ -211,6 +222,6 @@ def confirm_info_unit_proposal(case: CaseData,
             409,
         )
     _validate_operation(case, request.action, request.target_info_unit_id, request.proposed)
-    if request.action == InfoUnitAgentAction.create:
+    if request.action == InfoUnitMutationAction.create:
         return create_info_unit(case, _create_payload(request.proposed))
     return update_info_unit(case, request.target_info_unit_id or "", _update_payload(request.proposed))

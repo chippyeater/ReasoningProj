@@ -26,7 +26,6 @@ import {
   type CaseSummary,
   type InferenceCard,
   type InfoUnit,
-  type InfoUnitAgentAction,
   type InfoUnitAgentProposal,
   type InfoUnitSubtype,
   type InfoUnitType,
@@ -516,7 +515,6 @@ export default function App() {
 
   const [island, setIsland] = useState({ visible: false, x: 20, y: 20, text: "" });
   const [islandHeight, setIslandHeight] = useState(ISLAND_MIN_HEIGHT);
-  const [agentAction, setAgentAction] = useState<InfoUnitAgentAction>("create");
   const [agentProposal, setAgentProposal] = useState<InfoUnitAgentProposal | null>(null);
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentError, setAgentError] = useState("");
@@ -1602,19 +1600,18 @@ export default function App() {
       setAgentError("请输入新增或修改要求。");
       return;
     }
-    if (agentAction === "update" && !selectedInfoUnit) {
-      setAgentError("修改 InfoUnit 前，请先在画布中选中一个 InfoUnit 节点。");
-      return;
-    }
-
     setAgentBusy(true);
     setAgentError("");
     setAgentProposal(null);
     try {
+      const infoUnitIds = new Set(currentCase.info_units.map((unit) => unit.id));
+      const selectedContextIds = [
+        ...(selectedInfoUnit ? [selectedInfoUnit.id] : []),
+        ...selectedNodeIds.filter((id) => infoUnitIds.has(id)),
+      ].filter((id, index, values) => values.indexOf(id) === index);
       const proposal = await proposeInfoUnit(currentCase.case_id, {
-        action: agentAction,
         instruction,
-        target_info_unit_id: agentAction === "update" ? selectedInfoUnit!.id : null,
+        selected_info_unit_ids: selectedContextIds,
       });
       setAgentProposal(proposal);
     } catch (err) {
@@ -1626,6 +1623,7 @@ export default function App() {
 
   async function confirmAgentProposal() {
     if (!currentCase || !agentProposal) return;
+    if (agentProposal.action !== "create" && agentProposal.action !== "update") return;
     setAgentBusy(true);
     setAgentError("");
     try {
@@ -2496,19 +2494,6 @@ export default function App() {
               >
                 <div className="island-compose-row">
                   <img src={writeIcon} alt="write" className="island-icon" />
-                  <select
-                    aria-label="InfoUnit Agent 操作"
-                    value={agentAction}
-                    onChange={(event) => {
-                      setAgentAction(event.target.value as InfoUnitAgentAction);
-                      setAgentProposal(null);
-                      setAgentError("");
-                    }}
-                    disabled={agentBusy}
-                  >
-                    <option value="create">定向新增</option>
-                    <option value="update">修改选中</option>
-                  </select>
                   <textarea
                     ref={islandInputRef}
                     value={island.text}
@@ -2519,7 +2504,7 @@ export default function App() {
                         void onGenerateInfoUnitProposal();
                       }
                     }}
-                    placeholder={agentAction === "create" ? "描述要新增的信息节点…" : "描述要如何修改选中节点…"}
+                    placeholder="描述要新增或修改的案件信息…"
                     rows={1}
                   />
                   <button
@@ -2532,37 +2517,43 @@ export default function App() {
                     <img src={sendIcon} alt="send" className="island-icon" />
                   </button>
                 </div>
-                {agentAction === "update" ? (
-                  <p className="agent-target">
-                    目标：{selectedInfoUnit ? `${selectedInfoUnit.title} (${selectedInfoUnit.id})` : "尚未选中 InfoUnit"}
-                  </p>
-                ) : null}
                 {agentError ? <p className="agent-proposal-error" role="alert">{agentError}</p> : null}
                 {agentProposal ? (
                   <section className="agent-proposal" aria-label="InfoUnit 提案预览">
                     <header>
-                      <strong>{agentProposal.action === "create" ? "新增 InfoUnit" : "修改 InfoUnit"}</strong>
+                      <strong>{({
+                        create: "新增 InfoUnit",
+                        update: "修改 InfoUnit",
+                        clarify: "需要补充信息",
+                        unsupported: "暂不支持此操作",
+                      } as const)[agentProposal.action]}</strong>
                       {agentProposal.target_info_unit_id ? <span>{agentProposal.target_info_unit_id}</span> : null}
                     </header>
-                    <div className="agent-change-list">
-                      {agentProposal.changes.map((change) => (
-                        <div className="agent-change" key={change.field}>
-                          <b>{change.field}</b>
-                          <span>{proposalValue(change.old_value)}</span>
-                          <i>→</i>
-                          <span>{proposalValue(change.new_value)}</span>
+                    {agentProposal.action === "clarify" || agentProposal.action === "unsupported" ? (
+                      <p className="agent-response-message">{agentProposal.message}</p>
+                    ) : (
+                      <>
+                        <div className="agent-change-list">
+                          {agentProposal.changes.map((change) => (
+                            <div className="agent-change" key={change.field}>
+                              <b>{change.field}</b>
+                              <span>{proposalValue(change.old_value)}</span>
+                              <i>→</i>
+                              <span>{proposalValue(change.new_value)}</span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                    <div className="agent-evidence-list">
-                      <b>证据</b>
-                      {agentProposal.evidence.map((item) => (
-                        <article key={item.quote_id}>
-                          <small>{item.filename} · {item.quote_id}</small>
-                          <p>{item.text}</p>
-                        </article>
-                      ))}
-                    </div>
+                        <div className="agent-evidence-list">
+                          <b>证据</b>
+                          {agentProposal.evidence.map((item) => (
+                            <article key={item.quote_id}>
+                              <small>{item.filename} · {item.quote_id}</small>
+                              <p>{item.text}</p>
+                            </article>
+                          ))}
+                        </div>
+                      </>
+                    )}
                     <footer>
                       <button
                         type="button"
@@ -2572,10 +2563,12 @@ export default function App() {
                           setAgentError("");
                         }}
                         disabled={agentBusy}
-                      >取消</button>
-                      <button type="button" onClick={() => void confirmAgentProposal()} disabled={agentBusy}>
-                        {agentBusy ? "保存中…" : "确认写入"}
-                      </button>
+                      >{agentProposal.action === "create" || agentProposal.action === "update" ? "取消" : "关闭"}</button>
+                      {agentProposal.action === "create" || agentProposal.action === "update" ? (
+                        <button type="button" onClick={() => void confirmAgentProposal()} disabled={agentBusy}>
+                          {agentBusy ? "保存中…" : "确认写入"}
+                        </button>
+                      ) : null}
                     </footer>
                   </section>
                 ) : null}

@@ -28,6 +28,16 @@ def proposal(*, action="create", target_info_unit_id=None, evidence_ids, **chang
         "action": action,
         "target_info_unit_id": target_info_unit_id,
         "proposed": proposed,
+        "message": None,
+    }, ensure_ascii=False)
+
+
+def nonmutation(action, message):
+    return json.dumps({
+        "action": action,
+        "target_info_unit_id": None,
+        "proposed": None,
+        "message": message,
     }, ensure_ascii=False)
 
 
@@ -35,7 +45,7 @@ class TestInfoUnitAgent(IsolatedCaseTest):
     def setUp(self):
         super().setUp()
         uploaded = self.upload(
-            raw="2026-03-01\n甲：我已支付100元。\n乙：尚未收到100元。".encode("utf-8"),
+            raw="2026-03-01\n甲：我已支付100元。\n乙：尚未收到100元。\n双方：确认租金金额为3000元。".encode("utf-8"),
             source_kind="communication",
         )
         self.case_id = uploaded["case_id"]
@@ -46,13 +56,14 @@ class TestInfoUnitAgent(IsolatedCaseTest):
         case_store.save_case(case)
         self.q_paid = quote_id_for(self.case_id, self.file_id, "甲：我已支付100元。")
         self.q_unpaid = quote_id_for(self.case_id, self.file_id, "乙：尚未收到100元。")
+        self.q_amount = quote_id_for(self.case_id, self.file_id, "双方：确认租金金额为3000元。")
 
     def model_reply(self, content):
         return llm_client.LLMReply(
             content, {"choices": [{"message": {"content": content}, "finish_reason": "stop"}]})
 
     def generate(self, content, payload=None):
-        request = payload or {"action": "create", "instruction": "新增甲方付款陈述"}
+        request = payload or {"instruction": "找到租金约定并生成一张卡片", "selected_info_unit_ids": []}
         with patch.object(llm_client, "load_config", return_value=CONFIG), patch.object(
                 llm_client, "call_structured",
                 new=AsyncMock(return_value=self.model_reply(content))) as call:
@@ -73,7 +84,8 @@ class TestInfoUnitAgent(IsolatedCaseTest):
         path = self.data_dir / self.case_id / "case.json"
         before = path.read_bytes()
         response, call = self.generate(proposal(
-            evidence_ids=[self.q_paid], actor=entity["id"]))
+            evidence_ids=[self.q_amount], actor=entity["id"], title="双方约定租金金额",
+            content="双方确认租金金额为3000元。", speaker="双方"))
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(path.read_bytes(), before)
         self.assertEqual(call.await_count, 1)
@@ -85,7 +97,7 @@ class TestInfoUnitAgent(IsolatedCaseTest):
         self.assertEqual(len(paid["context_quote_ids"]), 1)
 
         preview = response.json()
-        self.assertEqual(preview["evidence"][0]["text"], "甲：我已支付100元。")
+        self.assertEqual(preview["evidence"][0]["text"], "双方：确认租金金额为3000元。")
         self.assertIn("content", [item["field"] for item in preview["changes"]])
         confirmed = self.client.post(
             f"/api/cases/{self.case_id}/info-unit-agent/proposals/confirm",
@@ -95,7 +107,7 @@ class TestInfoUnitAgent(IsolatedCaseTest):
         self.assertEqual(confirmed.status_code, 200, confirmed.text)
         saved = confirmed.json()["case"]["info_units"][-1]
         self.assertTrue(saved["id"].startswith("info-"))
-        self.assertEqual(saved["source_refs"][0]["quote"], "甲：我已支付100元。")
+        self.assertEqual(saved["source_refs"][0]["quote"], "双方：确认租金金额为3000元。")
         refreshed = self.client.get(f"/api/cases/{self.case_id}").json()["case"]
         self.assertEqual(refreshed["info_units"][-1], saved)
 
@@ -111,12 +123,12 @@ class TestInfoUnitAgent(IsolatedCaseTest):
         before_entity = created["info_units"][0]
         response, _ = self.generate(
             proposal(
-                action="update", target_info_unit_id=target["id"], evidence_ids=[self.q_paid, self.q_unpaid],
-                title=target["title"], content="甲称已经支付100元，乙明确表示尚未收到。",
+                action="update", target_info_unit_id=target["id"], evidence_ids=[self.q_amount],
+                title=target["title"], content="双方确认租金金额为3000元。",
                 speaker=target["speaker"], side=target["side"], actor=target["actor"],
                 target=target["target"], related_issue=target["related_issue"],
             ),
-            {"action": "update", "instruction": "补充乙方未收到的证据", "target_info_unit_id": target["id"]},
+            {"instruction": "将金额改成 3000 元", "selected_info_unit_ids": [target["id"]]},
         )
         self.assertEqual(response.status_code, 200, response.text)
         preview = response.json()
@@ -134,7 +146,7 @@ class TestInfoUnitAgent(IsolatedCaseTest):
         self.assertEqual(units[1]["created_at"], target["created_at"])
         self.assertEqual(units[1]["title"], target["title"])
         self.assertEqual([ref["quote"] for ref in units[1]["source_refs"]], [
-            "甲：我已支付100元。", "乙：尚未收到100元。",
+            "双方：确认租金金额为3000元。",
         ])
 
     def test_invalid_model_operations_and_foreign_evidence_never_modify_case(self):
@@ -145,8 +157,6 @@ class TestInfoUnitAgent(IsolatedCaseTest):
         foreign_quote = quote_id_for(
             foreign["case_id"], foreign["files"][0]["file_id"], "案外材料内容。")
         invalid = [
-            (proposal(action="update", target_info_unit_id=entity["id"], evidence_ids=[self.q_paid]),
-             {"action": "create", "instruction": "新增"}, "info_unit_agent_action_mismatch"),
             (proposal(evidence_ids=["quote-not-current"]),
              None, "invalid_evidence_id"),
             (proposal(evidence_ids=[foreign_quote]),
@@ -156,6 +166,7 @@ class TestInfoUnitAgent(IsolatedCaseTest):
             (json.dumps({
                 "action": "create", "target_info_unit_id": None,
                 "proposed": {**json.loads(proposal(evidence_ids=[self.q_paid]))["proposed"], "unknown": "x"},
+                "message": None,
             }, ensure_ascii=False), None, "info_unit_agent_schema_invalid"),
             (proposal(
                 action="update", target_info_unit_id=entity["id"], evidence_ids=[self.q_paid],
@@ -163,7 +174,7 @@ class TestInfoUnitAgent(IsolatedCaseTest):
                 content=entity["content"], speaker=entity["speaker"], side=entity["side"],
                 actor=entity["actor"], target=entity["target"],
                 related_issue=entity["related_issue"],
-             ), {"action": "update", "instruction": "不要改动", "target_info_unit_id": entity["id"]},
+             ), {"instruction": "不要改动", "selected_info_unit_ids": [entity["id"]]},
              "info_unit_agent_no_changes"),
         ]
         for content, request, expected_code in invalid:
@@ -175,12 +186,67 @@ class TestInfoUnitAgent(IsolatedCaseTest):
                 self.assertEqual(path.read_bytes(), before)
 
         before_missing = path.read_bytes()
-        missing = self.client.post(
-            f"/api/cases/{self.case_id}/info-unit-agent/proposals",
-            json={"action": "update", "instruction": "修改", "target_info_unit_id": "info-foreign"},
+        missing, _ = self.generate(
+            proposal(action="update", target_info_unit_id="info-foreign", evidence_ids=[self.q_paid]),
+            {"instruction": "修改不存在的节点", "selected_info_unit_ids": []},
         )
         self.assertEqual(missing.status_code, 404, missing.text)
         self.assertEqual(path.read_bytes(), before_missing)
+
+        invalid_context = self.client.post(
+            f"/api/cases/{self.case_id}/info-unit-agent/proposals",
+            json={"instruction": "修改选中节点", "selected_info_unit_ids": ["info-foreign"]},
+        )
+        self.assertEqual(invalid_context.status_code, 422, invalid_context.text)
+        self.assertEqual(invalid_context.json()["detail"]["code"], "invalid_info_unit_agent_context")
+        self.assertEqual(path.read_bytes(), before_missing)
+
+    def test_selection_is_context_while_clarify_and_unsupported_never_write(self):
+        entity = self.create_entity()
+        path = self.data_dir / self.case_id / "case.json"
+
+        selected_create, call = self.generate(
+            proposal(evidence_ids=[self.q_unpaid], title="乙方未收到款项",
+                     content="乙方称尚未收到100元，仍需进一步核实。", speaker="乙"),
+            {"instruction": "再新增一张记录付款行为的卡片", "selected_info_unit_ids": [entity["id"]]},
+        )
+        self.assertEqual(selected_create.status_code, 200, selected_create.text)
+        self.assertEqual(selected_create.json()["action"], "create")
+        self.assertEqual(call.await_count, 1)
+        self.assertEqual(
+            call.call_args.args[2]["request"]["selected_info_unit_ids"], [entity["id"]])
+        self.assertNotIn("action", call.call_args.args[2]["request"])
+        for title, content, evidence_id, speaker in (
+            ("押金付款记录", "甲称押金已经支付100元，尚未核实。", self.q_paid, "甲"),
+            ("押金收款争议", "乙称押金尚未收到100元，尚待核实。", self.q_unpaid, "乙"),
+        ):
+            created = self.client.post(f"/api/cases/{self.case_id}/info-units", json={
+                "type": "event", "subtype": "reported", "title": title,
+                "content": content, "evidence_ids": [evidence_id], "speaker": speaker,
+                "side": None, "actor": None, "target": None, "related_issue": ISSUE,
+            })
+            self.assertEqual(created.status_code, 201, created.text)
+        before = path.read_bytes()
+
+        clarify, clarify_call = self.generate(
+            nonmutation("clarify", "存在多个与押金有关的节点，请说明要修改哪一张卡。"),
+            {"instruction": "修改押金那张卡", "selected_info_unit_ids": []},
+        )
+        self.assertEqual(clarify.status_code, 200, clarify.text)
+        self.assertEqual(clarify.json()["action"], "clarify")
+        self.assertIsNone(clarify.json()["proposed"])
+        self.assertEqual(clarify.json()["changes"], [])
+        self.assertEqual(clarify_call.await_count, 1)
+        self.assertEqual(path.read_bytes(), before)
+
+        unsupported, unsupported_call = self.generate(
+            nonmutation("unsupported", "当前 Agent 不支持删除 InfoUnit。"),
+            {"instruction": "删除这张卡", "selected_info_unit_ids": [entity["id"]]},
+        )
+        self.assertEqual(unsupported.status_code, 200, unsupported.text)
+        self.assertEqual(unsupported.json()["action"], "unsupported")
+        self.assertEqual(unsupported_call.await_count, 1)
+        self.assertEqual(path.read_bytes(), before)
 
     def test_cancel_and_stale_confirmation_do_not_write(self):
         path = self.data_dir / self.case_id / "case.json"
