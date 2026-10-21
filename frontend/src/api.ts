@@ -91,6 +91,30 @@ export type InfoUnitMutationInput = {
 export type CreateInfoUnitInput = InfoUnitMutationInput & { evidence_ids: string[] };
 export type UpdateInfoUnitInput = InfoUnitMutationInput & { evidence_ids?: string[] };
 
+export type InfoUnitAgentAction = "create" | "update";
+export type InfoUnitAgentDraft = InfoUnitMutationInput & { evidence_ids: string[] };
+export type InfoUnitAgentChange = {
+  field: keyof InfoUnitAgentDraft;
+  old_value: string | string[] | null;
+  new_value: string | string[] | null;
+};
+export type InfoUnitAgentProposal = {
+  action: InfoUnitAgentAction;
+  target_info_unit_id: string | null;
+  proposed: InfoUnitAgentDraft;
+  changes: InfoUnitAgentChange[];
+  unchanged_fields: string[];
+  evidence: Array<{
+    quote_id: string;
+    file_id: string;
+    filename: string;
+    text: string;
+    role: string;
+    context_quote_ids: string[];
+  }>;
+  base_case_hash: string;
+};
+
 export type CaseFile = {
   file_id: string;
   filename: string;
@@ -629,6 +653,40 @@ export async function deleteInfoUnit(caseId: string, infoUnitId: string): Promis
   const data = await readJson<{ case: CaseData }>(await fetch(
     `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/info-units/${encodeURIComponent(infoUnitId)}`,
     { method: "DELETE" },
+  ));
+  return { case: normalizeCaseData(data.case) };
+}
+
+export async function proposeInfoUnit(
+  caseId: string,
+  payload: { action: InfoUnitAgentAction; instruction: string; target_info_unit_id: string | null },
+): Promise<InfoUnitAgentProposal> {
+  return readJson<InfoUnitAgentProposal>(await fetch(
+    `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/info-unit-agent/proposals`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  ));
+}
+
+export async function confirmInfoUnitProposal(
+  caseId: string,
+  proposal: InfoUnitAgentProposal,
+): Promise<{ case: CaseData }> {
+  const data = await readJson<{ case: CaseData }>(await fetch(
+    `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/info-unit-agent/proposals/confirm`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: proposal.action,
+        target_info_unit_id: proposal.target_info_unit_id,
+        proposed: proposal.proposed,
+        base_case_hash: proposal.base_case_hash,
+      }),
+    },
   ));
   return { case: normalizeCaseData(data.case) };
 }

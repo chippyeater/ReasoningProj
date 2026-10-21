@@ -1,5 +1,6 @@
 ﻿import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
+  confirmInfoUnitProposal,
   createCase,
   createInfoUnit,
   appendFilesToCase,
@@ -10,7 +11,7 @@ import {
   listCases,
   listQuoteUnits,
   selectCase,
-  generateInference,
+  proposeInfoUnit,
   routeTask,
   runExtraction,
   runReasoning,
@@ -25,6 +26,8 @@ import {
   type CaseSummary,
   type InferenceCard,
   type InfoUnit,
+  type InfoUnitAgentAction,
+  type InfoUnitAgentProposal,
   type InfoUnitSubtype,
   type InfoUnitType,
   type InfoUnitMutationInput,
@@ -473,23 +476,9 @@ function pickFileIcon(type: "document" | "image", fileName: string) {
   return docIcon;
 }
 
-function inferGenerateModeFromPrompt(
-  prompt: string,
-): "hypothesis" | "conflict_check" | "missing_evidence" {
-  const normalized = prompt.trim().toLowerCase();
-  if (!normalized) return "hypothesis";
-
-  const hasKeyword = (keywords: string[]) => keywords.some((keyword) => normalized.includes(keyword));
-
-  if (hasKeyword(["\u51b2\u7a81", "\u77db\u76fe", "\u5bf9\u6bd4", "\u6bd4\u8f83", "\u51b2\u7a81\u89c6\u56fe", "conflict", "contradict", "oppose"])) {
-    return "conflict_check";
-  }
-
-  if (hasKeyword(["\u7f3a\u5931", "\u5f85\u9a8c\u8bc1", "\u8865\u8bc1", "\u8bc1\u636e\u4e0d\u8db3", "\u5f85\u8865", "missing", "lack", "insufficient"])) {
-    return "missing_evidence";
-  }
-
-  return "hypothesis";
+function proposalValue(value: string | string[] | null) {
+  if (value === null) return "—";
+  return Array.isArray(value) ? value.join(", ") : value;
 }
 
 export default function App() {
@@ -527,6 +516,10 @@ export default function App() {
 
   const [island, setIsland] = useState({ visible: false, x: 20, y: 20, text: "" });
   const [islandHeight, setIslandHeight] = useState(ISLAND_MIN_HEIGHT);
+  const [agentAction, setAgentAction] = useState<InfoUnitAgentAction>("create");
+  const [agentProposal, setAgentProposal] = useState<InfoUnitAgentProposal | null>(null);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentError, setAgentError] = useState("");
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const nodeElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -618,7 +611,7 @@ export default function App() {
     input.style.height = "auto";
     const nextHeight = Math.min(ISLAND_MAX_INPUT_HEIGHT, Math.max(20, input.scrollHeight));
     input.style.height = `${nextHeight}px`;
-  }, [island.text, island.visible]);
+  }, [agentError, agentProposal, island.text, island.visible]);
 
   useEffect(() => {
     const islandEl = islandContainerRef.current;
@@ -627,7 +620,22 @@ export default function App() {
     if (nextHeight !== islandHeightRef.current) {
       setIslandHeight(nextHeight);
     }
-  }, [island.text, island.visible]);
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    setIsland((current) => {
+      const x = Math.max(ISLAND_PADDING, Math.min(
+        current.x, wrapperRect.width - islandEl.offsetWidth - ISLAND_PADDING));
+      const y = Math.max(ISLAND_PADDING, Math.min(
+        current.y, wrapperRect.height - nextHeight - ISLAND_PADDING));
+      return x === current.x && y === current.y ? current : { ...current, x, y };
+    });
+  }, [agentError, agentProposal, island.text, island.visible]);
+
+  useEffect(() => {
+    setAgentProposal(null);
+    setAgentError("");
+  }, [currentCase?.case_id]);
 
   function pickSelectedNodeIds(nextCase: CaseData | null) {
     if (!nextCase) return [] as string[];
@@ -1555,7 +1563,7 @@ export default function App() {
 
   function onIslandMouseDown(event: React.MouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).tagName.toLowerCase() === "input") return;
+    if ((event.target as HTMLElement).closest("button, input, select, textarea")) return;
     event.stopPropagation();
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
@@ -1583,43 +1591,55 @@ export default function App() {
     };
   }
 
-  async function onGenerateInferenceFromIsland() {
+  async function onGenerateInfoUnitProposal() {
     if (!currentCase) {
-      setError("No active case.");
+      setAgentError("当前没有可操作的案件。");
       return;
     }
 
-    const prompt = island.text.trim();
-    if (!prompt) {
-      setError("Please enter a prompt.");
+    const instruction = island.text.trim();
+    if (!instruction) {
+      setAgentError("请输入新增或修改要求。");
+      return;
+    }
+    if (agentAction === "update" && !selectedInfoUnit) {
+      setAgentError("修改 InfoUnit 前，请先在画布中选中一个 InfoUnit 节点。");
       return;
     }
 
-    setCaseLoading(true);
-    setError("");
+    setAgentBusy(true);
+    setAgentError("");
+    setAgentProposal(null);
     try {
-      const knownCardIds = new Set([
-        ...currentCase.meta_cards.map((card) => card.id),
-        ...currentCase.inference_cards.map((card) => card.id),
-        ...currentCase.law_cards.map((card) => card.id),
-      ]);
-      const selectedCardIds = selectedNodeIds.filter((id) => knownCardIds.has(id));
-      const fallbackCardIds = currentCase.meta_cards.slice(0, 6).map((card) => card.id);
-      const mode = inferGenerateModeFromPrompt(prompt);
-      await generateInference(
-        currentCase.case_id,
-        prompt,
-        mode,
-        selectedCardIds.length > 0 ? selectedCardIds : fallbackCardIds,
-      );
-      const [nextCase, nextCases] = await Promise.all([getCase(), listCases()]);
-      setCurrentCase(nextCase.case);
-      setCaseOptions(nextCases.cases);
+      const proposal = await proposeInfoUnit(currentCase.case_id, {
+        action: agentAction,
+        instruction,
+        target_info_unit_id: agentAction === "update" ? selectedInfoUnit!.id : null,
+      });
+      setAgentProposal(proposal);
+    } catch (err) {
+      setAgentError(err instanceof Error ? err.message : "InfoUnit 提案生成失败");
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  async function confirmAgentProposal() {
+    if (!currentCase || !agentProposal) return;
+    setAgentBusy(true);
+    setAgentError("");
+    try {
+      const result = await confirmInfoUnitProposal(currentCase.case_id, agentProposal);
+      const refreshed = await refreshAfterInfoUnitMutation(currentCase.case_id, result.case);
+      setCurrentCase(refreshed);
+      setSelectedNodeIds(pickSelectedNodeIds(refreshed));
+      setFocusedNodeId(pickFocusedNodeId(refreshed));
+      setAgentProposal(null);
       setIsland((current) => ({ ...current, text: "" }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Generate inference failed");
+      setAgentError(err instanceof Error ? err.message : "InfoUnit 提案确认失败");
     } finally {
-      setCaseLoading(false);
+      setAgentBusy(false);
     }
   }
 
@@ -2469,37 +2489,96 @@ export default function App() {
             {island.visible ? (
               <div
                 ref={islandContainerRef}
-                className="dynamic-island"
+                className={`dynamic-island${agentProposal ? " has-preview" : ""}`}
                 style={{ left: island.x, top: island.y }}
                 onMouseDown={onIslandMouseDown}
                 onContextMenu={(event) => event.preventDefault()}
               >
-                <img src={writeIcon} alt="write" className="island-icon" />
-                <textarea
-                  ref={islandInputRef}
-                  value={island.text}
-                  onChange={(event) => setIsland((current) => ({ ...current, text: event.target.value }))}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void onGenerateInferenceFromIsland();
-                    }
-                  }}
-                  placeholder="Generate inference..."
-                  rows={1}
-                />
-
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => {
-                    void onGenerateInferenceFromIsland();
-                  }}
-                  disabled={caseLoading}
-                  aria-label="generate inference"
-                >
-                  <img src={sendIcon} alt="send" className="island-icon" />
-                </button>
+                <div className="island-compose-row">
+                  <img src={writeIcon} alt="write" className="island-icon" />
+                  <select
+                    aria-label="InfoUnit Agent 操作"
+                    value={agentAction}
+                    onChange={(event) => {
+                      setAgentAction(event.target.value as InfoUnitAgentAction);
+                      setAgentProposal(null);
+                      setAgentError("");
+                    }}
+                    disabled={agentBusy}
+                  >
+                    <option value="create">定向新增</option>
+                    <option value="update">修改选中</option>
+                  </select>
+                  <textarea
+                    ref={islandInputRef}
+                    value={island.text}
+                    onChange={(event) => setIsland((current) => ({ ...current, text: event.target.value }))}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void onGenerateInfoUnitProposal();
+                      }
+                    }}
+                    placeholder={agentAction === "create" ? "描述要新增的信息节点…" : "描述要如何修改选中节点…"}
+                    rows={1}
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => void onGenerateInfoUnitProposal()}
+                    disabled={agentBusy}
+                    aria-label="生成 InfoUnit 提案"
+                  >
+                    <img src={sendIcon} alt="send" className="island-icon" />
+                  </button>
+                </div>
+                {agentAction === "update" ? (
+                  <p className="agent-target">
+                    目标：{selectedInfoUnit ? `${selectedInfoUnit.title} (${selectedInfoUnit.id})` : "尚未选中 InfoUnit"}
+                  </p>
+                ) : null}
+                {agentError ? <p className="agent-proposal-error" role="alert">{agentError}</p> : null}
+                {agentProposal ? (
+                  <section className="agent-proposal" aria-label="InfoUnit 提案预览">
+                    <header>
+                      <strong>{agentProposal.action === "create" ? "新增 InfoUnit" : "修改 InfoUnit"}</strong>
+                      {agentProposal.target_info_unit_id ? <span>{agentProposal.target_info_unit_id}</span> : null}
+                    </header>
+                    <div className="agent-change-list">
+                      {agentProposal.changes.map((change) => (
+                        <div className="agent-change" key={change.field}>
+                          <b>{change.field}</b>
+                          <span>{proposalValue(change.old_value)}</span>
+                          <i>→</i>
+                          <span>{proposalValue(change.new_value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="agent-evidence-list">
+                      <b>证据</b>
+                      {agentProposal.evidence.map((item) => (
+                        <article key={item.quote_id}>
+                          <small>{item.filename} · {item.quote_id}</small>
+                          <p>{item.text}</p>
+                        </article>
+                      ))}
+                    </div>
+                    <footer>
+                      <button
+                        type="button"
+                        className="editor-secondary"
+                        onClick={() => {
+                          setAgentProposal(null);
+                          setAgentError("");
+                        }}
+                        disabled={agentBusy}
+                      >取消</button>
+                      <button type="button" onClick={() => void confirmAgentProposal()} disabled={agentBusy}>
+                        {agentBusy ? "保存中…" : "确认写入"}
+                      </button>
+                    </footer>
+                  </section>
+                ) : null}
               </div>
             ) : null}
 

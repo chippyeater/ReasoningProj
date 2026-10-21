@@ -56,7 +56,26 @@ def list_quote_units(case: CaseData) -> list[QuoteUnit]:
     return [unit for index in quote_indexes_for_case(case) for unit in index.units]
 
 
-def create_info_unit(case: CaseData, payload: CreateInfoUnitInput) -> CaseData:
+def evidence_ids_for_info_unit(case: CaseData, info_unit: InfoUnit) -> list[str]:
+    catalog = quote_catalog(case)
+    by_source = {
+        (file.file_id, unit.start, unit.end, unit.text, file.source_kind): quote_id
+        for quote_id, (unit, file) in catalog.items()
+    }
+    result: list[str] = []
+    for ref in info_unit.source_refs:
+        quote_id = by_source.get((ref.file_id, ref.start, ref.end, ref.quote, ref.source_kind))
+        if quote_id is None:
+            raise AppError(
+                "info_unit_source_not_indexed",
+                f"{info_unit.id}: an existing SourceRef no longer maps to a current Quote Unit",
+                409,
+            )
+        result.append(quote_id)
+    return result
+
+
+def prepare_info_unit_creation(case: CaseData, payload: CreateInfoUnitInput) -> CaseData:
     references = _source_refs_from_evidence_ids(case, payload.evidence_ids)
     existing_ids = {unit.id for unit in case.info_units}
     unit_id = f"info-{uuid4().hex}"
@@ -74,10 +93,20 @@ def create_info_unit(case: CaseData, payload: CreateInfoUnitInput) -> CaseData:
         ) from exc
     candidate = case.model_copy(deep=True)
     candidate.info_units.append(unit)
-    return _save_info_unit_candidate(candidate)
+    try:
+        return CaseData.model_validate(candidate.model_dump(mode="json"))
+    except ValidationError as exc:
+        raise AppError(
+            "invalid_info_unit_change", "InfoUnit change violates the current case contract",
+            details={"errors": exc.errors(include_url=False, include_input=False, include_context=False)},
+        ) from exc
 
 
-def update_info_unit(case: CaseData, info_unit_id: str, payload: UpdateInfoUnitInput) -> CaseData:
+def create_info_unit(case: CaseData, payload: CreateInfoUnitInput) -> CaseData:
+    return _save_info_unit_candidate(prepare_info_unit_creation(case, payload))
+
+
+def prepare_info_unit_update(case: CaseData, info_unit_id: str, payload: UpdateInfoUnitInput) -> CaseData:
     index = next((i for i, unit in enumerate(case.info_units) if unit.id == info_unit_id), None)
     if index is None:
         raise AppError("info_unit_not_found", f"InfoUnit not found: {info_unit_id}", 404)
@@ -101,7 +130,17 @@ def update_info_unit(case: CaseData, info_unit_id: str, payload: UpdateInfoUnitI
         ) from exc
     candidate = case.model_copy(deep=True)
     candidate.info_units[index] = updated
-    return _save_info_unit_candidate(candidate)
+    try:
+        return CaseData.model_validate(candidate.model_dump(mode="json"))
+    except ValidationError as exc:
+        raise AppError(
+            "invalid_info_unit_change", "InfoUnit change violates the current case contract",
+            details={"errors": exc.errors(include_url=False, include_input=False, include_context=False)},
+        ) from exc
+
+
+def update_info_unit(case: CaseData, info_unit_id: str, payload: UpdateInfoUnitInput) -> CaseData:
+    return _save_info_unit_candidate(prepare_info_unit_update(case, info_unit_id, payload))
 
 
 def _business_references_to_info_unit(case: CaseData, info_unit_id: str) -> list[dict[str, str]]:

@@ -9,7 +9,8 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from app.api_models import (
-    CaseResponse, CasesResponse, CreateInfoUnitInput, ExtractionRunInput, RelationRunInput,
+    CaseResponse, CasesResponse, ConfirmInfoUnitAgentProposalInput, CreateInfoUnitInput,
+    ExtractionRunInput, InfoUnitAgentProposalResponse, InfoUnitAgentRequest, RelationRunInput,
     UpdateCaseInput, UpdateInfoUnitInput,
 )
 from app.case_service import (
@@ -22,6 +23,7 @@ from app.case_store import (
 )
 from app.errors import AppError
 from app.extraction_service import run_extraction
+from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_proposal
 from app.quote_units import QuoteUnit
 from app.schemas import (
     CaseData, ExtractionInput, ExtractionOutput, LawRetrieveInput, ParsedDocument, ReasoningInput, UploadRequest, WorkspaceState,
@@ -157,6 +159,23 @@ async def edit_info_unit(case_id: str, info_unit_id: str, payload: UpdateInfoUni
 @app.delete("/api/cases/{case_id}/info-units/{info_unit_id}", response_model=CaseResponse)
 async def remove_info_unit(case_id: str, info_unit_id: str) -> CaseResponse:
     return CaseResponse(case=delete_info_unit(require_case(case_id), info_unit_id))
+
+
+@app.post(
+    "/api/cases/{case_id}/info-unit-agent/proposals",
+    response_model=InfoUnitAgentProposalResponse,
+)
+async def propose_info_unit(case_id: str, payload: InfoUnitAgentRequest) -> InfoUnitAgentProposalResponse:
+    return await generate_info_unit_proposal(require_case(case_id), payload)
+
+
+@app.post(
+    "/api/cases/{case_id}/info-unit-agent/proposals/confirm",
+    response_model=CaseResponse,
+)
+async def confirm_proposed_info_unit(
+        case_id: str, payload: ConfirmInfoUnitAgentProposalInput) -> CaseResponse:
+    return CaseResponse(case=confirm_info_unit_proposal(require_case(case_id), payload))
 
 
 @app.post("/api/cases/{case_id}/select", response_model=CaseResponse)
