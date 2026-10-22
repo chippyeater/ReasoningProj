@@ -1259,6 +1259,63 @@ button,
   cursor: pointer;
 }
 
+.case-selector-trigger > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.case-selector-trigger.editing {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 120px;
+  padding: 3px 7px 3px 10px;
+  gap: 4px;
+  background: rgba(32, 27, 52, 0.98);
+  cursor: text;
+  z-index: 21;
+}
+
+.case-selector-trigger input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  line-height: 18px;
+}
+
+.case-selector-trigger input::selection {
+  background: rgba(174, 166, 255, 0.5);
+}
+
+.case-name-save {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #aea6ff;
+  color: #171225;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.case-name-save:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .case-selector-chevron {
   width: 10px;
   height: 5px;
@@ -1323,6 +1380,55 @@ button,
   background: #f6f2ff;
   border-color: #4918b3;
   color: #1a1a1a;
+}
+
+.case-selector-item:disabled,
+.case-selector-create:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.case-selector-empty {
+  width: 100%;
+  margin: 2px 0 4px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  text-align: center;
+}
+
+.case-selector-divider {
+  width: 100%;
+  height: 1px;
+  margin: 2px 0;
+  background: rgba(174, 166, 255, 0.35);
+}
+
+.case-selector-create {
+  box-sizing: border-box;
+  display: flex;
+  width: 200px;
+  height: 38px;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 14px;
+  border: 1px dashed rgba(174, 166, 255, 0.8);
+  border-radius: 8px;
+  background: rgba(174, 166, 255, 0.08);
+  color: #e8e4ff;
+  font-family: "HarmonyOS Sans SC", "Segoe UI", sans-serif;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.case-selector-create:hover:not(:disabled) {
+  border-style: solid;
+  background: rgba(174, 166, 255, 0.16);
+}
+
+.case-create-mark {
+  color: #c9c2ff;
+  font-size: 17px;
+  line-height: 1;
 }
 
 .case-selected-mark {

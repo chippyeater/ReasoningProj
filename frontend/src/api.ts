@@ -755,7 +755,7 @@ export async function listCases(): Promise<CaseListResponse> {
 
 export async function selectCase(caseId: string): Promise<CaseEnvelope> {
   const data = await readJson<CaseEnvelope>(
-    await fetch(`${API_BASE}/api/cases/${caseId}/select`, {
+    await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/select`, {
       method: "POST",
     })
   );
@@ -764,7 +764,7 @@ export async function selectCase(caseId: string): Promise<CaseEnvelope> {
 
 export async function renameCase(caseId: string, caseTitle: string): Promise<CaseEnvelope> {
   const data = await readJson<CaseEnvelope>(
-    await fetch(`${API_BASE}/api/cases/${caseId}`, {
+    await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ case_title: caseTitle }),

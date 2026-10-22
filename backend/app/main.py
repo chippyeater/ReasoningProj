@@ -15,8 +15,8 @@ from app.api_models import (
     RelationRunInput, RelationRunResponse, UpdateCaseInput, UpdateInfoUnitInput, UpdateRelationInput,
 )
 from app.case_service import (
-    append_files_to_case, build_extraction_input, create_case_from_uploads, create_info_unit,
-    delete_info_unit, list_quote_units, now_iso, update_info_unit,
+    append_files_to_case, build_extraction_input, create_case_from_uploads, create_empty_case,
+    create_info_unit, delete_info_unit, list_quote_units, now_iso, update_info_unit,
 )
 from app.case_store import (
     clear_case, clear_current_case, list_cases, load_case, load_case_snapshot, load_current_case,
@@ -115,6 +115,15 @@ def source_kinds_from_form(form) -> dict:
 
 @app.post("/api/cases", response_model=CaseResponse, status_code=201)
 async def upload_case(request: Request) -> CaseResponse:
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type == "application/json":
+        try:
+            payload = UpdateCaseInput.model_validate(await request.json())
+        except json.JSONDecodeError as exc:
+            raise AppError("invalid_json", "Request body must be valid JSON", 422) from exc
+        case = create_empty_case(payload.case_title)
+        save_case(case)
+        return CaseResponse(case=case)
     require_multipart(request)
     async with request.form() as form:
         if set(form) - {"case_title", "files", "source_kinds"} or len(form.getlist("case_title")) != 1:

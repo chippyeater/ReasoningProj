@@ -48,7 +48,7 @@ Set-Location backend
 | 接口 | 输入 / 输出 |
 | --- | --- |
 | `GET /health` | 服务状态及 Schema 版本 |
-| `POST /api/cases` | multipart：必填 `case_title`、一个或多个 `files`、`source_kinds`；201 `{case: CaseData}` |
+| `POST /api/cases` | JSON `{case_title}` 创建空案件，或 multipart 提交 `case_title`、一个或多个 `files`、`source_kinds`；201 `{case: CaseData}` |
 | `POST /api/cases/{case_id}/files` | multipart：一个或多个 `files`、`source_kinds`；200 `{case: CaseData}` |
 | `GET /api/cases` | `{cases: CaseData[], current_case_id}` |
 | `GET /api/case` | `{case: CaseData \| null}` |
@@ -65,7 +65,7 @@ Set-Location backend
 未指定文件时构建全部文件的提取输入；存在失败或不支持文件时明确报错。
 要继续处理可用文件，应显式选择已解析的文件 ID，不会静默略过失败项。
 错误使用 HTTP 4xx / 5xx；业务错误体为 `{detail: {code, message}}`。
-旧格式快照仅在确定性迁移安全时以内存投影读取，歧义数据返回 409；文件格式不支持通过 `CaseFile.parse_status` 表达；不接受 JSON 上传或全量旧案件 upsert。
+旧格式快照仅在确定性迁移安全时以内存投影读取，歧义数据返回 409；文件格式不支持通过 `CaseFile.parse_status` 表达；不接受 JSON 文件上传或全量旧案件 upsert。
 旧卡片编辑、`/api/inference/generate`、router、QA 和 interaction 接口已移除，返回 404。
 
 ## 上传来源类型与 Extraction

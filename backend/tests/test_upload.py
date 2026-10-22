@@ -152,13 +152,44 @@ class TestUploads(IsolatedCaseTest):
         self.assertEqual(build_extraction_input(case_store.load_case(case["case_id"])).files[0].text, "# Heading\ntext")
 
     def test_rejects_nonmultipart_and_invalid_forms_without_writes(self):
-        self.assertEqual(self.client.post("/api/cases", json={"case_title": "title"}).status_code, 415)
+        self.assertEqual(self.client.post("/api/cases", content=b"not-json",
+                                          headers={"content-type": "text/plain"}).status_code, 415)
+        self.assertEqual(self.client.post("/api/cases", content=b"{",
+                                          headers={"content-type": "application/json"}).status_code, 422)
         for data, files in [({}, {"files": ("f.txt", b"text")}),
                              ({"case_title": "  "}, {"files": ("f.txt", b"text")}),
                              ({"case_title": "title"}, {"wrong": ("f.txt", b"text")})]:
             with self.subTest(data=data):
                 self.assertEqual(self.client.post("/api/cases", data=data, files=files).status_code, 422)
         self.assertEqual(list(self.data_dir.iterdir()), [])
+
+    def test_empty_case_create_and_rename_persist_without_changing_identity(self):
+        response = self.client.post("/api/cases", json={"case_title": "未命名案件"})
+        self.assertEqual(response.status_code, 201, response.text)
+        created = response.json()["case"]
+        self.assertEqual(created["case_title"], "未命名案件")
+        self.assertEqual(created["files"], [])
+        self.assertEqual(created["info_units"], [])
+        self.assertEqual(self.client.get("/api/case").json()["case"], created)
+        listing = self.client.get("/api/cases").json()
+        self.assertEqual(listing["current_case_id"], created["case_id"])
+        self.assertEqual([case["case_id"] for case in listing["cases"]], [created["case_id"]])
+
+        renamed_response = self.client.patch(
+            f"/api/cases/{created['case_id']}", json={"case_title": "租赁争议"})
+        self.assertEqual(renamed_response.status_code, 200, renamed_response.text)
+        renamed = renamed_response.json()["case"]
+        self.assertEqual(renamed["case_id"], created["case_id"])
+        self.assertEqual(renamed["created_at"], created["created_at"])
+        self.assertEqual(renamed["case_title"], "租赁争议")
+        self.assertEqual(renamed["files"], created["files"])
+        self.assertEqual(self.client.get(f"/api/cases/{created['case_id']}").json()["case"], renamed)
+        self.assertEqual(self.client.get("/api/cases").json()["cases"][0]["case_title"], "租赁争议")
+
+        before_invalid = (self.data_dir / created["case_id"] / "case.json").read_bytes()
+        invalid = self.client.patch(f"/api/cases/{created['case_id']}", json={"case_title": "  "})
+        self.assertEqual(invalid.status_code, 422, invalid.text)
+        self.assertEqual((self.data_dir / created["case_id"] / "case.json").read_bytes(), before_invalid)
 
     def test_remaining_unconnected_pipelines_return_501_and_never_write_results(self):
         case = self.upload()

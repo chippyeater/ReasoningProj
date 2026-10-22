@@ -541,6 +541,9 @@ export default function App() {
   const [caseOptions, setCaseOptions] = useState<CaseSummary[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [caseMenuOpen, setCaseMenuOpen] = useState(false);
+  const [caseNameEditing, setCaseNameEditing] = useState(false);
+  const [caseNameDraft, setCaseNameDraft] = useState("");
+  const [caseActionBusy, setCaseActionBusy] = useState(false);
   const [infoUnitEditor, setInfoUnitEditor] = useState<InfoUnitEditorState | null>(null);
   const [infoUnitDraftState, setInfoUnitDraftState] = useState<InfoUnitDraft>(emptyInfoUnitDraft);
   const [quoteUnits, setQuoteUnits] = useState<QuoteUnit[]>([]);
@@ -571,6 +574,7 @@ export default function App() {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const nodeElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const caseSelectorRef = useRef<HTMLDivElement | null>(null);
+  const caseNameInputRef = useRef<HTMLInputElement | null>(null);
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadAbortRef = useRef<AbortController | null>(null);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -781,12 +785,20 @@ export default function App() {
   useEffect(() => {
     const onWindowClick = (event: MouseEvent) => {
       if (!caseSelectorRef.current) return;
-      if (caseSelectorRef.current.contains(event.target as Node)) return;
+      if (event.composedPath().includes(caseSelectorRef.current)) return;
       setCaseMenuOpen(false);
+      setCaseNameEditing(false);
+      setCaseNameDraft("");
     };
     window.addEventListener("click", onWindowClick);
     return () => window.removeEventListener("click", onWindowClick);
   }, []);
+
+  useEffect(() => {
+    if (!caseNameEditing) return;
+    caseNameInputRef.current?.focus();
+    caseNameInputRef.current?.select();
+  }, [caseNameEditing, selectedCaseId]);
 
   const allFiles = useMemo<FileTreeItem[]>(() => {
     const items: FileTreeItem[] = [];
@@ -1814,19 +1826,81 @@ export default function App() {
     }
   }
 
-  async function onRenameCurrentCase() {
-    if (!selectedCaseId) return;
+  function beginCaseRename() {
+    setCaseMenuOpen(true);
+    if (!selectedCaseId || caseActionBusy) return;
     const currentTitle = caseOptions.find((item) => item.case_id === selectedCaseId)?.title ?? currentCase?.case_title ?? "";
-    const nextTitle = window.prompt("Rename case", currentTitle)?.trim();
-    if (!nextTitle || nextTitle === currentTitle) return;
+    setCaseNameDraft(currentTitle);
+    setCaseNameEditing(true);
+  }
 
+  function cancelCaseRename() {
+    setCaseNameEditing(false);
+    setCaseNameDraft("");
+  }
+
+  async function saveCurrentCaseName() {
+    if (!selectedCaseId || caseActionBusy) return;
+    const currentTitle = caseOptions.find((item) => item.case_id === selectedCaseId)?.title ?? currentCase?.case_title ?? "";
+    const nextTitle = caseNameDraft.trim();
+    if (!nextTitle) {
+      setError("案件名称不能为空。");
+      caseNameInputRef.current?.focus();
+      return;
+    }
+    if (nextTitle === currentTitle) {
+      cancelCaseRename();
+      return;
+    }
+
+    setCaseActionBusy(true);
+    setError("");
     try {
       const updated = await renameCase(selectedCaseId, nextTitle);
       setCurrentCase(updated.case);
-      const nextCases = await listCases();
-      setCaseOptions(nextCases.cases);
+      setCaseOptions((items) => items.map((item) => (
+        item.case_id === selectedCaseId ? { ...item, title: nextTitle, updated_at: Date.now() } : item
+      )));
+      cancelCaseRename();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Rename case failed");
+      setError(err instanceof Error ? err.message : "案件重命名失败");
+    } finally {
+      setCaseActionBusy(false);
+    }
+  }
+
+  async function createBlankCase() {
+    if (caseActionBusy) return;
+    setCaseActionBusy(true);
+    setError("");
+    try {
+      const created = await createCase("未命名案件", []);
+      const nextCase = created.case;
+      setCurrentCase(nextCase);
+      setSelectedCaseId(nextCase.case_id);
+      setSelectedNodeIds([]);
+      setFocusedNodeId(null);
+      setEvidences([]);
+      setNodePositions({});
+      setTransform(clampViewportToWrapper({ x: 0, y: 0, zoom: 1 }, wrapperRef.current));
+      closeInfoUnitEditor();
+      closeRelationEditor();
+      setCaseOptions((items) => [
+        {
+          case_id: nextCase.case_id,
+          title: nextCase.case_title,
+          updated_at: Date.parse(nextCase.updated_at) || Date.now(),
+          is_current: true,
+        },
+        ...items.map((item) => ({ ...item, is_current: false })),
+      ]);
+      setCaseMenuOpen(true);
+      setCaseNameDraft(nextCase.case_title);
+      setCaseNameEditing(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "新建案件失败");
+    } finally {
+      setCaseActionBusy(false);
     }
   }
   function applyCanvasTransform(nextTransform: CanvasTransform, persist = true) {
@@ -2423,21 +2497,52 @@ export default function App() {
             </div>
             <div className="user-name">Sherlock Holmes</div>
             <div className="case-selector" ref={caseSelectorRef}>
-              <button
-                className="case-selector-trigger"
-                type="button"
-                title="Double click to rename"
-                onClick={() => setCaseMenuOpen((current) => !current)}
-                onDoubleClick={() => {
-                  void onRenameCurrentCase();
-                }}
-              >
-                <span>{selectedCaseLabel}</span>
-                <img src={chevronsUpIcon} alt="case selector" className={`case-selector-chevron ${caseMenuOpen ? "open" : ""}`} />
-              </button>
+              {caseNameEditing ? (
+                <div className="case-selector-trigger editing">
+                  <input
+                    ref={caseNameInputRef}
+                    value={caseNameDraft}
+                    aria-label="案件名称"
+                    disabled={caseActionBusy}
+                    onChange={(event) => setCaseNameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void saveCurrentCaseName();
+                      } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelCaseRename();
+                      }
+                    }}
+                  />
+                  <button
+                    className="case-name-save"
+                    type="button"
+                    aria-label="保存案件名称"
+                    title="保存案件名称"
+                    disabled={caseActionBusy}
+                    onClick={() => void saveCurrentCaseName()}
+                  >
+                    ✓
+                  </button>
+                  <img src={chevronsUpIcon} alt="" className={`case-selector-chevron ${caseMenuOpen ? "open" : ""}`} />
+                </div>
+              ) : (
+                <button
+                  className="case-selector-trigger"
+                  type="button"
+                  title={selectedCaseId ? "单击重命名并展开案件列表" : "展开案件列表"}
+                  onClick={beginCaseRename}
+                  aria-expanded={caseMenuOpen}
+                >
+                  <span>{selectedCaseLabel}</span>
+                  <img src={chevronsUpIcon} alt="" className={`case-selector-chevron ${caseMenuOpen ? "open" : ""}`} />
+                </button>
+              )}
               {caseMenuOpen ? (
                 <div className="case-selector-list">
                   <div className="case-selector-list-inner">
+                    {caseOptions.length === 0 ? <p className="case-selector-empty">暂无案件</p> : null}
                     {caseOptions.map((item) => {
                       const selected = item.case_id === selectedCaseId;
                       return (
@@ -2445,6 +2550,7 @@ export default function App() {
                           key={item.case_id}
                           className={`case-selector-item ${selected ? "selected" : ""}`}
                           type="button"
+                          disabled={caseActionBusy}
                           onClick={() => {
                             void (async () => {
                               try {
@@ -2466,6 +2572,7 @@ export default function App() {
                                 setEvidences([]);
                                 closeInfoUnitEditor();
                                 closeRelationEditor();
+                                cancelCaseRename();
                                 setCaseMenuOpen(false);
                               } catch (err) {
                                 setError(err instanceof Error ? err.message : "Case switch failed");
@@ -2474,10 +2581,20 @@ export default function App() {
                           }}
                         >
                           <span>{item.title || "Untitled"}</span>
-                          {selected ? <span className="case-selected-mark">v</span> : null}
+                          {selected ? <span className="case-selected-mark">✓</span> : null}
                         </button>
                       );
                     })}
+                    <div className="case-selector-divider" />
+                    <button
+                      className="case-selector-create"
+                      type="button"
+                      disabled={caseActionBusy}
+                      onClick={() => void createBlankCase()}
+                    >
+                      <span className="case-create-mark">＋</span>
+                      <span>{caseActionBusy ? "处理中…" : "新建案件"}</span>
+                    </button>
                   </div>
                 </div>
               ) : null}
