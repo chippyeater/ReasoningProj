@@ -37,6 +37,12 @@
       "sha256": "e997749919adb844e0cb16fe7b3d334ea787821cc365ab41491dc12696bfd7d4"
     },
     {
+      "name": "investigation_agent",
+      "path": "backend/prompts/investigation_agent_prompt.md",
+      "version": 1,
+      "sha256": "601a7177a37bb3f00554c2e5e0e2f63384e3ba8caec7cae94ded6a52a2954ceb"
+    },
+    {
       "name": "reasoning_selector",
       "path": "backend/prompts/reasoning_selector_prompt.md",
       "version": 1,

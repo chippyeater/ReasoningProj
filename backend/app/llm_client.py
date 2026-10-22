@@ -103,6 +103,11 @@ class LLMReply:
     response: dict
 
 
+@dataclass
+class ToolReply(LLMReply):
+    message: dict
+
+
 class LLMFailure(AppError):
     def __init__(self, code: str, message: str, *, response: object = None):
         super().__init__(code, message, 502)
@@ -122,8 +127,7 @@ def structured_request_payload(config: LLMConfig, system_prompt: str,
     }
 
 
-async def call_structured(config: LLMConfig, system_prompt: str, model_input: dict, schema: dict) -> LLMReply:
-    payload = structured_request_payload(config, system_prompt, model_input, schema)
+async def _post_completion(config: LLMConfig, payload: dict) -> httpx.Response:
     headers = {"Content-Type": "application/json"}
     if config.provider == "azure":
         headers["api-key"] = config.api_key
@@ -140,6 +144,12 @@ async def call_structured(config: LLMConfig, system_prompt: str, model_input: di
         raise LLMFailure("llm_call_failed", "Model request failed at the transport boundary", response={"exception_type": type(exc).__name__}) from exc
     if response.status_code != 200:
         raise LLMFailure("llm_call_failed", f"Model provider returned HTTP {response.status_code}", response=response.text)
+    return response
+
+
+async def call_structured(config: LLMConfig, system_prompt: str, model_input: dict, schema: dict) -> LLMReply:
+    payload = structured_request_payload(config, system_prompt, model_input, schema)
+    response = await _post_completion(config, payload)
     try:
         body = response.json()
         if not isinstance(body, dict) or not isinstance(body.get("choices"), list) or len(body["choices"]) != 1:
@@ -158,3 +168,64 @@ async def call_structured(config: LLMConfig, system_prompt: str, model_input: di
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         raise LLMFailure("llm_response_invalid", "Provider returned an invalid completion envelope", response=response.text) from exc
     return LLMReply(content=content, response=body)
+
+
+def tool_request_payload(config: LLMConfig, messages: list[dict], tools: list[dict],
+                         schema: dict, *, tool_choice: str = "auto") -> dict:
+    return {
+        "model": config.model, "messages": messages, "tools": tools,
+        "tool_choice": tool_choice, "parallel_tool_calls": False,
+        "response_format": {"type": "json_schema", "json_schema": {
+            "name": "investigation_result", "strict": True, "schema": schema}},
+        "max_completion_tokens": config.max_completion_tokens,
+    }
+
+
+async def call_tools(config: LLMConfig, messages: list[dict], tools: list[dict],
+                     schema: dict, *, tool_choice: str = "auto") -> ToolReply:
+    """One native tool turn, sharing authentication/transport with structured calls.
+
+    Exactly one function call or a final structured message; no retries/fallback.
+    Argument and final-result validation belong to the case-bound runtime.
+    """
+    response = await _post_completion(
+        config, tool_request_payload(config, messages, tools, schema, tool_choice=tool_choice))
+    try:
+        body = response.json()
+        if not isinstance(body, dict) or not isinstance(body.get("choices"), list) or len(body["choices"]) != 1:
+            raise ValueError("Expected exactly one completion")
+        choice = body["choices"][0]
+        if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
+            raise ValueError("Invalid completion message")
+        message = choice["message"]
+        if message.get("refusal"):
+            raise LLMFailure("llm_refused", "Model refused the investigation request", response=body)
+        finish = choice.get("finish_reason")
+        if finish not in {"stop", "tool_calls"}:
+            raise LLMFailure("llm_incomplete", "Model response did not finish normally", response=body)
+        calls = message.get("tool_calls")
+        content = message.get("content")
+        if finish == "tool_calls":
+            if tool_choice == "none" or not isinstance(calls, list) or len(calls) != 1:
+                raise ValueError("Expected one permitted function call")
+            call = calls[0]
+            if (not isinstance(call, dict) or call.get("type") != "function"
+                    or not isinstance(call.get("id"), str) or not call["id"].strip()
+                    or not isinstance(call.get("function"), dict)):
+                raise ValueError("Invalid function call")
+            function = call["function"]
+            if (not isinstance(function.get("name"), str) or not function["name"].strip()
+                    or not isinstance(function.get("arguments"), str)
+                    or content is not None and not isinstance(content, str)):
+                raise ValueError("Invalid function arguments envelope")
+            normalized = {"role": "assistant", "content": content, "tool_calls": [{
+                "id": call["id"], "type": "function", "function": {
+                    "name": function["name"], "arguments": function["arguments"]}}]}
+        else:
+            if calls or not isinstance(content, str) or not content.strip():
+                raise ValueError("Missing final structured content")
+            normalized = {"role": "assistant", "content": content}
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise LLMFailure("llm_response_invalid", "Provider returned an invalid tool completion envelope",
+                         response=response.text) from exc
+    return ToolReply(content=content or "", response=body, message=normalized)
