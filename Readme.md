@@ -117,17 +117,21 @@ Azure 使用 `AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY / AZURE_OPENAI_MODEL`
 已配置的 Foundry project endpoint 按其资源域名转为 `/openai/v1` 模型推理路径；每个明确步骤调用一次 Chat Completions 并请求严格 JSON Schema，没有自动重试。
 实现依据：[OpenAI 结构化输出](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=chat)、[Azure v1 端点与认证](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle?tabs=key)。
 
-以下新接口已保留入口和错误行为，当前执行均返回 **501 `pipeline_not_implemented`**：
+Relation 已接通为增量生成：`POST /api/relation/run` 接收 `{case_id}` 进行全案检查，或额外传入至少两个
+`selected_info_unit_ids` 仅检查选中节点；响应只返回本次 `added_relations`。正式 ID 由后端生成，等价关系不会重复追加。
+单条手动关系通过 `/api/cases/{case_id}/relations` 的 POST，以及
+`/api/cases/{case_id}/relations/{relation_id}` 的 PATCH / DELETE 维护；读取继续复用案件接口。
+
+以下执行入口仍返回 **501 `pipeline_not_implemented`**：
 
 | 接口 | 下一阶段目标 |
 | --- | --- |
-| `POST /api/relation/run` | `{case_id}` → `RelationInput` / `RelationOutput`，不再生成重复连线 |
 | `POST /api/reasoning/run` | `ReasoningInput` → 选择视图、生成 `ViewPayload`、保存 `ReasoningView` |
 | `POST /api/law/retrieve` | `LawRetrieveInput` → `LawRetrieveOutput`，引用已核验 `LawEntry` |
 
 没有 Mock、业务兜底或 LLM 隐式回退。
 `RunStatus.fallback` 仅因 v0.3 契约明确定义而保留枚举值；当前没有使用它的执行分支。
-仅 Extraction 初稿与合并复核两个 Prompt 已进入运行路径；关系及其他视图 Prompt 不加载，需下一阶段审核。
+Extraction 初稿、合并复核与 Relation Prompt 已进入各自运行路径；其他视图 Prompt 尚未接通。
 当前 Extraction 的技术流程已通过离线契约测试；尚未针对 Gold v1.8 运行新的真实模型评测。
 历史 v7.2 结果仍按 Gold v1.7 记录为整批拒绝，11/17 只属于诊断对齐，不是成功率。
 本地 `backend/data/laws.json` 已直接整理为 `LawEntry[]`，保留条文、条号、标题、ID 与来源。

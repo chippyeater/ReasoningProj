@@ -160,12 +160,11 @@ class TestV02Uploads(IsolatedCaseTest):
                 self.assertEqual(self.client.post("/api/cases", data=data, files=files).status_code, 422)
         self.assertEqual(list(self.data_dir.iterdir()), [])
 
-    def test_unconnected_pipelines_return_501_and_never_write_results(self):
+    def test_remaining_unconnected_pipelines_return_501_and_never_write_results(self):
         case = self.upload()
         path = self.data_dir / case["case_id"] / "case.json"
         before = path.read_bytes()
         inputs = {
-            "/api/relation/run": {"case_id": case["case_id"]},
             "/api/reasoning/run": {"case_id": case["case_id"], "question": "争点", "selected_info_unit_ids": [], "selected_relation_ids": []},
             "/api/law/retrieve": {"case_id": case["case_id"], "issue": "争点", "selected_info_unit_ids": [], "max_results": 5},
         }

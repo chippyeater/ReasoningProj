@@ -801,6 +801,31 @@ button:disabled {
   stroke: #ffffff;
 }
 
+.canvas-link.relation-about {
+  stroke: #83c9ff;
+}
+
+.canvas-link.relation-support {
+  stroke: #9ee493;
+}
+
+.canvas-link.relation-contradict {
+  stroke: #ff8e9e;
+  stroke-dasharray: 8 5;
+}
+
+.canvas-link.relation-derived {
+  stroke: #b8b2cb;
+  stroke-dasharray: 3 5;
+}
+
+.relation-edge-hit {
+  pointer-events: stroke;
+  fill: none;
+  stroke: transparent;
+  cursor: pointer;
+}
+
 .edge-label-box {
   fill: #d9cfff;
   stroke: #ffffff;
@@ -811,6 +836,15 @@ button:disabled {
   fill: #24174d;
   font-size: 12px;
   font-weight: 600;
+}
+
+.relation-evidence-list em {
+  display: block;
+  margin-top: 5px;
+  color: #aaa4c8;
+  font-size: 11px;
+  font-style: normal;
+  white-space: pre-wrap;
 }
 
 
@@ -1000,6 +1034,20 @@ button:disabled {
   margin: 0;
   padding-left: 30px;
   font-size: 11px;
+}
+
+.relation-generate-action {
+  width: 100%;
+  margin-top: 8px;
+  border-color: rgba(158, 228, 147, 0.55);
+  background: rgba(158, 228, 147, 0.12);
+  color: #d9ffd2;
+}
+
+.relation-run-status {
+  margin: 8px 2px 0;
+  color: #c9f5c1;
+  font-size: 12px;
 }
 
 .agent-proposal-error {

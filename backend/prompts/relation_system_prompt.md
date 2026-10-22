@@ -1,6 +1,7 @@
 # 基础关系：Schema v0.3 字段契约
 
-输入为 RelationInput：core_issue、issue_set、完整 info_units。
+输入主体为 RelationInput：core_issue、issue_set、当前允许检查范围内的 info_units；另含 scope 和 existing_relations。
+scope=all 表示全案初次生成；scope=selected 表示只检查所给节点之间的关系。
 读取五类 InfoUnit、speaker、side、related_issue、actor、target 和 source_refs；只建立直接语义关系。
 
 输出为 RelationOutput：relations。
@@ -17,4 +18,6 @@ rationale、certainty（explicit / inferred）。所有信息单元 ID 必须存
 evidence_unit_ids 引用判断依据的信息单元，不复制原文。
 不能只因主题相同就建立支持关系；不同来源的重复陈述不构成独立证明。
 无合法关系时返回空数组，不创建替代关系或法律结论。
-本文件当前不由运行路径加载，执行接口接通前不调用模型。
+不得输出 existing_relations 中已存在的等价关系。contradict 的正反方向视为同一关系；about 和 support 保持方向性。
+scope=selected 时，source_id、target_id 和 evidence_unit_ids 均不得引用输入 info_units 之外的节点。
+输出 id 只是本次响应内唯一的临时 ID；持久化 ID 由后端生成。

@@ -3,9 +3,11 @@ import {
   confirmInfoUnitProposal,
   createCase,
   createInfoUnit,
+  createRelation,
   appendFilesToCase,
   deleteCase,
   deleteInfoUnit,
+  deleteRelation,
   getCase,
   getCaseById,
   listCases,
@@ -14,6 +16,7 @@ import {
   proposeInfoUnit,
   routeTask,
   runExtraction,
+  runRelation,
   runReasoning,
   askQa,
   actInteraction,
@@ -21,6 +24,7 @@ import {
   updateCardPosition,
   updateCardDisplayLevel,
   updateInfoUnit,
+  updateRelation,
   updateWorkspaceState,
   type CaseData,
   type CaseSummary,
@@ -31,6 +35,8 @@ import {
   type InfoUnitType,
   type InfoUnitMutationInput,
   type QuoteUnit,
+  type Relation,
+  type RelationMutationInput,
 } from "./api";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
@@ -112,6 +118,7 @@ type CanvasEdge = {
   targetId: string;
   relationType: string;
   strength: number;
+  businessRelationType: Relation["relation_type"] | null;
 };
 
 type Point = { x: number; y: number };
@@ -130,6 +137,20 @@ type FileTreeItem = {
 type InfoUnitEditorState = {
   mode: "create" | "edit";
   infoUnitId: string | null;
+};
+
+type RelationEditorState = {
+  mode: "create" | "edit";
+  relationId: string | null;
+};
+
+type RelationDraft = {
+  sourceId: string;
+  targetId: string;
+  relationType: Relation["relation_type"];
+  evidenceUnitIds: string[];
+  rationale: string;
+  certainty: Relation["certainty"];
 };
 
 type InfoUnitDraft = {
@@ -179,6 +200,28 @@ function infoUnitDraft(unit: InfoUnit): InfoUnitDraft {
 function nullableText(value: string): string | null {
   const normalized = value.trim();
   return normalized || null;
+}
+
+function emptyRelationDraft(selectedIds: string[] = []): RelationDraft {
+  return {
+    sourceId: selectedIds[0] ?? "",
+    targetId: selectedIds[1] ?? "",
+    relationType: "about",
+    evidenceUnitIds: selectedIds.slice(0, 2),
+    rationale: "",
+    certainty: "explicit",
+  };
+}
+
+function relationDraft(relation: Relation): RelationDraft {
+  return {
+    sourceId: relation.source_id,
+    targetId: relation.target_id,
+    relationType: relation.relation_type,
+    evidenceUnitIds: [...relation.evidence_unit_ids],
+    rationale: relation.rationale,
+    certainty: relation.certainty,
+  };
 }
 
 function quoteMatchesSource(unit: QuoteUnit, ref: InfoUnit["source_refs"][number]): boolean {
@@ -508,6 +551,12 @@ export default function App() {
   const [editorBusy, setEditorBusy] = useState(false);
   const [quotesLoading, setQuotesLoading] = useState(false);
   const [extractionRunning, setExtractionRunning] = useState(false);
+  const [relationRunning, setRelationRunning] = useState(false);
+  const [relationStatus, setRelationStatus] = useState("");
+  const [relationEditor, setRelationEditor] = useState<RelationEditorState | null>(null);
+  const [relationDraftState, setRelationDraftState] = useState<RelationDraft>(emptyRelationDraft);
+  const [relationEditorError, setRelationEditorError] = useState("");
+  const [relationEditorBusy, setRelationEditorBusy] = useState(false);
 
   const [transform, setTransform] = useState<CanvasTransform>({ x: 0, y: 0, zoom: 1 });
   const [nodePositions, setNodePositions] = useState<Record<string, Point>>({});
@@ -569,6 +618,18 @@ export default function App() {
       ? currentCase?.info_units.find((unit) => unit.id === infoUnitEditor.infoUnitId) ?? null
       : null,
     [currentCase, infoUnitEditor],
+  );
+
+  const selectedInfoUnitIds = useMemo(() => {
+    const ids = new Set(currentCase?.info_units.map((unit) => unit.id) ?? []);
+    return selectedNodeIds.filter((id) => ids.has(id));
+  }, [currentCase, selectedNodeIds]);
+
+  const editedRelation = useMemo(
+    () => relationEditor?.relationId
+      ? currentCase?.relations.find((relation) => relation.id === relationEditor.relationId) ?? null
+      : null,
+    [currentCase, relationEditor],
   );
 
   const filteredQuoteUnits = useMemo(() => {
@@ -903,12 +964,14 @@ export default function App() {
     });
 
     currentCase.edges.slice(0, 60).forEach((edge) => {
+      const businessRelation = currentCase.relations.find((relation) => relation.id === edge.id) ?? null;
       edges.push({
         id: edge.id,
         sourceId: edge.source,
         targetId: edge.target,
         relationType: edgeTypeLabel(edge.edge_type, edge.relation_type || edge.label),
         strength: edgeStrength(edge.edge_type),
+        businessRelationType: businessRelation?.relation_type ?? null,
       });
     });
 
@@ -1170,6 +1233,7 @@ export default function App() {
       setUploadProgress(100);
       setCurrentCase(response.case);
       closeInfoUnitEditor();
+      closeRelationEditor();
       setSelectedNodeIds(pickSelectedNodeIds(response.case));
       setFocusedNodeId(pickFocusedNodeId(response.case));
       if (response.case.workspace_state?.viewport) {
@@ -1208,6 +1272,16 @@ export default function App() {
     setError("");
     try {
       await runExtraction({ case_id: currentCase.case_id });
+      try {
+        await runRelation({ case_id: currentCase.case_id });
+      } catch (relationError) {
+        const refreshed = await getCaseById(currentCase.case_id);
+        setCurrentCase(refreshed.case);
+        setSelectedNodeIds(pickSelectedNodeIds(refreshed.case));
+        setFocusedNodeId(pickFocusedNodeId(refreshed.case));
+        setError(`Extraction 已保存；Relation 生成失败：${relationError instanceof Error ? relationError.message : "未知错误"}`);
+        return;
+      }
       const refreshed = await getCaseById(currentCase.case_id);
       setCurrentCase(refreshed.case);
       setSelectedNodeIds(pickSelectedNodeIds(refreshed.case));
@@ -1236,6 +1310,7 @@ export default function App() {
     setError("");
     await deleteCase();
     closeInfoUnitEditor();
+    closeRelationEditor();
     setCurrentCase(null);
     setSelectedNodeIds([]);
     setFocusedNodeId(null);
@@ -1521,6 +1596,103 @@ export default function App() {
       setEditorError(err instanceof Error ? err.message : "InfoUnit 删除失败");
     } finally {
       setEditorBusy(false);
+    }
+  }
+
+  function closeRelationEditor() {
+    setRelationEditor(null);
+    setRelationEditorError("");
+  }
+
+  function openRelationEditor(relation: Relation | null = null) {
+    if (!currentCase) return;
+    setRelationEditor({ mode: relation ? "edit" : "create", relationId: relation?.id ?? null });
+    setRelationDraftState(relation ? relationDraft(relation) : emptyRelationDraft(selectedInfoUnitIds));
+    setRelationEditorError("");
+  }
+
+  function toggleRelationEvidence(infoUnitId: string) {
+    setRelationDraftState((current) => ({
+      ...current,
+      evidenceUnitIds: current.evidenceUnitIds.includes(infoUnitId)
+        ? current.evidenceUnitIds.filter((id) => id !== infoUnitId)
+        : [...current.evidenceUnitIds, infoUnitId],
+    }));
+  }
+
+  function buildRelationPayload(): RelationMutationInput {
+    return {
+      source_id: relationDraftState.sourceId,
+      target_id: relationDraftState.targetId,
+      relation_type: relationDraftState.relationType,
+      evidence_unit_ids: relationDraftState.evidenceUnitIds,
+      rationale: relationDraftState.rationale.trim(),
+      certainty: relationDraftState.certainty,
+    };
+  }
+
+  async function saveRelation() {
+    if (!currentCase || !relationEditor) return;
+    setRelationEditorError("");
+    if (!relationDraftState.sourceId || !relationDraftState.targetId || !relationDraftState.rationale.trim()) {
+      setRelationEditorError("起点、终点和理由不能为空");
+      return;
+    }
+    if (relationDraftState.evidenceUnitIds.length === 0) {
+      setRelationEditorError("至少选择一个依据节点");
+      return;
+    }
+    setRelationEditorBusy(true);
+    try {
+      const payload = buildRelationPayload();
+      const result = relationEditor.mode === "create"
+        ? await createRelation(currentCase.case_id, payload)
+        : await updateRelation(currentCase.case_id, relationEditor.relationId!, payload);
+      setCurrentCase(result.case);
+      closeRelationEditor();
+    } catch (err) {
+      setRelationEditorError(err instanceof Error ? err.message : "Relation 保存失败");
+    } finally {
+      setRelationEditorBusy(false);
+    }
+  }
+
+  async function removeEditedRelation() {
+    if (!currentCase || relationEditor?.mode !== "edit" || !relationEditor.relationId) return;
+    if (!window.confirm("确认删除该 Relation？")) return;
+    setRelationEditorBusy(true);
+    setRelationEditorError("");
+    try {
+      const result = await deleteRelation(currentCase.case_id, relationEditor.relationId);
+      setCurrentCase(result.case);
+      closeRelationEditor();
+    } catch (err) {
+      setRelationEditorError(err instanceof Error ? err.message : "Relation 删除失败");
+    } finally {
+      setRelationEditorBusy(false);
+    }
+  }
+
+  async function generateSelectedRelations() {
+    if (!currentCase || selectedInfoUnitIds.length < 2) return;
+    setRelationRunning(true);
+    setRelationStatus("正在检查选中节点之间的关系…");
+    setAgentError("");
+    try {
+      const result = await runRelation({
+        case_id: currentCase.case_id,
+        selected_info_unit_ids: selectedInfoUnitIds,
+      });
+      const refreshed = await getCaseById(currentCase.case_id);
+      setCurrentCase(refreshed.case);
+      setRelationStatus(result.added_relations.length
+        ? `已新增 ${result.added_relations.length} 条关系。`
+        : "未发现新的合法关系。");
+    } catch (err) {
+      setRelationStatus("");
+      setAgentError(`Relation 生成失败：${err instanceof Error ? err.message : "未知错误"}`);
+    } finally {
+      setRelationRunning(false);
     }
   }
 
@@ -2148,6 +2320,96 @@ export default function App() {
     );
   }
 
+  function renderRelationEditor() {
+    if (!relationEditor || !currentCase) return null;
+    const options = currentCase.info_units;
+    return (
+      <div className="info-unit-editor-backdrop" role="presentation" onMouseDown={(event) => event.stopPropagation()}>
+        <section className="info-unit-editor relation-editor" role="dialog" aria-modal="true" aria-labelledby="relation-editor-title">
+          <header className="info-unit-editor-header">
+            <div>
+              <p className="info-unit-editor-kicker">Relation</p>
+              <h2 id="relation-editor-title">{relationEditor.mode === "create" ? "新建关系" : "关系详情与编辑"}</h2>
+              {editedRelation ? <p className="info-unit-editor-id">{editedRelation.id}</p> : null}
+            </div>
+            <button type="button" className="editor-close" onClick={closeRelationEditor} disabled={relationEditorBusy} aria-label="关闭关系编辑器">×</button>
+          </header>
+          <div className="info-unit-editor-body">
+            <div className="info-unit-form-grid">
+              <label className="editor-field">
+                <span>起点</span>
+                <select value={relationDraftState.sourceId} onChange={(event) => setRelationDraftState((current) => ({ ...current, sourceId: event.target.value }))}>
+                  <option value="">请选择</option>
+                  {options.map((unit) => <option key={unit.id} value={unit.id}>{unit.title} · {unit.id}</option>)}
+                </select>
+              </label>
+              <label className="editor-field">
+                <span>终点</span>
+                <select value={relationDraftState.targetId} onChange={(event) => setRelationDraftState((current) => ({ ...current, targetId: event.target.value }))}>
+                  <option value="">请选择</option>
+                  {options.map((unit) => <option key={unit.id} value={unit.id}>{unit.title} · {unit.id}</option>)}
+                </select>
+              </label>
+              <label className="editor-field">
+                <span>关系类型</span>
+                <select value={relationDraftState.relationType} onChange={(event) => setRelationDraftState((current) => ({ ...current, relationType: event.target.value as Relation["relation_type"] }))}>
+                  <option value="about">about</option>
+                  <option value="support">support</option>
+                  <option value="contradict">contradict</option>
+                </select>
+              </label>
+              <label className="editor-field">
+                <span>确定性</span>
+                <select value={relationDraftState.certainty} onChange={(event) => setRelationDraftState((current) => ({ ...current, certainty: event.target.value as Relation["certainty"] }))}>
+                  <option value="explicit">explicit</option>
+                  <option value="inferred">inferred</option>
+                </select>
+              </label>
+              <label className="editor-field editor-field-wide">
+                <span>理由</span>
+                <textarea rows={3} value={relationDraftState.rationale} onChange={(event) => setRelationDraftState((current) => ({ ...current, rationale: event.target.value }))} />
+              </label>
+            </div>
+            <section className="source-editor-section">
+              <div className="source-editor-heading">
+                <div>
+                  <h3>依据 InfoUnits</h3>
+                  <p>依据节点通过既有 SourceRefs 追溯原文，不使用 Quote ID。</p>
+                </div>
+                <span>{relationDraftState.evidenceUnitIds.length}</span>
+              </div>
+              <div className="quote-unit-list relation-evidence-list">
+                {options.map((unit) => {
+                  const checked = relationDraftState.evidenceUnitIds.includes(unit.id);
+                  return (
+                    <label className={`quote-unit-option ${checked ? "selected" : ""}`} key={unit.id}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleRelationEvidence(unit.id)} />
+                      <span>
+                        <small>{unit.id} · {unit.type}{unit.subtype ? `/${unit.subtype}` : ""}</small>
+                        <strong>{unit.title} — {unit.content}</strong>
+                        <em>{unit.source_refs.map((ref) => ref.quote).join("；")}</em>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+          {relationEditorError ? <p className="info-unit-editor-error" role="alert">{relationEditorError}</p> : null}
+          <footer className="info-unit-editor-actions">
+            {relationEditor.mode === "edit" ? (
+              <button type="button" className="editor-delete" onClick={() => void removeEditedRelation()} disabled={relationEditorBusy}>删除</button>
+            ) : <span />}
+            <div>
+              <button type="button" className="editor-secondary" onClick={closeRelationEditor} disabled={relationEditorBusy}>取消</button>
+              <button type="button" onClick={() => void saveRelation()} disabled={relationEditorBusy}>{relationEditorBusy ? "保存中…" : "保存"}</button>
+            </div>
+          </footer>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <main className="page">
       <div className="studio-layout">
@@ -2202,6 +2464,7 @@ export default function App() {
                                 setSelectedCaseId(item.case_id);
                                 setEvidences([]);
                                 closeInfoUnitEditor();
+                                closeRelationEditor();
                                 setCaseMenuOpen(false);
                               } catch (err) {
                                 setError(err instanceof Error ? err.message : "Case switch failed");
@@ -2364,6 +2627,7 @@ export default function App() {
                 {extractionRunning ? "提取中…" : "开始提取"}
               </button>
               <button type="button" onClick={() => void openInfoUnitEditor()} disabled={!currentCase}>+ 新建 InfoUnit</button>
+              <button type="button" onClick={() => openRelationEditor()} disabled={!currentCase || currentCase.info_units.length < 2}>+ 新建关系</button>
               <button
                 type="button"
                 className="editor-secondary"
@@ -2399,8 +2663,25 @@ export default function App() {
                   const labelHeight = 26;
 
                   return (
-                    <g key={edge.id}>
-                      <line x1={sx} y1={sy} x2={tx} y2={ty} className="canvas-link" strokeWidth={edge.strength} />
+                    <g key={edge.id} className={edge.businessRelationType ? "business-relation-edge" : "derived-relation-edge"}>
+                      <line
+                        x1={sx} y1={sy} x2={tx} y2={ty}
+                        className={`canvas-link${edge.businessRelationType ? ` relation-${edge.businessRelationType}` : " relation-derived"}`}
+                        strokeWidth={edge.strength}
+                      />
+                      {edge.businessRelationType ? (
+                        <line
+                          x1={sx} y1={sy} x2={tx} y2={ty}
+                          className="relation-edge-hit"
+                          strokeWidth={14}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            const relation = currentCase?.relations.find((item) => item.id === edge.id);
+                            if (relation) openRelationEditor(relation);
+                          }}
+                        />
+                      ) : null}
                       <rect
                         x={mx - labelWidth / 2}
                         y={my - labelHeight / 2}
@@ -2455,6 +2736,10 @@ export default function App() {
                     }}
                     style={{ left: point.x, top: point.y }}
                     onMouseDown={(event) => {
+                      if (event.button === 2) {
+                        event.stopPropagation();
+                        return;
+                      }
                       const isMultiSelect = event.metaKey || event.ctrlKey;
                       let nextSelectedNodeIds: string[] = [];
 
@@ -2517,6 +2802,17 @@ export default function App() {
                     <img src={sendIcon} alt="send" className="island-icon" />
                   </button>
                 </div>
+                {selectedInfoUnitIds.length >= 2 ? (
+                  <button
+                    type="button"
+                    className="relation-generate-action"
+                    onClick={() => void generateSelectedRelations()}
+                    disabled={relationRunning || agentBusy}
+                  >
+                    {relationRunning ? "关系生成中…" : `生成选中节点之间的关系（${selectedInfoUnitIds.length}）`}
+                  </button>
+                ) : null}
+                {relationStatus ? <p className="relation-run-status" role="status">{relationStatus}</p> : null}
                 {agentError ? <p className="agent-proposal-error" role="alert">{agentError}</p> : null}
                 {agentProposal ? (
                   <section className="agent-proposal" aria-label="InfoUnit 提案预览">
@@ -2578,6 +2874,7 @@ export default function App() {
             {!currentCase ? <div className="canvas-empty">Upload files to generate nodes.</div> : null}
           </div>
           {renderInfoUnitEditor()}
+          {renderRelationEditor()}
         </section>
       </div>
     </main>

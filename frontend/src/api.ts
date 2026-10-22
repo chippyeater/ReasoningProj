@@ -237,6 +237,12 @@ export type Relation = {
   certainty: "explicit" | "inferred";
 };
 
+export type RelationMutationInput = Omit<Relation, "id">;
+
+export type RelationRunResponse = {
+  added_relations: Relation[];
+};
+
 export type ConflictView = {
   view_type: "conflict";
   title: string;
@@ -658,6 +664,42 @@ export async function deleteInfoUnit(caseId: string, infoUnitId: string): Promis
   return { case: normalizeCaseData(data.case) };
 }
 
+export async function createRelation(caseId: string, payload: RelationMutationInput): Promise<{ case: CaseData }> {
+  const data = await readJson<{ case: CaseData }>(await fetch(
+    `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/relations`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  ));
+  return { case: normalizeCaseData(data.case) };
+}
+
+export async function updateRelation(
+  caseId: string,
+  relationId: string,
+  payload: RelationMutationInput,
+): Promise<{ case: CaseData }> {
+  const data = await readJson<{ case: CaseData }>(await fetch(
+    `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/relations/${encodeURIComponent(relationId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  ));
+  return { case: normalizeCaseData(data.case) };
+}
+
+export async function deleteRelation(caseId: string, relationId: string): Promise<{ case: CaseData }> {
+  const data = await readJson<{ case: CaseData }>(await fetch(
+    `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/relations/${encodeURIComponent(relationId)}`,
+    { method: "DELETE" },
+  ));
+  return { case: normalizeCaseData(data.case) };
+}
+
 export async function proposeInfoUnit(
   caseId: string,
   payload: { instruction: string; selected_info_unit_ids: string[] },
@@ -928,6 +970,19 @@ export async function routeTask(payload: RouteRequestPayload): Promise<RouteResp
 export async function runExtraction(payload: ExtractionRunRequest): Promise<ExtractionRunResponse> {
   return readJson<ExtractionRunResponse>(
     await fetch(`${API_BASE}/api/extraction/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+}
+
+export async function runRelation(payload: {
+  case_id: string;
+  selected_info_unit_ids?: string[];
+}): Promise<RelationRunResponse> {
+  return readJson<RelationRunResponse>(
+    await fetch(`${API_BASE}/api/relation/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

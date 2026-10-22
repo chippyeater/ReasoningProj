@@ -52,6 +52,7 @@ evals/case_a/results/
 .claude/
 CLAUDE.md
 tasks/
+/tasks/LOGICWEAVER_AGENT_INFOUNIT_MVP.md
 
 # ---------- 编辑器 / 系统 ----------
 .idea/

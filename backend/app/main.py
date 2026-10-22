@@ -10,8 +10,8 @@ from starlette.datastructures import UploadFile
 
 from app.api_models import (
     CaseResponse, CasesResponse, ConfirmInfoUnitAgentProposalInput, CreateInfoUnitInput,
-    ExtractionRunInput, InfoUnitAgentProposalResponse, InfoUnitAgentRequest, RelationRunInput,
-    UpdateCaseInput, UpdateInfoUnitInput,
+    CreateRelationInput, ExtractionRunInput, InfoUnitAgentProposalResponse, InfoUnitAgentRequest,
+    RelationRunInput, RelationRunResponse, UpdateCaseInput, UpdateInfoUnitInput, UpdateRelationInput,
 )
 from app.case_service import (
     append_files_to_case, build_extraction_input, create_case_from_uploads, create_info_unit,
@@ -25,8 +25,10 @@ from app.errors import AppError
 from app.extraction_service import run_extraction
 from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_proposal
 from app.quote_units import QuoteUnit
+from app.relation_service import create_relation, delete_relation, run_relation, update_relation
 from app.schemas import (
-    CaseData, ExtractionInput, ExtractionOutput, LawRetrieveInput, ParsedDocument, ReasoningInput, UploadRequest, WorkspaceState,
+    CaseData, ExtractionInput, ExtractionOutput, LawRetrieveInput, ParsedDocument, ReasoningInput,
+    UploadRequest, WorkspaceState,
 )
 
 app = FastAPI(title="LogicWeaver API", version="0.3")
@@ -161,6 +163,21 @@ async def remove_info_unit(case_id: str, info_unit_id: str) -> CaseResponse:
     return CaseResponse(case=delete_info_unit(require_case(case_id), info_unit_id))
 
 
+@app.post("/api/cases/{case_id}/relations", response_model=CaseResponse, status_code=201)
+async def add_relation(case_id: str, payload: CreateRelationInput) -> CaseResponse:
+    return CaseResponse(case=create_relation(require_case(case_id), payload))
+
+
+@app.patch("/api/cases/{case_id}/relations/{relation_id}", response_model=CaseResponse)
+async def edit_relation(case_id: str, relation_id: str, payload: UpdateRelationInput) -> CaseResponse:
+    return CaseResponse(case=update_relation(require_case(case_id), relation_id, payload))
+
+
+@app.delete("/api/cases/{case_id}/relations/{relation_id}", response_model=CaseResponse)
+async def remove_relation(case_id: str, relation_id: str) -> CaseResponse:
+    return CaseResponse(case=delete_relation(require_case(case_id), relation_id))
+
+
 @app.post(
     "/api/cases/{case_id}/info-unit-agent/proposals",
     response_model=InfoUnitAgentProposalResponse,
@@ -228,10 +245,12 @@ async def extraction_run(payload: ExtractionRunInput) -> ExtractionOutput:
     return await run_extraction(case)
 
 
-@app.post("/api/relation/run", status_code=501)
-async def relation_run(payload: RelationRunInput) -> None:
-    require_case(payload.case_id)
-    pipeline_unavailable("relation")
+@app.post("/api/relation/run", response_model=RelationRunResponse)
+async def relation_run(payload: RelationRunInput) -> RelationRunResponse:
+    case = load_case_snapshot(payload.case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return await run_relation(case, payload.selected_info_unit_ids)
 
 
 @app.post("/api/reasoning/run", status_code=501)

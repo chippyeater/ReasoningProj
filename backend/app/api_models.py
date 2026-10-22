@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas import (
-    CaseData, Content, ContractModel, InfoUnitSubtype, InfoUnitType, Text, Title,
+    CaseData, Content, ContractModel, InfoUnitSubtype, InfoUnitType, Relation, RelationType, Text, Title,
 )
 
 
@@ -178,3 +178,55 @@ class ExtractionRunInput(ContractModel):
 
 class RelationRunInput(ContractModel):
     case_id: Text
+    selected_info_unit_ids: Annotated[list[Text], Field(min_length=2)] | None = None
+
+    @field_validator("selected_info_unit_ids")
+    @classmethod
+    def unique_scope_ids(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("selected_info_unit_ids must be unique")
+        return value
+
+
+class RelationRunResponse(ContractModel):
+    added_relations: list[Relation]
+
+
+class CreateRelationInput(ContractModel):
+    source_id: Text
+    target_id: Text
+    relation_type: RelationType
+    evidence_unit_ids: Annotated[list[Text], Field(min_length=1)]
+    rationale: Text
+    certainty: Literal["explicit", "inferred"]
+
+    @field_validator("evidence_unit_ids")
+    @classmethod
+    def unique_evidence_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("evidence_unit_ids must be unique")
+        return value
+
+
+class UpdateRelationInput(ContractModel):
+    source_id: Text | None = None
+    target_id: Text | None = None
+    relation_type: RelationType | None = None
+    evidence_unit_ids: Annotated[list[Text], Field(min_length=1)] | None = None
+    rationale: Text | None = None
+    certainty: Literal["explicit", "inferred"] | None = None
+
+    @field_validator("evidence_unit_ids")
+    @classmethod
+    def unique_updated_evidence_ids(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and len(value) != len(set(value)):
+            raise ValueError("evidence_unit_ids must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def require_changes(self) -> "UpdateRelationInput":
+        if not self.model_fields_set:
+            raise ValueError("At least one Relation field must be provided")
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Relation fields cannot be null when provided")
+        return self
