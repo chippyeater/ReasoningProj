@@ -6,6 +6,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from app import case_store, llm_client, observability, run_index
+from app.prompt_loader import LoadedPrompt
 
 
 SETTINGS = observability.ObservabilitySettings(
@@ -18,6 +19,10 @@ SETTINGS = observability.ObservabilitySettings(
 )
 CONFIG = llm_client.LLMConfig(
     "azure", "https://test.services.ai.azure.com/openai/v1", "mock-model", "secret")
+PROMPT = LoadedPrompt(
+    name="extraction", content="system prompt", version="a" * 64,
+    git_commit="b" * 40, schema_version="0.3",
+)
 
 
 class FakeSpan:
@@ -71,7 +76,7 @@ class TestObservability(TestCase):
                 initial_input={"case_id": "case-1"},
             )
             with trace.generation(
-                    "Extraction · model call", config=CONFIG, prompt="system prompt",
+                    "Extraction · model call", config=CONFIG, prompt=PROMPT,
                     model_input={"files": ["正文"]}, schema={"type": "object"}) as generation:
                 generation.record_reply(llm_client.LLMReply(
                     "{\"ok\":true}", {"model": "mock-model", "usage": {
@@ -94,6 +99,9 @@ class TestObservability(TestCase):
         self.assertEqual(json.loads(generation_input["messages"][1]["content"]), {"files": ["正文"]})
         self.assertEqual(
             generation_input["response_format"]["json_schema"]["schema"], {"type": "object"})
+        self.assertEqual(backend.client.spans[1].start["version"], PROMPT.version)
+        self.assertEqual(backend.client.spans[1].start["metadata"]["prompt_git_commit"], PROMPT.git_commit)
+        self.assertEqual(backend.client.spans[1].start["metadata"]["schema_version"], "0.3")
         self.assertEqual(generation_update["usage_details"]["total_tokens"], 14)
         self.assertEqual(generation_update["output"]["content"], "{\"ok\":true}")
         self.assertIn("duration_ms", backend.client.spans[1].updates[-1]["metadata"])

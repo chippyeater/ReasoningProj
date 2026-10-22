@@ -16,6 +16,7 @@ from app.errors import AppError
 from app.schemas import (
     CaseData, PipelineStage, Relation, RelationInput, RelationOutput, RelationType, RunStatus, StageRun,
 )
+from app.prompt_loader import LoadedPrompt, load_prompt
 from app.validation import validate_relations
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts/relation_system_prompt.md"
@@ -98,15 +99,11 @@ def delete_relation(case: CaseData, relation_id: str) -> CaseData:
     return candidate
 
 
-def _prompt_with_version() -> tuple[str, str]:
+def _load_prompt() -> LoadedPrompt:
     try:
-        prompt = PROMPT_PATH.read_text(encoding="utf-8")
-    except OSError as exc:
+        return load_prompt(PROMPT_PATH, "relation")
+    except (OSError, UnicodeError, ValueError) as exc:
         raise AppError("relation_prompt_unavailable", "Relation prompt could not be read", 500) from exc
-    if not prompt.strip():
-        raise AppError("relation_prompt_unavailable", "Relation prompt is empty", 500)
-    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
-    return prompt, f"v0.3-relation-1:{digest}"
 
 
 def _snapshot_bytes(case_id: str) -> bytes:
@@ -135,7 +132,8 @@ async def run_relation(case: CaseData, selected_info_unit_ids: list[str] | None 
     scope_ids = selected_info_unit_ids or [unit.id for unit in case.info_units]
     audit: dict = {"run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
                    "status": "started", "scope_info_unit_ids": scope_ids,
-                   "raw_response": None, "model_content": None, "added_relations": [], "errors": []}
+                   "raw_response": None, "model_content": None, "added_relations": [], "errors": [],
+                   "model_calls": []}
     initial_snapshot = _snapshot_bytes(case.case_id)
     try:
         if selected_info_unit_ids is not None and len(selected_info_unit_ids) < 2:
@@ -174,22 +172,23 @@ async def run_relation(case: CaseData, selected_info_unit_ids: list[str] | None 
             "scope": "selected" if selected_info_unit_ids is not None else "all",
             "existing_relations": [item.model_dump(mode="json") for item in existing_in_scope],
         }
-        prompt, version = _prompt_with_version()
-        run.prompt_version = version
+        prompt = _load_prompt()
+        run.prompt_version = prompt.version
         config = llm_client.load_config()
         run.model = config.model
         write_json(artifact_path(case.case_id, run.input_snapshot_path), llm_client.redact({
             "run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
-            "model_input": model_input, "system_prompt": prompt,
-            "prompt_version": version, "configuration": config.public_metadata(),
+            "model_input": model_input, "system_prompt": prompt.content,
+            **prompt.metadata(config.model), "configuration": config.public_metadata(),
             "case_snapshot_sha256": hashlib.sha256(initial_snapshot).hexdigest(),
         }))
         _write_audit(case.case_id, run, audit)
         schema = RelationOutput.model_json_schema()
+        audit["model_calls"].append({"step": "relation", **prompt.metadata(config.model)})
         with trace.generation(
                 "Relation · model call", config=config, prompt=prompt,
                 model_input=model_input, schema=schema) as generation:
-            reply = await llm_client.call_structured(config, prompt, model_input, schema)
+            reply = await llm_client.call_structured(config, prompt.content, model_input, schema)
             generation.record_reply(reply)
         audit["raw_response"] = reply.response
         audit["model_content"] = reply.content

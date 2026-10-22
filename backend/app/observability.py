@@ -11,6 +11,7 @@ import time
 from typing import Iterator
 
 from app import llm_client
+from app.prompt_loader import LoadedPrompt
 
 LOGGER = logging.getLogger(__name__)
 
@@ -275,7 +276,8 @@ class RunTrace:
     @contextmanager
     def observation(self, name: str, *, as_type: str = "span", input: object | None = None,
                     metadata: dict | None = None, model: str | None = None,
-                    model_parameters: dict | None = None) -> Iterator[Observation]:
+                    model_parameters: dict | None = None,
+                    version: str | None = None) -> Iterator[Observation]:
         self.active_step = name
         context_manager = None
         if self._backend is not None and self._root is not None:
@@ -283,7 +285,7 @@ class RunTrace:
                 context_manager = self._backend.client.start_as_current_observation(
                     as_type=as_type, name=name, input=self.protect(input),
                     metadata=llm_client.redact(metadata or {}), model=model,
-                    model_parameters=model_parameters,
+                    model_parameters=model_parameters, version=version,
                 )
             except Exception as exc:
                 self._telemetry_failure("create observation", exc)
@@ -291,13 +293,17 @@ class RunTrace:
         with observation:
             yield observation
 
-    def generation(self, name: str, *, config: llm_client.LLMConfig, prompt: str,
+    def generation(self, name: str, *, config: llm_client.LLMConfig, prompt: LoadedPrompt,
                    model_input: dict, schema: dict) -> Iterator[Observation]:
-        request = llm_client.structured_request_payload(config, prompt, model_input, schema)
+        request = llm_client.structured_request_payload(config, prompt.content, model_input, schema)
         return self.observation(
             name, as_type="generation", input=request, model=config.model,
             model_parameters={"max_completion_tokens": config.max_completion_tokens},
-            metadata={"provider": config.provider, "base_url": config.base_url},
+            metadata={
+                "provider": config.provider, "base_url": config.base_url,
+                **prompt.metadata(config.model),
+            },
+            version=prompt.version,
         )
 
     def finish_success(self, output: object | None = None) -> None:

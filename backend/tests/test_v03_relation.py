@@ -73,6 +73,12 @@ class TestRelationAPI(IsolatedCaseTest):
         self.assertEqual(stored.relations[0].id, added[0]["id"])
         self.assertEqual(stored.stage_runs[-1].stage.value, "relation")
         self.assertEqual(stored.stage_runs[-1].status.value, "success")
+        audit = json.loads((self.data_dir / self.case_id /
+                            stored.stage_runs[-1].output_snapshot_path).read_text(encoding="utf-8"))
+        self.assertEqual(audit["model_calls"][0]["prompt_name"], "relation")
+        self.assertRegex(audit["model_calls"][0]["prompt_version"], r"^[0-9a-f]{64}$")
+        self.assertEqual(audit["model_calls"][0]["schema_version"], "0.3")
+        self.assertEqual(audit["model_calls"][0]["model"], "configured-model")
 
     def test_full_generation_with_fewer_than_two_units_returns_empty_without_model(self):
         for unit in self.units[1:]:

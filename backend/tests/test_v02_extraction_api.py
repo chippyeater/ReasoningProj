@@ -61,13 +61,19 @@ class TestExtractionAPI(IsolatedCaseTest):
         run = stored["stage_runs"][-1]
         self.assertEqual(run["status"], "success")
         self.assertEqual(run["model"], "configured-model")
-        self.assertTrue(run["prompt_version"].startswith("v0.3-extraction-2:"))
+        self.assertRegex(run["prompt_version"], r"^[0-9a-f]{64}$")
         root = self.data_dir / case["case_id"]
         audit = json.loads((root / run["output_snapshot_path"]).read_text(encoding="utf-8"))
         self.assertEqual(audit["model_content"], raw)
         self.assertEqual(json.loads(audit["consolidation_content"])["extraction"], json.loads(raw))
         self.assertEqual(audit["consolidation_review"]["decisions"][0]["action"], "keep")
         self.assertEqual(audit["result"], output)
+        self.assertEqual([record["prompt_name"] for record in audit["model_calls"]], [
+            "extraction", "consolidation",
+        ])
+        self.assertTrue(all(record["schema_version"] == "0.3" for record in audit["model_calls"]))
+        self.assertTrue(all(record["model"] == "configured-model" for record in audit["model_calls"]))
+        self.assertEqual(run["prompt_version"], audit["model_calls"][0]["prompt_version"])
         self.assertTrue((root / f"runs/{run['id']}.stage.json").is_file())
 
     def test_uploaded_source_kind_is_persisted_and_reused(self):
@@ -353,6 +359,12 @@ class TestExtractionAPI(IsolatedCaseTest):
         self.assertEqual(audit['evidence_repair']['changes'], [
             {'local_id': local_id, 'before': ['quote-does-not-exist'], 'after': [valid_id]}])
         self.assertEqual(audit['validated_draft']['info_units'][0]['source_refs'][0]['quote'], '甲：我已付款')
+        self.assertEqual([record['prompt_name'] for record in audit['model_calls']], [
+            'extraction', 'evidence_repair', 'consolidation',
+        ])
+        repair_record = audit['model_calls'][1]
+        self.assertRegex(repair_record['prompt_version'], r'^[0-9a-f]{64}$')
+        self.assertEqual(repair_record['schema_version'], '0.3')
 
     def test_failed_evidence_repair_is_not_retried_or_partially_committed(self):
         case = self.registered_case()

@@ -18,24 +18,27 @@ from app.extraction import (
     parse_model_consolidation, parse_model_extraction,
 )
 from app.quote_units import QuoteIndexEvent, build_quote_model_input
+from app.prompt_loader import LoadedPrompt, load_prompt
 from app.schemas import CaseData, ExtractionOutput, ParseStatus, PipelineStage, RunStatus, StageRun
 
-PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts/extraction_system_prompt_v0_3.md"
-CONSOLIDATION_PROMPT_PATH = PROMPT_PATH.with_name("extraction_consolidation_prompt_v0_3.md")
-EVIDENCE_REPAIR_PROMPT_PATH = PROMPT_PATH.with_name("extraction_evidence_repair_prompt_v0_3.md")
+PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts/extraction_system_prompt.md"
+CONSOLIDATION_PROMPT_PATH = PROMPT_PATH.with_name("extraction_consolidation_prompt.md")
+EVIDENCE_REPAIR_PROMPT_PATH = PROMPT_PATH.with_name("extraction_evidence_repair_prompt.md")
 
 
-def prompt_with_version() -> tuple[str, str, str, str]:
+def load_prompts() -> tuple[LoadedPrompt, LoadedPrompt, LoadedPrompt]:
     try:
-        prompt = PROMPT_PATH.read_text(encoding="utf-8")
-        consolidation = CONSOLIDATION_PROMPT_PATH.read_text(encoding="utf-8")
-        repair = EVIDENCE_REPAIR_PROMPT_PATH.read_text(encoding="utf-8")
-    except OSError as exc:
+        prompt = load_prompt(PROMPT_PATH, "extraction")
+        consolidation = load_prompt(CONSOLIDATION_PROMPT_PATH, "consolidation")
+        repair = load_prompt(EVIDENCE_REPAIR_PROMPT_PATH, "evidence_repair")
+    except (OSError, UnicodeError, ValueError) as exc:
         raise AppError("extraction_prompt_unavailable", "Extraction prompt could not be read", 500) from exc
-    if not prompt.strip() or not consolidation.strip() or not repair.strip():
-        raise AppError("extraction_prompt_unavailable", "Extraction prompt is empty", 500)
-    digest = hashlib.sha256((prompt + "\n" + consolidation + "\n" + repair).encode("utf-8")).hexdigest()[:16]
-    return prompt, consolidation, repair, "v0.3-extraction-2:" + digest
+    return prompt, consolidation, repair
+
+
+def _model_call_record(step: str, prompt: LoadedPrompt,
+                       config: llm_client.LLMConfig) -> dict[str, str | None]:
+    return {"step": step, **prompt.metadata(config.model)}
 
 
 def evidence_repair_enabled() -> bool:
@@ -60,7 +63,7 @@ def _write_audit(case_id: str, run: StageRun, audit: dict) -> None:
 
 async def _materialize_with_optional_repair(
         draft: ModelExtraction, case: CaseData, *, stage_name: str, model_input: dict,
-        config: llm_client.LLMConfig, repair_prompt: str, repair_enabled: bool,
+        config: llm_client.LLMConfig, repair_prompt: LoadedPrompt, repair_enabled: bool,
         run: StageRun, audit: dict, trace: RunTrace) -> tuple[ModelExtraction, ExtractionOutput, list[dict]]:
     diagnostics: dict = {}
     try:
@@ -107,10 +110,13 @@ async def _materialize_with_optional_repair(
         write_json(artifact_path(case.case_id, repair_path), llm_client.redact(repair_input))
         write_json(artifact_path(case.case_id, run.output_snapshot_path), llm_client.redact(audit))
         repair_schema = ModelEvidenceRepair.model_json_schema()
+        audit["model_calls"].append(_model_call_record(
+            f"{stage_name}_evidence_repair", repair_prompt, config))
         with trace.generation(
                 f"{stage_name.title()} Evidence Repair · model call", config=config,
                 prompt=repair_prompt, model_input=repair_input, schema=repair_schema) as generation:
-            reply = await llm_client.call_structured(config, repair_prompt, repair_input, repair_schema)
+            reply = await llm_client.call_structured(
+                config, repair_prompt.content, repair_input, repair_schema)
             generation.record_reply(reply)
         audit["evidence_repair"]["raw_response"] = reply.response
         audit["evidence_repair"]["content"] = reply.content
@@ -159,7 +165,7 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
                    "status": "started", "raw_response": None,
                    "model_content": None, "parsed_result": None, "result": None, "errors": [],
                    "active_step": "preparation", "model_request_attempts": 0,
-                   "evidence_repair_attempts": 0}
+                   "evidence_repair_attempts": 0, "model_calls": []}
     initial_snapshot = _snapshot_bytes(case.case_id)
     try:
         # This stage always sees every parsed file in the case; selection is not
@@ -173,8 +179,8 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
         quote_index_events: list[QuoteIndexEvent] = []
         model_input = build_quote_model_input(case, parsed_ids, quote_index_events)
         audit["input_quote_indexes"] = [event.model_dump(mode="json") for event in quote_index_events]
-        prompt, consolidation_prompt, repair_prompt, version = prompt_with_version()
-        run.prompt_version = version
+        prompt, consolidation_prompt, repair_prompt = load_prompts()
+        run.prompt_version = prompt.version
         config = llm_client.load_config()
         repair_enabled = evidence_repair_enabled()
         audit["evidence_repair_enabled"] = repair_enabled
@@ -183,20 +189,27 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
             f.file_id: f.source_kind.value for f in case.files if f.file_id in parsed_ids}
         write_json(artifact_path(case.case_id, run.input_snapshot_path), llm_client.redact({
             "run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
-            "model_input": model_input, "system_prompt": prompt,
-            "consolidation_prompt": consolidation_prompt, "evidence_repair_prompt": repair_prompt,
+            "model_input": model_input, "system_prompt": prompt.content,
+            "consolidation_prompt": consolidation_prompt.content,
+            "evidence_repair_prompt": repair_prompt.content,
             "evidence_repair_enabled": repair_enabled,
-            "prompt_version": version, "configuration": config.public_metadata(),
+            "prompts": {
+                item.name: item.metadata(config.model)
+                for item in (prompt, consolidation_prompt, repair_prompt)
+            },
+            "prompt_version": prompt.version, "schema_version": prompt.schema_version,
+            "configuration": config.public_metadata(),
             "case_snapshot_sha256": hashlib.sha256(initial_snapshot).hexdigest()}))
         audit["active_step"] = "extraction"
         audit["model_request_attempts"] = 1
         # Write the attempted step before the call, including on interruption.
         write_json(artifact_path(case.case_id, run.output_snapshot_path), audit)
         schema = ModelExtraction.model_json_schema()
+        audit["model_calls"].append(_model_call_record("extraction", prompt, config))
         with trace.generation(
                 "Extraction · model call", config=config, prompt=prompt,
                 model_input=model_input, schema=schema) as generation:
-            reply = await llm_client.call_structured(config, prompt, model_input, schema)
+            reply = await llm_client.call_structured(config, prompt.content, model_input, schema)
             generation.record_reply(reply)
         audit["raw_response"] = reply.response
         audit["model_content"] = reply.content
@@ -222,11 +235,13 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
         audit["model_request_attempts"] += 1
         write_json(artifact_path(case.case_id, run.output_snapshot_path), llm_client.redact(audit))
         consolidation_schema = ModelConsolidation.model_json_schema()
+        audit["model_calls"].append(_model_call_record(
+            "consolidation", consolidation_prompt, config))
         with trace.generation(
                 "Consolidation · model call", config=config, prompt=consolidation_prompt,
                 model_input=consolidation_input, schema=consolidation_schema) as generation:
             consolidated = await llm_client.call_structured(
-                config, consolidation_prompt, consolidation_input, consolidation_schema)
+                config, consolidation_prompt.content, consolidation_input, consolidation_schema)
             generation.record_reply(consolidated)
         audit["consolidation_raw_response"] = consolidated.response
         audit["consolidation_content"] = consolidated.content

@@ -48,7 +48,7 @@ python evals/case_a/tests/score_predictions.py --prediction /path/to/predicted_e
 
 历史版本映射见 `docs/historical_evaluation_index.json`，包含 v6、v7、v7.1、v7.2 等本地归档。历史报告中的拆分诊断保留原样，只反映当时口径，不是当前 Gold 的评判依据。历史结果继续按其记录的 Gold 基准解释；如需按当前 v1.8 重评，必须使用原预测和新的 v1.8 对齐模板，在新目录保存结果，不得修改历史输出、拆分节点或复用旧命中判断。
 
-旧的 v7.2 Extraction Prompt 仅作为哈希可核对的历史文件保留，生产运行入口只读取 v0.3 Prompt。旧的一次性联网评测脚本已移除；复核 v7.2 应读取冻结提交及结果目录，不能用当前生产 Schema 重新发送请求。
+旧的 v7.2 Extraction Prompt 仅通过冻结提交与历史哈希复现；稳定文件名 `extraction_system_prompt.md` 指向当前生产 Prompt。旧的一次性联网评测脚本已移除；复核 v7.2 应读取冻结提交及结果目录，不能用当前生产 Schema 重新发送请求。
 
 法规检索使用 `backend/data/laws.json` 作为运行库，`gold/verified_laws.json` 作为评测参照。同一 ID 的法条原文、条号、标题与来源必须一致。可运行：
 

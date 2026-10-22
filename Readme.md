@@ -108,6 +108,11 @@ Set-Location backend
 `.stage.json` 独立保存运行索引；若缓存损坏导致 `case.json` 无法合法保存日志索引，接口明确返回审计持久化错误及原始错误代码，独立日志仍可定位。
 授权头不写日志，已配置 API Key / Token 在日志中脱敏。
 
+运行 Prompt 使用不含版本号的稳定文件名。`prompt_version` 是实际加载文本的完整 SHA-256，
+`prompt_git_commit` 仅在该文件已被 Git 跟踪且相对 `HEAD` 无修改时记录最后一次修改它的 Commit；未提交修改或无法调用 Git 时为 `null`。
+`prompt_name / prompt_version / prompt_git_commit / schema_version / model` 按每次模型调用分别写入本地审计，
+并同步到对应 Langfuse Generation；StageRun 的 `prompt_version` 继续保存该阶段主 Prompt 的内容哈希，旧日志无需迁移。
+
 ## LLM Observability（Langfuse）
 
 后端使用 `langfuse==5.0.4` 的 OpenTelemetry API，为 Extraction、Consolidation、Relation 和

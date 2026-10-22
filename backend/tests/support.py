@@ -1,5 +1,6 @@
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -43,6 +44,9 @@ def quote_id_for(case_id, file_id, text):
 
 class IsolatedCaseTest(unittest.TestCase):
     def setUp(self):
+        tracing = patch.dict(os.environ, {"LOGICWEAVER_OBSERVABILITY_ENABLED": "false"})
+        tracing.start()
+        self.addCleanup(tracing.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.data_dir = Path(self.temp.name)
