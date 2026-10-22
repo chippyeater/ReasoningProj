@@ -6,7 +6,7 @@ from support import IsolatedCaseTest, quote_id_for
 from app import case_store
 from app.extraction import (
     ExtractionFailure, deduplicate_units, materialize_extraction,
-    parse_model_consolidation, parse_model_extraction,
+    parse_model_extraction,
 )
 from app.schemas import SourceKind
 
@@ -28,33 +28,6 @@ def model_result(units):
 
 
 class TestExtractionBoundary(IsolatedCaseTest):
-    def test_review_requires_complete_consistent_decisions_and_new_unit_accounting(self):
-        extraction = json.loads(model_result([model_unit('f', '甲称付款')]))
-        decision = dict(draft_index=0, action='keep', finding='保留命题。', final_indices=[0])
-        base = dict(decisions=[decision], coverage_findings=[], added_final_indices=[], extraction=extraction)
-        self.assertEqual(parse_model_consolidation(json.dumps(base), 1).extraction, parse_model_extraction(json.dumps(extraction)))
-        for changes in (
-            dict(decisions=[]), dict(decisions=[decision, decision]),
-            dict(decisions=[{**decision, 'draft_index': 1}]),
-            dict(decisions=[{**decision, 'action': 'split'}]),
-            dict(decisions=[{**decision, 'final_indices': [2]}]),
-            dict(decisions=[{**decision, 'final_indices': [-1]}]),
-            dict(added_final_indices=[0]),
-        ):
-            with self.subTest(changes=changes), self.assertRaises(ExtractionFailure) as caught:
-                parse_model_consolidation(json.dumps({**base, **changes}), 1)
-            self.assertEqual(caught.exception.code, 'extraction_schema_invalid')
-        with self.assertRaises(ExtractionFailure):
-            parse_model_consolidation(json.dumps(extraction), 1)
-
-    def test_review_can_remove_split_and_add_without_a_fixed_output_count(self):
-        extraction = json.loads(model_result([model_unit('f', '甲称付款') for _ in range(3)]))
-        review = dict(decisions=[
-            dict(draft_index=0, action='split', finding='原稿混合两个命题。', final_indices=[0, 1]),
-            dict(draft_index=1, action='remove', finding='无独立信息。', final_indices=[]),
-        ], coverage_findings=['原文遗漏一个必要命题。'], added_final_indices=[2], extraction=extraction)
-        self.assertEqual(len(parse_model_consolidation(json.dumps(review), 2).extraction.info_units), 3)
-
     def test_materialization_generates_ids_time_and_unicode_positions(self):
         saved = self.upload(raw="😀\n甲：我已付款".encode("utf-8"), source_kind="testimony")
         case = case_store.load_case(saved["case_id"])

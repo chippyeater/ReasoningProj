@@ -75,9 +75,11 @@ async def run(output: Path) -> dict:
                       model_request_attempts=audit.get('model_request_attempts'),
                       evidence_repair_attempts=audit.get('evidence_repair_attempts'),
                       terminal_step=audit.get('active_step'))
-        report['provider_usage'] = {name: audit[key].get('usage')
-            for name,key in [('extraction','raw_response'),('consolidation','consolidation_raw_response')]
-            if isinstance(audit.get(key),dict) and audit[key].get('usage') is not None}
+        report['provider_usage'] = {}
+        if isinstance(audit.get('raw_response'), dict):
+            usage = audit['raw_response'].get('usage')
+            if usage is not None:
+                report['provider_usage']['extraction'] = usage
         repair = audit.get('evidence_repair')
         if isinstance(repair, dict) and isinstance(repair.get('raw_response'), dict):
             usage = repair['raw_response'].get('usage')

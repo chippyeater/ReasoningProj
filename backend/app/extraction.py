@@ -104,44 +104,6 @@ class ModelExtraction(ContractModel):
         return self
 
 
-class ConsolidationDecision(ContractModel):
-    """A concise editorial decision, not a new business entity or reasoning trace."""
-    model_config = ConfigDict(extra="forbid", strict=True)
-    draft_index: int = Field(ge=0)
-    action: Literal["keep", "revise", "merge", "split", "remove"]
-    finding: Text
-    final_indices: list[int]
-
-
-class ModelConsolidation(ContractModel):
-    """Private review envelope; only its extraction is materialized as v0.3 data."""
-    model_config = ConfigDict(extra="forbid", strict=True)
-    decisions: list[ConsolidationDecision]
-    coverage_findings: list[Text]
-    added_final_indices: list[int]
-    extraction: ModelExtraction
-
-    def validate_plan(self, draft_count: int) -> None:
-        indices = [d.draft_index for d in self.decisions]
-        if sorted(indices) != list(range(draft_count)):
-            raise ValueError("Review must address each draft index exactly once")
-        final_count = len(self.extraction.info_units)
-        covered: set[int] = set()
-        for decision in self.decisions:
-            targets = decision.final_indices
-            if len(set(targets)) != len(targets) or any(i < 0 or i >= final_count for i in targets):
-                raise ValueError("Invalid review target indices")
-            expected = len(targets)
-            if ((decision.action == "remove" and expected != 0)
-                    or (decision.action == "split" and expected < 2)
-                    or (decision.action in {"keep", "revise", "merge"} and expected != 1)):
-                raise ValueError("Review action and target count disagree")
-            covered.update(targets)
-        additions = self.added_final_indices
-        if len(set(additions)) != len(additions) or set(additions) != set(range(final_count)) - covered:
-            raise ValueError("Every final unit must be accounted for by review decisions or explicit additions")
-
-
 class EvidenceRepairItem(ContractModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     local_id: Text
@@ -189,7 +151,7 @@ def _invalid_json_constant(value: str) -> None:
     raise ValueError(f"Non-JSON constant: {value}")
 
 
-def _parse_model(raw: str, model: type[ModelExtraction] | type[ModelConsolidation] | type[ModelEvidenceRepair]):
+def _parse_model(raw: str, model: type[ModelExtraction] | type[ModelEvidenceRepair]):
     """No fence removal, JSON repair, type coercion, partial acceptance, or retry."""
     try:
         value = json.loads(raw, object_pairs_hook=_unique_json_keys, parse_constant=_invalid_json_constant)
@@ -205,16 +167,6 @@ def _parse_model(raw: str, model: type[ModelExtraction] | type[ModelConsolidatio
 
 def parse_model_extraction(raw: str) -> ModelExtraction:
     return _parse_model(raw, ModelExtraction)
-
-
-def parse_model_consolidation(raw: str, draft_count: int) -> ModelConsolidation:
-    result = _parse_model(raw, ModelConsolidation)
-    try:
-        result.validate_plan(draft_count)
-    except ValueError as exc:
-        raise ExtractionFailure("extraction_schema_invalid", "Consolidation review is incomplete or inconsistent",
-                                errors=[{"message": str(exc)}]) from exc
-    return result
 
 
 def parse_evidence_repair(raw: str) -> ModelEvidenceRepair:

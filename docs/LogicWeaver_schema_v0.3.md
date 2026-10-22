@@ -914,13 +914,12 @@ type CaseData = {
 | 1 | 后端 `schemas.py` / Pydantic 模型 | 更新 Type/Subtype 枚举与配对约束；移除 `summary`；设 `title/content` 长度；`speaker` 条件非空；`stance_target→related_issue`；`actor/target` 为 ID | 五种类型及 `null` 组合通过，旧子类及非法说话人/长度被拒绝 |
 | 2 | Extraction Prompt + 严格 JSON Schema | 将输出切换到 `ModelExtraction` 候选；用 `local_id` 与 `actor_local_id/target_local_id`；来源改为选择 `evidence_ids`；不允许模型输出 `verified` | 模型输出可严格解析，不再生成引文字符串，单方自述为 `event/reported`，金额状态有真实 speaker |
 | 3 | Extraction 归一化与保存 | 构建/校验 Quote Unit 索引；后端生成正式 ID；映射 actor/target；由 evidence ID 生成 SourceRef；整批原子保存 | 所有非空关联指向当前案件 entity；过期或错误 ID 拒绝写库，不修改既有 CaseData；支持性不确定项可审计 |
-| 4 | Consolidation / 去重 | 用信息用途与独立核查性决定合并；合并后重映射 actor/target 及外部引用，禁止悬挂 ID | 合并重复实体后依赖节点仍正确引用；不同核查对象不强行合并 |
-| 5 | Relation Prompt、Schema 与关系构建 | `about/support/contradict` 三类；删除对 `statement`、`state/temporal` 的依赖；actor_of/target_of 改为派生边 | 所有关系端点/evidence ID 有效；不会重复维护 actor/target 连线 |
-| 6 | 前端 TypeScript 类型、卡片及连线渲染 | 显示 `title/content`，移除 `summary` 字段读取；更新五类型颜色/标签；以 entity ID 解析 actor/target 并绘制派生边 | 卡片在无 summary 情况下正常折叠；actor/target 无需字符串匹配即可定位 |
-| 7 | 推理 Selector / Composers | 更新类别相关 Prompt；`ConflictView.role=claim` 是布局角色，不是旧 `statement` Type；Timeline 使用 event 的日期内容，不能再依赖 state/temporal；Hypothesis 仍用 InfoUnit ID | 三种视图均可引用新节点并保留来源；不会因为分类变更丢失时间事件 |
-| 8 | `CaseData` / 旧案件读取层 | 为旧记录增加显式版本迁移或只读兼容；将旧 `actor/target` 名称解析成实体 ID；旧 `statement` 按语义映射，不机械转类 | 历史数据可安全读取；无法消歧时给出迁移错误，不静默乱连 |
-| 9 | Gold / Evaluator / 评测脚本 | 当前标签统一位于 `evals/case_a/gold/`；保留历史 Gold v1.7、Prediction 和 Prompt 指纹；检查 `speaker`、subtype、ID、长度与完整契约 | 当前与历史评测各自绑定 Gold 版本和哈希，不能把 v1.8 结果冒充 v7.2 同口径基线 |
-| 10 | 未来 InfoUnit Tools（本轮不必实现） | create/update/archive 共用同一服务校验；核验时才能把 event 升级为 verified；删除前检查关系与视图引用 | 已发布 InfoUnit 的 ID 稳定；核验升级可审计，删除不造成悬挂关系 |
+| 4 | Relation Prompt、Schema 与关系构建 | `about/support/contradict` 三类；删除对 `statement`、`state/temporal` 的依赖；actor_of/target_of 改为派生边 | 所有关系端点/evidence ID 有效；不会重复维护 actor/target 连线 |
+| 5 | 前端 TypeScript 类型、卡片及连线渲染 | 显示 `title/content`，移除 `summary` 字段读取；更新五类型颜色/标签；以 entity ID 解析 actor/target 并绘制派生边 | 卡片在无 summary 情况下正常折叠；actor/target 无需字符串匹配即可定位 |
+| 6 | 推理 Selector / Composers | 更新类别相关 Prompt；`ConflictView.role=claim` 是布局角色，不是旧 `statement` Type；Timeline 使用 event 的日期内容，不能再依赖 state/temporal；Hypothesis 仍用 InfoUnit ID | 三种视图均可引用新节点并保留来源；不会因为分类变更丢失时间事件 |
+| 7 | `CaseData` / 旧案件读取层 | 为旧记录增加显式版本迁移或只读兼容；将旧 `actor/target` 名称解析成实体 ID；旧 `statement` 按语义映射，不机械转类 | 历史数据可安全读取；无法消歧时给出迁移错误，不静默乱连 |
+| 8 | Gold / Evaluator / 评测脚本 | 当前标签统一位于 `evals/case_a/gold/`；保留历史 Gold v1.7、Prediction 和 Prompt 指纹；检查 `speaker`、subtype、ID、长度与完整契约 | 当前与历史评测各自绑定 Gold 版本和哈希，不能把 v1.8 结果冒充 v7.2 同口径基线 |
+| 9 | 未来 InfoUnit Tools（本轮不必实现） | create/update/archive 共用同一服务校验；核验时才能把 event 升级为 verified；删除前检查关系与视图引用 | 已发布 InfoUnit 的 ID 稳定；核验升级可审计，删除不造成悬挂关系 |
 
 ### 迁移规则（重要）
 
@@ -935,4 +934,4 @@ type CaseData = {
 
 ### 本轮边界
 
-当前已完成 Pydantic Schema、Extraction/Consolidation Prompt、Quote Unit 来源定位和案件 A Gold v1.8 的迁移。多轮 Agent Tools、独立 LLM 语义裁判与状态核验工作流仍属于后续独立实现和评测；本次实现未扩张这些边界。
+当前已完成 Pydantic Schema、单次 Extraction、可选 Evidence Repair、Quote Unit 来源定位和案件 A Gold v1.8 的迁移。正式 Extraction 不执行二次 LLM 合并复核；多轮 Agent Tools、独立 LLM 语义裁判与状态核验工作流仍属于后续独立实现和评测。

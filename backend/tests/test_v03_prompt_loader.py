@@ -10,7 +10,6 @@ from app.prompt_loader import load_prompt
 PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 RENAMED_PROMPT_HASHES = {
     "extraction_system_prompt.md": "08d483e75d35b4026987885385dcdc8e0aab94f074995fd559c045d1fd52b1f2",
-    "extraction_consolidation_prompt.md": "d5be966637782c13d5e15084cf7c94c845d9ac76e4c197fb09814be3bfa5f7ef",
     "extraction_evidence_repair_prompt.md": "da65737a1047f701515518b491323b0ff2315d2476d4739ed3a119b7ed977d04",
     "info_unit_agent_prompt.md": "e997749919adb844e0cb16fe7b3d334ea787821cc365ab41491dc12696bfd7d4",
 }
@@ -44,9 +43,9 @@ class TestPromptVersioning(TestCase):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             extraction_path = root / "extraction.md"
-            consolidation_path = root / "consolidation.md"
+            repair_path = root / "evidence-repair.md"
             extraction_path.write_text("extraction prompt\n", encoding="utf-8")
-            consolidation_path.write_text("consolidation prompt\n", encoding="utf-8")
+            repair_path.write_text("evidence repair prompt\n", encoding="utf-8")
             self.git(root, "init", "-q")
             self.git(root, "config", "user.name", "LogicWeaver Test")
             self.git(root, "config", "user.email", "test@logicweaver.invalid")
@@ -55,8 +54,8 @@ class TestPromptVersioning(TestCase):
 
             extraction_before = load_prompt(
                 extraction_path, "extraction", repository_root=root)
-            consolidation_before = load_prompt(
-                consolidation_path, "consolidation", repository_root=root)
+            repair_before = load_prompt(
+                repair_path, "evidence_repair", repository_root=root)
             prompt_commit = extraction_before.git_commit
             self.assertIsNotNone(prompt_commit)
 
@@ -68,13 +67,13 @@ class TestPromptVersioning(TestCase):
             self.assertEqual(extraction_after_commit.version, extraction_before.version)
             self.assertEqual(extraction_after_commit.git_commit, prompt_commit)
 
-            consolidation_path.write_text("changed consolidation prompt\n", encoding="utf-8")
+            repair_path.write_text("changed evidence repair prompt\n", encoding="utf-8")
             extraction_after_change = load_prompt(
                 extraction_path, "extraction", repository_root=root)
-            consolidation_after_change = load_prompt(
-                consolidation_path, "consolidation", repository_root=root)
+            repair_after_change = load_prompt(
+                repair_path, "evidence_repair", repository_root=root)
             self.assertEqual(extraction_after_change.version, extraction_before.version)
             self.assertEqual(extraction_after_change.git_commit, prompt_commit)
-            self.assertNotEqual(consolidation_after_change.version, consolidation_before.version)
-            self.assertIsNone(consolidation_after_change.git_commit)
+            self.assertNotEqual(repair_after_change.version, repair_before.version)
+            self.assertIsNone(repair_after_change.git_commit)
             self.assertEqual(extraction_after_change.schema_version, "0.3")

@@ -82,11 +82,9 @@ Set-Location backend
 
 `POST /api/extraction/run` 不接受子集参数：一次发送案件全部 `parsed` 文件的完整 TXT。
 `failed` / `unsupported` 文件不会进入模型，排除项和原因逐项记录在运行日志；没有有效文件时明确报错。
-每次 Extraction 正常执行包含两个明确步骤：先抽取全案初稿并通过结构和精确来源校验，再将初稿与全部原文交给独立的合并复核 Prompt。
-第二步针对跨文件重复命题、遗漏和语义粒度复核，逐项记录初稿的保留、修改、合并、拆分或删除决定及最终索引，明确列出遗漏补充。
-审阅封装仅供运行日志，业务响应仍为完整 `ExtractionOutput`；不完整或索引不一致的审阅记录直接拒绝。
-最终结果仍须通过同样的结构与来源校验；任一步失败均终止，不返回初稿冒充成功。
-两步不是隐式重试或错误修复。调用配置与外部端点相同，数据传输包含原始文本及衍生初稿，应在相应授权范围内运行。
+正常 Extraction 只调用一次模型；首次生成的 `ModelExtraction` 通过严格 Schema、精确来源和案件引用完整性校验后直接物化并原子保存。
+仅当 `EXTRACTION_EVIDENCE_REPAIR_ENABLED=true` 且错误仅涉及可修复的 evidence ID 时，才额外调用一次受限 Evidence Repair；它只能修改失败节点的 `evidence_ids`，不能改写语义字段。
+任一结构或来源校验失败都会终止，不部分保存非法节点。
 后端还会对内容、类型、发言人、角色、事件参与者和争点完全一致的重复节点进行确定性合并，保留来源并去掉重复引用。
 后端不使用相似度阈值猜测不同表述是否同一事实；语义最小性仍须通过真实评测审查。
 
@@ -103,8 +101,8 @@ Set-Location backend
 模型运行期间案件若发生变化，返回 409，避免覆盖其他请求；已有关系、视图或画布引用会因替换失效时也拒绝提交，不擅自删除下游数据。
 
 每次执行的 `StageRun` 记录模型、Prompt 内容哈希版本、状态和输入/输出快照路径。
-`runs/{run_id}.input.json` 保存模型输入及两个提示；`.consolidation.input.json` 记录第二步的完整输入。
-`.output.json` 保存两步原始响应、模型 JSON、逐项编辑发现、遗漏清单、物化结果、合并记录、调用次数及失败步骤。
+`runs/{run_id}.input.json` 保存模型输入、Extraction Prompt 及可选 Evidence Repair Prompt；启用修复时，其输入另存为 `.evidence-repair.input.json`。
+`.output.json` 保存原始响应、模型 JSON、来源校验、物化结果、确定性精确去重记录、调用次数及失败步骤。
 `.stage.json` 独立保存运行索引；若缓存损坏导致 `case.json` 无法合法保存日志索引，接口明确返回审计持久化错误及原始错误代码，独立日志仍可定位。
 授权头不写日志，已配置 API Key / Token 在日志中脱敏。
 
@@ -115,7 +113,7 @@ Set-Location backend
 
 ## LLM Observability（Langfuse）
 
-后端使用 `langfuse==5.0.4` 的 OpenTelemetry API，为 Extraction、Consolidation、Relation 和
+后端使用 `langfuse==5.0.4` 的 OpenTelemetry API，为 Extraction、Evidence Repair、Relation 和
 InfoUnit Agent 建立命名 Trace，并将模型调用、解析与校验记录为独立 Observation。默认关闭外部追踪；即使开启，
 默认也只发送字段名、长度和 SHA-256 等摘要，不发送 Prompt、案件正文或模型原始输出。现有 `runs/*.json` 审计文件与路径保持不变。
 默认隐私模式下，云端 Trace 名称中的案件简称也会替换为案件 ID 的短哈希；本地 Run 索引仍显示真实案件简称。

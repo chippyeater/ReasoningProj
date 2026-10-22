@@ -13,27 +13,25 @@ from app.case_service import now_iso
 from app.case_store import artifact_path, case_dir, load_case_snapshot, save_case, write_json
 from app.errors import AppError
 from app.extraction import (
-    ExtractionFailure, ModelConsolidation, ModelEvidenceRepair, ModelExtraction,
+    ExtractionFailure, ModelEvidenceRepair, ModelExtraction,
     apply_evidence_repair, materialize_extraction, parse_evidence_repair,
-    parse_model_consolidation, parse_model_extraction,
+    parse_model_extraction,
 )
 from app.quote_units import QuoteIndexEvent, build_quote_model_input
 from app.prompt_loader import LoadedPrompt, load_prompt
 from app.schemas import CaseData, ExtractionOutput, ParseStatus, PipelineStage, RunStatus, StageRun
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts/extraction_system_prompt.md"
-CONSOLIDATION_PROMPT_PATH = PROMPT_PATH.with_name("extraction_consolidation_prompt.md")
 EVIDENCE_REPAIR_PROMPT_PATH = PROMPT_PATH.with_name("extraction_evidence_repair_prompt.md")
 
 
-def load_prompts() -> tuple[LoadedPrompt, LoadedPrompt, LoadedPrompt]:
+def load_prompts() -> tuple[LoadedPrompt, LoadedPrompt]:
     try:
         prompt = load_prompt(PROMPT_PATH, "extraction")
-        consolidation = load_prompt(CONSOLIDATION_PROMPT_PATH, "consolidation")
         repair = load_prompt(EVIDENCE_REPAIR_PROMPT_PATH, "evidence_repair")
     except (OSError, UnicodeError, ValueError) as exc:
         raise AppError("extraction_prompt_unavailable", "Extraction prompt could not be read", 500) from exc
-    return prompt, consolidation, repair
+    return prompt, repair
 
 
 def _model_call_record(step: str, prompt: LoadedPrompt,
@@ -62,13 +60,13 @@ def _write_audit(case_id: str, run: StageRun, audit: dict) -> None:
 
 
 async def _materialize_with_optional_repair(
-        draft: ModelExtraction, case: CaseData, *, stage_name: str, model_input: dict,
+        draft: ModelExtraction, case: CaseData, *, model_input: dict,
         config: llm_client.LLMConfig, repair_prompt: LoadedPrompt, repair_enabled: bool,
-        run: StageRun, audit: dict, trace: RunTrace) -> tuple[ModelExtraction, ExtractionOutput, list[dict]]:
+        run: StageRun, audit: dict, trace: RunTrace) -> tuple[ExtractionOutput, list[dict]]:
     diagnostics: dict = {}
     try:
         with trace.observation(
-                f"{stage_name.title()} · source validation", as_type="guardrail",
+                "Extraction · source validation", as_type="guardrail",
                 input=draft.model_dump(mode="json")) as validation_span:
             try:
                 result, merges = materialize_extraction(draft, case, diagnostics)
@@ -80,7 +78,7 @@ async def _materialize_with_optional_repair(
                 raise
             validation_span.update(output={"valid": True, "diagnostics": diagnostics, "merges": merges})
     except ExtractionFailure as exc:
-        audit[f"{stage_name}_source_validation"] = exc.diagnostics or diagnostics
+        audit["source_validation"] = exc.diagnostics or diagnostics
         repairable_codes = {"invalid_evidence_id", "quote_unit_not_evidence"}
         repairable = (exc.code == "extraction_source_invalid" and exc.errors
                       and all(error.get("code") in repairable_codes for error in exc.errors))
@@ -101,19 +99,18 @@ async def _materialize_with_optional_repair(
             "case_title": model_input["case_title"], "files": model_input["files"],
             "invalid_nodes": invalid_nodes,
         }
-        repair_path = f"runs/{run.id}.{stage_name}.evidence-repair.input.json"
+        repair_path = f"runs/{run.id}.evidence-repair.input.json"
         audit["active_step"] = "evidence_repair"
         audit["evidence_repair_attempts"] = 1
         audit["model_request_attempts"] += 1
-        audit["evidence_repair"] = {"stage": stage_name, "input_path": repair_path,
-                                    "failed_local_ids": sorted(failed_ids)}
+        audit["evidence_repair"] = {"input_path": repair_path, "failed_local_ids": sorted(failed_ids)}
         write_json(artifact_path(case.case_id, repair_path), llm_client.redact(repair_input))
         write_json(artifact_path(case.case_id, run.output_snapshot_path), llm_client.redact(audit))
         repair_schema = ModelEvidenceRepair.model_json_schema()
         audit["model_calls"].append(_model_call_record(
-            f"{stage_name}_evidence_repair", repair_prompt, config))
+            "evidence_repair", repair_prompt, config))
         with trace.generation(
-                f"{stage_name.title()} Evidence Repair · model call", config=config,
+                "Evidence Repair · model call", config=config,
                 prompt=repair_prompt, model_input=repair_input, schema=repair_schema) as generation:
             reply = await llm_client.call_structured(
                 config, repair_prompt.content, repair_input, repair_schema)
@@ -121,7 +118,7 @@ async def _materialize_with_optional_repair(
         audit["evidence_repair"]["raw_response"] = reply.response
         audit["evidence_repair"]["content"] = reply.content
         with trace.observation(
-                f"{stage_name.title()} Evidence Repair · parse", as_type="evaluator",
+                "Evidence Repair · parse", as_type="evaluator",
                 input=reply.content) as parse_span:
             repair = parse_evidence_repair(reply.content)
             parse_span.update(output=repair.model_dump(mode="json"))
@@ -130,12 +127,12 @@ async def _materialize_with_optional_repair(
         audit["evidence_repair"]["repaired_result"] = repaired.model_dump(mode="json")
         repaired_diagnostics: dict = {}
         with trace.observation(
-                f"{stage_name.title()} Evidence Repair · source validation", as_type="guardrail",
+                "Evidence Repair · source validation", as_type="guardrail",
                 input=repaired.model_dump(mode="json")) as repaired_validation_span:
             try:
                 result, merges = materialize_extraction(repaired, case, repaired_diagnostics)
             except ExtractionFailure as repaired_exc:
-                audit[f"{stage_name}_source_validation_after_repair"] = repaired_exc.diagnostics or repaired_diagnostics
+                audit["source_validation_after_repair"] = repaired_exc.diagnostics or repaired_diagnostics
                 repaired_validation_span.update(output={
                     "valid": False, "diagnostics": repaired_exc.diagnostics or repaired_diagnostics,
                     "errors": repaired_exc.errors,
@@ -144,10 +141,10 @@ async def _materialize_with_optional_repair(
             repaired_validation_span.update(output={
                 "valid": True, "diagnostics": repaired_diagnostics, "merges": merges,
             })
-        audit[f"{stage_name}_source_validation_after_repair"] = repaired_diagnostics
-        return repaired, result, merges
-    audit[f"{stage_name}_source_validation"] = diagnostics
-    return draft, result, merges
+        audit["source_validation_after_repair"] = repaired_diagnostics
+        return result, merges
+    audit["source_validation"] = diagnostics
+    return result, merges
 
 
 async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> ExtractionOutput:
@@ -179,7 +176,7 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
         quote_index_events: list[QuoteIndexEvent] = []
         model_input = build_quote_model_input(case, parsed_ids, quote_index_events)
         audit["input_quote_indexes"] = [event.model_dump(mode="json") for event in quote_index_events]
-        prompt, consolidation_prompt, repair_prompt = load_prompts()
+        prompt, repair_prompt = load_prompts()
         run.prompt_version = prompt.version
         config = llm_client.load_config()
         repair_enabled = evidence_repair_enabled()
@@ -190,12 +187,11 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
         write_json(artifact_path(case.case_id, run.input_snapshot_path), llm_client.redact({
             "run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
             "model_input": model_input, "system_prompt": prompt.content,
-            "consolidation_prompt": consolidation_prompt.content,
             "evidence_repair_prompt": repair_prompt.content,
             "evidence_repair_enabled": repair_enabled,
             "prompts": {
                 item.name: item.metadata(config.model)
-                for item in (prompt, consolidation_prompt, repair_prompt)
+                for item in (prompt, repair_prompt)
             },
             "prompt_version": prompt.version, "schema_version": prompt.schema_version,
             "configuration": config.public_metadata(),
@@ -218,45 +214,9 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
             draft = parse_model_extraction(reply.content)
             parse_span.update(output=draft.model_dump(mode="json"))
         audit["parsed_result"] = draft.model_dump(mode="json")
-        draft, validated_draft, draft_merges = await _materialize_with_optional_repair(
-            draft, case, stage_name="draft", model_input=model_input, config=config,
+        result, merges = await _materialize_with_optional_repair(
+            draft, case, model_input=model_input, config=config,
             repair_prompt=repair_prompt, repair_enabled=repair_enabled, run=run, audit=audit, trace=trace)
-        audit["validated_draft"] = validated_draft.model_dump(mode="json")
-        audit["draft_merges"] = draft_merges
-        if _snapshot_bytes(case.case_id) != initial_snapshot:
-            raise AppError("case_changed_during_extraction", "Case changed while the model was running; result was not committed", 409)
-        # An explicit always-run semantic review, not an invalid-output repair.
-        # The draft must already pass both schema and source checks to reach it.
-        audit["active_step"] = "consolidation"
-        consolidation_input = {**model_input, "draft_extraction": draft.model_dump(mode="json")}
-        consolidation_path = f"runs/{run_id}.consolidation.input.json"
-        audit["consolidation_input_path"] = consolidation_path
-        write_json(artifact_path(case.case_id, consolidation_path), llm_client.redact(consolidation_input))
-        audit["model_request_attempts"] += 1
-        write_json(artifact_path(case.case_id, run.output_snapshot_path), llm_client.redact(audit))
-        consolidation_schema = ModelConsolidation.model_json_schema()
-        audit["model_calls"].append(_model_call_record(
-            "consolidation", consolidation_prompt, config))
-        with trace.generation(
-                "Consolidation · model call", config=config, prompt=consolidation_prompt,
-                model_input=consolidation_input, schema=consolidation_schema) as generation:
-            consolidated = await llm_client.call_structured(
-                config, consolidation_prompt.content, consolidation_input, consolidation_schema)
-            generation.record_reply(consolidated)
-        audit["consolidation_raw_response"] = consolidated.response
-        audit["consolidation_content"] = consolidated.content
-        with trace.observation(
-                "Consolidation · parse", as_type="evaluator",
-                input=consolidated.content) as parse_span:
-            review = parse_model_consolidation(consolidated.content, len(draft.info_units))
-            parse_span.update(output=review.model_dump(mode="json"))
-        audit["consolidation_review"] = review.model_dump(mode="json", exclude={"extraction"})
-        consolidated_draft = review.extraction
-        audit["consolidated_result"] = consolidated_draft.model_dump(mode="json")
-        consolidated_draft, result, merges = await _materialize_with_optional_repair(
-            consolidated_draft, case, stage_name="consolidated", model_input=model_input, config=config,
-            repair_prompt=repair_prompt, repair_enabled=repair_enabled, run=run, audit=audit, trace=trace)
-        audit["consolidated_result"] = consolidated_draft.model_dump(mode="json")
         audit["merges"] = merges
         audit["result"] = result.model_dump(mode="json")
         if _snapshot_bytes(case.case_id) != initial_snapshot:
@@ -292,9 +252,7 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
         audit["error_code"] = failure.code
         audit["errors"] = getattr(exc, "errors", []) or [{"code": failure.code, "message": str(failure)}]
         if isinstance(exc, llm_client.LLMFailure):
-            if audit["active_step"] == "consolidation":
-                audit["consolidation_raw_response"] = exc.response
-            elif audit["active_step"] == "evidence_repair":
+            if audit["active_step"] == "evidence_repair":
                 audit.setdefault("evidence_repair", {})["raw_response"] = exc.response
             else:
                 audit["raw_response"] = exc.response

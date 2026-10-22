@@ -172,18 +172,9 @@ class TestRelationAPI(IsolatedCaseTest):
             model_unit(file_id, evidence_id),
             model_unit(file_id, evidence_id, title="第二付款记录", content="材料另行记载付款行为仍有争议。"),
         ])
-        review = json.dumps({
-            "decisions": [
-                {"draft_index": index, "action": "keep", "finding": "保留独立命题。", "final_indices": [index]}
-                for index in range(2)
-            ],
-            "coverage_findings": [], "added_final_indices": [], "extraction": json.loads(draft),
-        }, ensure_ascii=False)
         with patch.object(llm_client, "load_config", return_value=CONFIG), patch.object(
-                llm_client, "call_structured", new=AsyncMock(side_effect=[
-                    llm_client.LLMReply(draft, {"mock": "extraction"}),
-                    llm_client.LLMReply(review, {"mock": "consolidation"}),
-                ])):
+                llm_client, "call_structured", new=AsyncMock(return_value=
+                    llm_client.LLMReply(draft, {"mock": "extraction"}))):
             extracted = self.client.post("/api/extraction/run", json={
                 "case_id": self.case_id, "workflow_id": workflow_id,
             })

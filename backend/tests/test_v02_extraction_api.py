@@ -11,15 +11,6 @@ from app import extraction_service
 CONFIG = llm_client.LLMConfig("azure", "https://test.services.ai.azure.com/openai/v1", "configured-model", "test-secret")
 
 
-def review_result(raw, decisions=None):
-    extraction = json.loads(raw)
-    if decisions is None:
-        decisions = [dict(draft_index=i, action="keep", finding="命题及来源保留。", final_indices=[i])
-                     for i in range(len(extraction['info_units']))]
-    return json.dumps(dict(decisions=decisions, coverage_findings=[], added_final_indices=[],
-                           extraction=extraction), ensure_ascii=False)
-
-
 class TestExtractionAPI(IsolatedCaseTest):
     def registered_case(self, filename="case.docx", raw=None):
         return self.upload(filename, docx_bytes("甲：我已付款") if raw is None else raw, source_kind="testimony")
@@ -29,14 +20,10 @@ class TestExtractionAPI(IsolatedCaseTest):
         return quote_id_for(case["case_id"], target, text)
 
     def run_with_reply(self, case, raw):
-        count = 0
-        async def reply_for_step(*args):
-            nonlocal count
-            count += 1
-            content = raw if count == 1 else review_result(raw)
-            return llm_client.LLMReply(content, {"choices": [{"message": {"content": content}, "finish_reason": "stop"}]})
+        reply = llm_client.LLMReply(
+            raw, {"choices": [{"message": {"content": raw}, "finish_reason": "stop"}]})
         with patch.object(llm_client, "load_config", return_value=CONFIG), \
-                patch.object(llm_client, "call_structured", new=AsyncMock(side_effect=reply_for_step)) as call:
+                patch.object(llm_client, "call_structured", new=AsyncMock(return_value=reply)) as call:
             response = self.client.post("/api/extraction/run", json={"case_id": case["case_id"]})
         return response, call
 
@@ -50,7 +37,7 @@ class TestExtractionAPI(IsolatedCaseTest):
         output = response.json()
         self.assertEqual(set(output), {"core_issue", "issue_set", "info_units"})
         self.assertEqual(output["info_units"][0]["source_refs"][0]["source_kind"], "testimony")
-        self.assertEqual(call.await_count, 2)
+        self.assertEqual(call.await_count, 1)
         model_file = call.call_args.args[2]["files"][0]
         self.assertNotIn("text", model_file)
         self.assertEqual(model_file["quote_units"][0]["text"], "甲：我已付款")
@@ -63,17 +50,18 @@ class TestExtractionAPI(IsolatedCaseTest):
         self.assertEqual(run["model"], "configured-model")
         self.assertRegex(run["prompt_version"], r"^[0-9a-f]{64}$")
         root = self.data_dir / case["case_id"]
+        input_audit = json.loads((root / run["input_snapshot_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(set(input_audit["prompts"]), {"extraction", "evidence_repair"})
+        self.assertNotIn("consolidation_prompt", input_audit)
         audit = json.loads((root / run["output_snapshot_path"]).read_text(encoding="utf-8"))
         self.assertEqual(audit["model_content"], raw)
-        self.assertEqual(json.loads(audit["consolidation_content"])["extraction"], json.loads(raw))
-        self.assertEqual(audit["consolidation_review"]["decisions"][0]["action"], "keep")
         self.assertEqual(audit["result"], output)
-        self.assertEqual([record["prompt_name"] for record in audit["model_calls"]], [
-            "extraction", "consolidation",
-        ])
+        self.assertEqual(audit["model_request_attempts"], 1)
+        self.assertEqual([record["prompt_name"] for record in audit["model_calls"]], ["extraction"])
         self.assertTrue(all(record["schema_version"] == "0.3" for record in audit["model_calls"]))
         self.assertTrue(all(record["model"] == "configured-model" for record in audit["model_calls"]))
         self.assertEqual(run["prompt_version"], audit["model_calls"][0]["prompt_version"])
+        self.assertFalse(any(key.startswith("consolidation") for key in audit))
         self.assertTrue((root / f"runs/{run['id']}.stage.json").is_file())
 
     def test_uploaded_source_kind_is_persisted_and_reused(self):
@@ -248,69 +236,6 @@ class TestExtractionAPI(IsolatedCaseTest):
         self.assertEqual(response.json()['detail']['code'],'extraction_audit_persistence_failed')
         self.assertEqual(case_store.load_case(case['case_id']).info_units,[])
 
-    def test_explicit_consolidation_merges_paraphrases_and_keeps_multifile_sources(self):
-        case=self.registered_case('first.txt','甲：已支付款项'.encode('utf-8'))
-        response=self.client.post(f"/api/cases/{case['case_id']}/files",
-            data={'source_kinds':'{"second.txt":"communication"}'},
-            files={'files':('second.txt','甲：款项已经付出'.encode('utf-8'))})
-        self.assertEqual(response.status_code,200,response.text)
-        case=response.json()['case']
-        a,b=case['files']
-        qa=self.evidence(case,'甲：已支付款项',a['file_id'])
-        qb=self.evidence(case,'甲：款项已经付出',b['file_id'])
-        draft=model_result([model_unit(a['file_id'],qa,content='甲称已付款，未核实。'),
-                            model_unit(b['file_id'],qb,content='甲表示款项已付出，未核实。')])
-        combined=model_unit(a['file_id'],qa,content='甲在两份材料中重复称已付款，未核实。')
-        combined['evidence_ids'].append(qb)
-        final=model_result([combined])
-        decisions=[dict(draft_index=i,action='merge',finding='同人同义说法，合并来源。',final_indices=[0]) for i in range(2)]
-        replies=[llm_client.LLMReply(draft,{'step':'extract'}),
-                 llm_client.LLMReply(review_result(final, decisions),{'step':'consolidate'})]
-        with patch.object(llm_client,'load_config',return_value=CONFIG), \
-                patch.object(llm_client,'call_structured',new=AsyncMock(side_effect=replies)) as call:
-            response=self.client.post('/api/extraction/run',json={'case_id':case['case_id']})
-        self.assertEqual(response.status_code,200,response.text)
-        self.assertEqual(call.await_count,2)
-        self.assertEqual(len(response.json()['info_units']),1)
-        refs=response.json()['info_units'][0]['source_refs']
-        self.assertEqual({r['source_kind'] for r in refs},{'testimony','communication'})
-        self.assertIn('draft_extraction',call.call_args.args[2])
-
-    def test_consolidation_failure_is_not_a_fallback_to_the_valid_draft(self):
-        case=self.registered_case()
-        fid=case['files'][0]['file_id']
-        valid=model_result([model_unit(fid,self.evidence(case,'甲：我已付款'))])
-        replies=[llm_client.LLMReply(valid,{'step':'extract'}),llm_client.LLMReply('{',{'step':'consolidate'})]
-        with patch.object(llm_client,'load_config',return_value=CONFIG), \
-                patch.object(llm_client,'call_structured',new=AsyncMock(side_effect=replies)):
-            response=self.client.post('/api/extraction/run',json={'case_id':case['case_id']})
-        self.assertEqual(response.status_code,422,response.text)
-        self.assertEqual(response.json()['detail']['code'],'extraction_json_invalid')
-        self.assertEqual(response.json()['detail']['step'],'consolidation')
-        self.assertEqual(case_store.load_case(case['case_id']).info_units,[])
-
-    def test_invalid_review_plan_or_final_citation_never_overwrites_valid_extraction(self):
-        case = self.registered_case()
-        fid = case['files'][0]['file_id']
-        valid = model_result([model_unit(fid, self.evidence(case, '甲：我已付款'))])
-        prior, _ = self.run_with_reply(case, valid)
-        self.assertEqual(prior.status_code, 200, prior.text)
-        incomplete = json.loads(review_result(valid))
-        incomplete['decisions'] = []
-        wrong_source = review_result(model_result([model_unit(fid, 'quote-does-not-exist')]))
-        for content, code in [(json.dumps(incomplete), 'extraction_schema_invalid'),
-                              (wrong_source, 'extraction_source_invalid')]:
-            with self.subTest(code=code):
-                replies = [llm_client.LLMReply(valid, {}), llm_client.LLMReply(content, {})]
-                with patch.object(llm_client, 'load_config', return_value=CONFIG), \
-                        patch.object(llm_client, 'call_structured', new=AsyncMock(side_effect=replies)):
-                    response = self.client.post('/api/extraction/run', json={'case_id': case['case_id']})
-                self.assertEqual(response.status_code, 422, response.text)
-                self.assertEqual(response.json()['detail']['code'], code)
-                self.assertEqual(response.json()['detail']['step'], 'consolidation')
-                self.assertEqual(case_store.load_case(case['case_id']).info_units[0].id,
-                                 prior.json()['info_units'][0]['id'])
-
     def test_invalid_evidence_audit_keeps_passed_and_failed_candidates(self):
         case = self.registered_case()
         fid = case['files'][0]['file_id']
@@ -324,25 +249,23 @@ class TestExtractionAPI(IsolatedCaseTest):
         self.assertEqual(stored.info_units, [])
         audit = json.loads((self.data_dir / case['case_id'] /
                             stored.stage_runs[-1].output_snapshot_path).read_text(encoding='utf-8'))
-        diagnostics = audit['draft_source_validation']
+        diagnostics = audit['source_validation']
         self.assertEqual(diagnostics['passed_local_ids'], [valid_unit['local_id']])
         self.assertEqual(diagnostics['failed_local_ids'], [invalid_unit['local_id']])
         self.assertEqual(diagnostics['candidates'][1]['errors'][0]['candidate_id'], 'quote-does-not-exist')
 
-    def test_enabled_evidence_repair_changes_only_ids_once_then_consolidates(self):
+    def test_enabled_evidence_repair_changes_only_ids_once(self):
         case = self.registered_case()
         fid = case['files'][0]['file_id']
         valid_id = self.evidence(case, '甲：我已付款')
         invalid = model_result([model_unit(fid, 'quote-does-not-exist')])
         repaired_payload = json.loads(invalid)
         repaired_payload['info_units'][0]['evidence_ids'] = [valid_id]
-        repaired = json.dumps(repaired_payload, ensure_ascii=False)
         local_id = repaired_payload['info_units'][0]['local_id']
         repair_reply = json.dumps({'repairs': [{'local_id': local_id, 'evidence_ids': [valid_id]}]}, ensure_ascii=False)
         replies = [
             llm_client.LLMReply(invalid, {'step': 'extract'}),
             llm_client.LLMReply(repair_reply, {'step': 'repair'}),
-            llm_client.LLMReply(review_result(repaired), {'step': 'consolidate'}),
         ]
         with patch.object(llm_client, 'load_config', return_value=CONFIG), \
                 patch.object(llm_client, 'configuration_values',
@@ -350,17 +273,17 @@ class TestExtractionAPI(IsolatedCaseTest):
                 patch.object(llm_client, 'call_structured', new=AsyncMock(side_effect=replies)) as call:
             response = self.client.post('/api/extraction/run', json={'case_id': case['case_id']})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(call.await_count, 3)
+        self.assertEqual(call.await_count, 2)
         stored = case_store.load_case(case['case_id'])
         audit = json.loads((self.data_dir / case['case_id'] /
                             stored.stage_runs[-1].output_snapshot_path).read_text(encoding='utf-8'))
-        self.assertEqual(audit['model_request_attempts'], 3)
+        self.assertEqual(audit['model_request_attempts'], 2)
         self.assertEqual(audit['evidence_repair_attempts'], 1)
         self.assertEqual(audit['evidence_repair']['changes'], [
             {'local_id': local_id, 'before': ['quote-does-not-exist'], 'after': [valid_id]}])
-        self.assertEqual(audit['validated_draft']['info_units'][0]['source_refs'][0]['quote'], '甲：我已付款')
+        self.assertEqual(audit['result']['info_units'][0]['source_refs'][0]['quote'], '甲：我已付款')
         self.assertEqual([record['prompt_name'] for record in audit['model_calls']], [
-            'extraction', 'evidence_repair', 'consolidation',
+            'extraction', 'evidence_repair',
         ])
         repair_record = audit['model_calls'][1]
         self.assertRegex(repair_record['prompt_version'], r'^[0-9a-f]{64}$')
@@ -390,8 +313,7 @@ class TestExtractionAPI(IsolatedCaseTest):
         audit = json.loads((self.data_dir / case['case_id'] /
                             stored.stage_runs[-1].output_snapshot_path).read_text(encoding='utf-8'))
         self.assertEqual((audit['model_request_attempts'], audit['evidence_repair_attempts']), (2, 1))
-        self.assertIn('draft_source_validation_after_repair', audit)
-        self.assertNotIn('consolidation_raw_response', audit)
+        self.assertIn('source_validation_after_repair', audit)
 
 
 if __name__ == "__main__":

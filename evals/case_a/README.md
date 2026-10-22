@@ -44,7 +44,7 @@ python evals/case_a/tests/score_predictions.py --prediction /path/to/predicted_e
 
 如需评估额外节点，可选 `--extra-review`，标注 `valid_extra/duplicate/irrelevant/unsupported`。额外节点必须先人工判断，不应自动视为幻觉。视图选择支持 `constrained`（唯一目标）、`flexible`（多个合理候选）和 `open`（只评分实际选择视图的内容）三种模式。对应评分脚本通过 `--predictions` 输入模型输出。
 
-`tests/gold_basis.py` 可打印当前版本、实际数量及 Gold/固定来源哈希。评分输出记录这些依据及预测、对齐文件哈希；已有输出文件会被拒绝覆盖。`tests/run_extraction_eval.py` 也会记录相同依据并拒绝复用非空输出目录；它运行完整 Extraction（含 Consolidation），不是仅第一轮工具。本轮未执行该脚本。
+`tests/gold_basis.py` 可打印当前版本、实际数量及 Gold/固定来源哈希。评分输出记录这些依据及预测、对齐文件哈希；已有输出文件会被拒绝覆盖。`tests/run_extraction_eval.py` 也会记录相同依据并拒绝复用非空输出目录；它运行当前正式 Extraction，并记录可选 Evidence Repair 的额外调用。本轮未执行该脚本。
 
 历史版本映射见 `docs/historical_evaluation_index.json`，包含 v6、v7、v7.1、v7.2 等本地归档。历史报告中的拆分诊断保留原样，只反映当时口径，不是当前 Gold 的评判依据。历史结果继续按其记录的 Gold 基准解释；如需按当前 v1.8 重评，必须使用原预测和新的 v1.8 对齐模板，在新目录保存结果，不得修改历史输出、拆分节点或复用旧命中判断。
 

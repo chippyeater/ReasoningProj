@@ -53,7 +53,7 @@ class TestV03ExtractionContract(IsolatedCaseTest):
         self.assertEqual(by_title["甲称已经付款"].actor, by_title["付款人甲"].id)
         self.assertNotEqual(by_title["甲称已经付款"].actor, "甲")
 
-    def test_duplicate_entity_consolidation_remaps_dependents(self):
+    def test_duplicate_entity_deduplication_remaps_dependents(self):
         saved = self.upload(raw="甲为付款人\n甲再次被记为付款人\n甲称已付款".encode("utf-8"), source_kind="testimony")
         case = case_store.load_case(saved["case_id"])
         fid = case.files[0].file_id
