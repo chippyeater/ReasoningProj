@@ -1,5 +1,6 @@
 import json
-from unittest.mock import AsyncMock, patch
+from contextlib import nullcontext
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from support import IsolatedCaseTest, model_result, model_unit, quote_id_for
 from app import case_store, llm_client, observability, relation_service
@@ -45,8 +46,11 @@ class TestRelationAPI(IsolatedCaseTest):
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()["case"]["info_units"][-1]
 
-    def _run(self, content, selected=None, side_effect=None, workflow_id=None):
+    def _run(self, content, selected=None, side_effect=None, workflow_id=None,
+             repair_content=None):
         reply = llm_client.LLMReply(content, {"mock": True})
+        if repair_content is not None:
+            side_effect = [reply, llm_client.LLMReply(repair_content, {"mock": "repair"})]
         with patch.object(llm_client, "load_config", return_value=CONFIG), patch.object(
                 llm_client, "call_structured", new=AsyncMock(side_effect=side_effect, return_value=reply)) as call:
             payload = {"case_id": self.case_id}
@@ -61,6 +65,8 @@ class TestRelationAPI(IsolatedCaseTest):
         source, target = self.units[1], self.units[2]
         response, call = self._run(relation_result(source["id"], target["id"], "support"))
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "success")
+        self.assertEqual(response.json()["discarded_count"], 0)
         added = response.json()["added_relations"]
         self.assertEqual(len(added), 1)
         self.assertTrue(added[0]["id"].startswith("relation-"))
@@ -87,7 +93,9 @@ class TestRelationAPI(IsolatedCaseTest):
         with patch.object(llm_client, "call_structured", new=AsyncMock()) as call:
             response = self.client.post("/api/relation/run", json={"case_id": self.case_id})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"added_relations": []})
+        self.assertEqual(response.json(), {
+            "status": "empty", "added_relations": [], "discarded_count": 0,
+        })
         call.assert_not_awaited()
 
     def test_selected_generation_is_scoped_and_repeat_is_idempotent(self):
@@ -100,8 +108,13 @@ class TestRelationAPI(IsolatedCaseTest):
         self.assertEqual(call.await_args.args[2]["scope"], "selected")
 
         reverse = relation_result(selected[1], selected[0], "contradict", list(reversed(selected)))
-        second, call = self._run(reverse, selected)
+        second, call = self._run(
+            reverse, selected,
+            repair_content=json.dumps({
+                "repairs": [], "discarded_ids": ["model-temp-1"],
+            }, ensure_ascii=False))
         self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(second.json()["status"], "partial_success")
         self.assertEqual(second.json()["added_relations"], [])
         stored = case_store.load_case(self.case_id)
         self.assertEqual(len(stored.relations), 1)
@@ -112,8 +125,14 @@ class TestRelationAPI(IsolatedCaseTest):
         selected = [self.units[1]["id"], self.units[2]["id"]]
         outside = self.units[3]["id"]
         before = case_store.load_case(self.case_id).model_dump(mode="json")
-        response, _ = self._run(relation_result(selected[0], outside, "support"), selected)
-        self.assertEqual(response.status_code, 422, response.text)
+        response, call = self._run(
+            relation_result(selected[0], outside, "support"), selected,
+            repair_content=json.dumps({
+                "repairs": [], "discarded_ids": ["model-temp-1"],
+            }, ensure_ascii=False))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "partial_success")
+        self.assertEqual(call.await_count, 2)
         after = case_store.load_case(self.case_id)
         self.assertEqual(after.relations, [])
         self.assertEqual([u.model_dump(mode="json") for u in after.info_units], before["info_units"])
@@ -121,6 +140,110 @@ class TestRelationAPI(IsolatedCaseTest):
         bad_scope, call = self._run('{"relations": []}', [selected[0], "missing"])
         self.assertEqual(bad_scope.status_code, 422, bad_scope.text)
         call.assert_not_awaited()
+
+    def test_illegal_endpoint_is_revalidated_once_while_valid_relation_is_preserved(self):
+        valid = json.loads(relation_result(
+            self.units[1]["id"], self.units[2]["id"], "support"))["relations"][0]
+        invalid = json.loads(relation_result(
+            self.units[1]["id"], self.units[0]["id"], "support"))["relations"][0]
+        invalid["id"] = "trace-invalid-endpoint"
+        initial = json.dumps({"relations": [valid, invalid]}, ensure_ascii=False)
+        # The single repair call returns a still-invalid replacement. Full
+        # revalidation must discard it without touching the valid candidate.
+        repair = json.dumps({
+            "repairs": [invalid], "discarded_ids": [],
+        }, ensure_ascii=False)
+        response, call = self._run(initial, repair_content=repair)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "partial_success")
+        self.assertEqual(response.json()["discarded_count"], 1)
+        self.assertEqual(len(response.json()["added_relations"]), 1)
+        self.assertEqual(call.await_count, 2)
+        stored = case_store.load_case(self.case_id)
+        self.assertEqual(len(stored.relations), 1)
+        audit = json.loads((self.data_dir / self.case_id /
+                            stored.stage_runs[-1].output_snapshot_path).read_text(encoding="utf-8"))
+        endpoint_error = next(
+            error for error in audit["initial_validation"]["errors"]
+            if error["item_id"] == invalid["id"])
+        self.assertEqual(endpoint_error, {
+            "item_id": invalid["id"], "field_path": "target_id",
+            "error_code": "illegal_relation_endpoint",
+            "message": "support target must not be an entity",
+        })
+        repair_input = json.loads((self.data_dir / self.case_id /
+                                   audit["repair"]["input_path"]).read_text(encoding="utf-8"))
+        self.assertEqual([item["original"]["id"] for item in repair_input["failed_relations"]],
+                         [invalid["id"]])
+        self.assertEqual(audit["revalidation"]["failed_ids"], [invalid["id"]])
+
+    def test_invalid_relation_can_be_repaired_without_changing_accepted_candidates(self):
+        accepted = json.loads(relation_result(
+            self.units[3]["id"], self.units[1]["id"], "contradict"))["relations"][0]
+        accepted["id"] = "accepted-original"
+        invalid = json.loads(relation_result(
+            self.units[1]["id"], self.units[0]["id"], "support"))["relations"][0]
+        invalid["id"] = "repair-me"
+        repaired = dict(invalid)
+        repaired["target_id"] = self.units[2]["id"]
+        backend = MagicMock()
+        backend.propagate_attributes.return_value = nullcontext()
+        span_starts = []
+
+        def start_observation(**kwargs):
+            span_starts.append(kwargs)
+            return nullcontext(MagicMock())
+
+        backend.client.start_as_current_observation.side_effect = start_observation
+        settings = observability.ObservabilitySettings(
+            enabled=True, capture_content=True, public_key="pk-test", secret_key="sk-test",
+            base_url="https://cloud.langfuse.com", environment="test")
+        with patch.object(observability, "load_settings", return_value=settings), patch.object(
+                observability, "_get_backend", return_value=backend):
+            response, call = self._run(
+                json.dumps({"relations": [accepted, invalid]}, ensure_ascii=False),
+                repair_content=json.dumps({
+                    "repairs": [repaired], "discarded_ids": [],
+                }, ensure_ascii=False))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(call.await_count, 2)
+        self.assertEqual(response.json()["status"], "success")
+        self.assertEqual(len(response.json()["added_relations"]), 2)
+        stored = case_store.load_case(self.case_id)
+        audit = json.loads((self.data_dir / self.case_id /
+                            stored.stage_runs[-1].output_snapshot_path).read_text(encoding="utf-8"))
+        self.assertFalse(any(
+            change["item_id"] == accepted["id"] for change in audit["repair"]["changes"]))
+        self.assertEqual(audit["revalidation"]["failed_ids"], [])
+        self.assertEqual([record["prompt_name"] for record in audit["model_calls"]], [
+            "relation", "relation_validation_repair",
+        ])
+        names = [start["name"] for start in span_starts]
+        self.assertIn("Relation Validation Repair · model call", names)
+        self.assertIn("Relation Validation Repair · resolution", names)
+        self.assertIn("Relation Validation Repair · revalidate", names)
+        repair_generation = next(
+            start for start in span_starts
+            if start["name"] == "Relation Validation Repair · model call")
+        self.assertEqual(repair_generation["version"], "v1")
+        self.assertEqual(
+            repair_generation["metadata"]["prompt_name"], "relation_validation_repair")
+
+    def test_relation_repair_transport_failure_does_not_save_initially_valid_relation(self):
+        valid = json.loads(relation_result(
+            self.units[1]["id"], self.units[2]["id"], "support"))["relations"][0]
+        invalid = json.loads(relation_result(
+            self.units[1]["id"], self.units[0]["id"], "support"))["relations"][0]
+        invalid["id"] = "repair-outage"
+        initial = json.dumps({"relations": [valid, invalid]}, ensure_ascii=False)
+        side_effect = [
+            llm_client.LLMReply(initial, {"mock": "initial"}),
+            llm_client.LLMFailure("llm_call_failed", "mock repair outage"),
+        ]
+        response, call = self._run(initial, side_effect=side_effect)
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertEqual(call.await_count, 2)
+        self.assertEqual(case_store.load_case(self.case_id).relations, [])
 
     def test_concurrent_change_rejects_stale_result(self):
         source, target = self.units[1], self.units[2]
@@ -147,6 +270,16 @@ class TestRelationAPI(IsolatedCaseTest):
         self.assertEqual([unit.model_dump(mode="json") for unit in stored.info_units], before)
         self.assertEqual(stored.relations, [])
 
+    def test_generated_relation_save_failure_does_not_partially_persist(self):
+        before = (self.data_dir / self.case_id / "case.json").read_bytes()
+        source, target = self.units[1], self.units[2]
+        with patch.object(relation_service, "save_case", side_effect=OSError("denied")):
+            response, call = self._run(relation_result(source["id"], target["id"], "support"))
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "relation_audit_persistence_failed")
+        self.assertEqual(call.await_count, 1)
+        self.assertEqual((self.data_dir / self.case_id / "case.json").read_bytes(), before)
+
     def test_observability_outage_does_not_break_relation_or_local_audit(self):
         settings = observability.ObservabilitySettings(
             enabled=True, capture_content=False, public_key="pk-test", secret_key="sk-test",
@@ -166,6 +299,9 @@ class TestRelationAPI(IsolatedCaseTest):
 
     def test_successful_extraction_then_relation_failure_keeps_extracted_units(self):
         workflow_id = "workflow-cross-stage-test"
+        for unit in reversed(self.units):
+            response = self.client.delete(f"/api/cases/{self.case_id}/info-units/{unit['id']}")
+            self.assertEqual(response.status_code, 200, response.text)
         file_id = self.case["files"][0]["file_id"]
         evidence_id = quote_id_for(self.case_id, file_id, "付款行为已发生")
         draft = model_result([

@@ -7,7 +7,8 @@ import support  # Initialize the repository import path for standalone discovery
 import httpx
 from app import llm_client
 from app.errors import AppError
-from app.extraction import ModelEvidenceRepair, ModelExtraction
+from app.extraction import ExtractionValidationRepair, ModelExtraction
+from app.relation_service import RelationValidationRepair
 
 CONFIG = llm_client.LLMConfig("azure", "https://test.services.ai.azure.com/openai/v1", "deployment-name", "test-secret")
 
@@ -57,7 +58,8 @@ class TestModelTransport(unittest.TestCase):
                 for child in value:
                     inspect(child)
         inspect(ModelExtraction.model_json_schema())
-        inspect(ModelEvidenceRepair.model_json_schema())
+        inspect(ExtractionValidationRepair.model_json_schema())
+        inspect(RelationValidationRepair.model_json_schema())
 
     def call(self, handler):
         real_client = httpx.AsyncClient

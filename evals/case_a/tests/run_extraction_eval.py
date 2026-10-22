@@ -73,18 +73,21 @@ async def run(output: Path) -> dict:
         audit = json.loads((case_store.case_dir(case.case_id) / stage.output_snapshot_path).read_text(encoding="utf-8"))
         report.update(run_id=stage.id, prompt_version=stage.prompt_version,
                       model_request_attempts=audit.get('model_request_attempts'),
-                      evidence_repair_attempts=audit.get('evidence_repair_attempts'),
+                      validation_repair_attempts=1 if audit.get('repair') else 0,
+                      result_status=audit.get('result_status'),
+                      accepted_count=audit.get('accepted_count'),
+                      discarded_count=audit.get('discarded_count'),
                       terminal_step=audit.get('active_step'))
         report['provider_usage'] = {}
         if isinstance(audit.get('raw_response'), dict):
             usage = audit['raw_response'].get('usage')
             if usage is not None:
                 report['provider_usage']['extraction'] = usage
-        repair = audit.get('evidence_repair')
+        repair = audit.get('repair')
         if isinstance(repair, dict) and isinstance(repair.get('raw_response'), dict):
             usage = repair['raw_response'].get('usage')
             if usage is not None:
-                report['provider_usage']['evidence_repair'] = usage
+                report['provider_usage']['validation_repair'] = usage
     case_store.write_json(output / "run_report.json", llm_client.redact(report))
     return report
 

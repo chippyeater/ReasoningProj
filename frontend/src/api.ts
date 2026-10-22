@@ -240,7 +240,9 @@ export type Relation = {
 export type RelationMutationInput = Omit<Relation, "id">;
 
 export type RelationRunResponse = {
+  status: "empty" | "success" | "partial_success";
   added_relations: Relation[];
+  discarded_count: number;
 };
 
 export type ConflictView = {

@@ -4,9 +4,10 @@ from __future__ import annotations
 from app.case_store import read_parsed_document
 from app.errors import AppError
 from app.schemas import (
-    CaseFile, ExtractionOutput, RelationInput, RelationOutput,
+    CaseFile, ExtractionOutput, InfoUnitType, Relation, RelationInput, RelationOutput, RelationType,
     SourceRef, ValidationErrorItem, ValidationInput, ValidationResult, check_relations,
 )
+from app.validation_repair import issue
 
 
 def locate_source_ref(case_id: str, file: CaseFile, quote: str) -> SourceRef:
@@ -49,9 +50,70 @@ def validate_extraction(case_id: str, value: ValidationInput) -> ValidationResul
 
 
 def validate_relations(value: RelationOutput, context: RelationInput) -> ValidationResult[RelationOutput]:
-    try:
-        check_relations(context.info_units, value.relations)
-    except ValueError as exc:
+    _, detailed_errors = validate_relation_candidates(value.relations, context)
+    if detailed_errors:
         return ValidationResult[RelationOutput](valid=False, data=None, errors=[
-            ValidationErrorItem(item_id=None, field="relations", message=str(exc))])
+            ValidationErrorItem(
+                item_id=error["item_id"], field=error["field_path"], message=error["message"])
+            for error in detailed_errors
+        ])
     return ValidationResult[RelationOutput](valid=True, data=value, errors=[])
+
+
+def relation_key(relation: Relation) -> tuple[str, str, RelationType]:
+    source, target = relation.source_id, relation.target_id
+    if relation.relation_type == RelationType.contradict and target < source:
+        source, target = target, source
+    return source, target, relation.relation_type
+
+
+def validate_relation_candidates(
+        relations: list[Relation], context: RelationInput,
+        existing_relations: list[Relation] | None = None,
+        ) -> tuple[list[Relation], list[dict[str, str]]]:
+    """Validate each Relation independently while preserving the first legal equivalent."""
+    lookup = {unit.id: unit for unit in context.info_units}
+    existing_keys = {relation_key(relation) for relation in (existing_relations or [])}
+    seen_keys: set[tuple[str, str, RelationType]] = set()
+    accepted: list[Relation] = []
+    errors: list[dict[str, str]] = []
+    for relation in relations:
+        item_errors: list[dict[str, str]] = []
+        for field in ("source_id", "target_id"):
+            value = getattr(relation, field)
+            if value not in lookup:
+                item_errors.append(issue(
+                    relation.id, field, "relation_scope_violation",
+                    f"{field} must reference an InfoUnit in the current Relation scope"))
+        for index, evidence_id in enumerate(relation.evidence_unit_ids):
+            if evidence_id not in lookup:
+                item_errors.append(issue(
+                    relation.id, f"evidence_unit_ids.{index}", "relation_scope_violation",
+                    "evidence_unit_ids must reference InfoUnits in the current Relation scope"))
+        source = lookup.get(relation.source_id)
+        target = lookup.get(relation.target_id)
+        if relation.relation_type == RelationType.support and target is not None \
+                and target.type == InfoUnitType.entity:
+            item_errors.append(issue(
+                relation.id, "target_id", "illegal_relation_endpoint",
+                "support target must not be an entity"))
+        if relation.relation_type == RelationType.contradict:
+            if source is not None and source.type == InfoUnitType.entity:
+                item_errors.append(issue(
+                    relation.id, "source_id", "illegal_relation_endpoint",
+                    "contradict source must not be an entity"))
+            if target is not None and target.type == InfoUnitType.entity:
+                item_errors.append(issue(
+                    relation.id, "target_id", "illegal_relation_endpoint",
+                    "contradict target must not be an entity"))
+        key = relation_key(relation)
+        if key in existing_keys or key in seen_keys:
+            item_errors.append(issue(
+                relation.id, "$", "duplicate_relation",
+                "An equivalent Relation already exists or was already accepted in this batch"))
+        if item_errors:
+            errors.extend(item_errors)
+            continue
+        seen_keys.add(key)
+        accepted.append(relation)
+    return accepted, errors

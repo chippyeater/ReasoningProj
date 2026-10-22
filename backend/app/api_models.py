@@ -193,7 +193,9 @@ class RelationRunInput(ContractModel):
 
 
 class RelationRunResponse(ContractModel):
+    status: Literal["empty", "success", "partial_success"]
     added_relations: list[Relation]
+    discarded_count: int
 
 
 class CreateRelationInput(ContractModel):

@@ -1,9 +1,10 @@
 import json
 import unittest
-from unittest.mock import AsyncMock, patch
+from contextlib import nullcontext
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from support import IsolatedCaseTest, docx_bytes, model_result, model_unit, quote_id_for
-from app import case_store, file_parsers, llm_client
+from app import case_store, file_parsers, llm_client, observability
 from app.case_service import now_iso
 from app import extraction_service
 
@@ -50,7 +51,9 @@ class TestExtractionAPI(IsolatedCaseTest):
         self.assertRegex(run["prompt_version"], r"^v[1-9][0-9]*$")
         root = self.data_dir / case["case_id"]
         input_audit = json.loads((root / run["input_snapshot_path"]).read_text(encoding="utf-8"))
-        self.assertEqual(set(input_audit["prompts"]), {"extraction", "evidence_repair"})
+        self.assertEqual(set(input_audit["prompts"]), {
+            "extraction", "extraction_validation_repair",
+        })
         self.assertNotIn("consolidation_prompt", input_audit)
         audit = json.loads((root / run["output_snapshot_path"]).read_text(encoding="utf-8"))
         self.assertEqual(audit["model_content"], raw)
@@ -75,9 +78,9 @@ class TestExtractionAPI(IsolatedCaseTest):
         self.assertFalse((self.data_dir / case["case_id"] / "source_metadata.json").exists())
         self.assertEqual(self.client.put(f"/api/cases/{case['case_id']}/source-metadata",
                                         json={"source_kinds": {fid: "testimony"}}).status_code, 404)
-        for _ in range(2):
-            response, _ = self.run_with_reply(case, model_result([model_unit(fid, self.evidence(case, "甲：我已付款"))]))
-            self.assertEqual(response.status_code, 200, response.text)
+        response, _ = self.run_with_reply(
+            case, model_result([model_unit(fid, self.evidence(case, "甲：我已付款"))]))
+        self.assertEqual(response.status_code, 200, response.text)
 
     def test_invalid_missing_or_mismatched_upload_metadata_is_rejected(self):
         with patch.object(llm_client, "call_structured", new=AsyncMock()) as call:
@@ -136,28 +139,21 @@ class TestExtractionAPI(IsolatedCaseTest):
         audit = json.loads((self.data_dir / case["case_id"] / run.output_snapshot_path).read_text(encoding="utf-8"))
         self.assertEqual(audit["excluded_unparsed_files"][0]["parse_status"], "unsupported")
 
-    def test_failed_reruns_preserve_existing_valid_results_and_log_error_types(self):
+    def test_existing_results_block_rerun_before_model_call(self):
         case = self.registered_case()
         fid = case["files"][0]["file_id"]
         response, _ = self.run_with_reply(case, model_result([model_unit(fid, self.evidence(case, "甲：我已付款"))]))
         self.assertEqual(response.status_code, 200)
         valid = response.json()
-        failures = [("{", "extraction_json_invalid"),
-                    (model_result([model_unit(fid, self.evidence(case, "甲：我已付款"), type="invalid")]), "extraction_schema_invalid"),
-                    (model_result([model_unit(fid, "quote-does-not-exist")]), "extraction_source_invalid")]
-        for raw, code in failures:
-            with self.subTest(code=code):
-                response, _ = self.run_with_reply(case, raw)
-                self.assertEqual(response.status_code, 422, response.text)
-                self.assertEqual(response.json()["detail"]["code"], code)
-                stored = case_store.load_case(case["case_id"])
-                self.assertEqual(stored.info_units[0].id, valid["info_units"][0]["id"])
-                self.assertEqual(stored.core_issue, valid["core_issue"])
-                self.assertEqual(stored.stage_runs[-1].status.value, "failed")
-                run = stored.stage_runs[-1]
-                audit = json.loads((self.data_dir / case["case_id"] / run.output_snapshot_path).read_text(encoding="utf-8"))
-                self.assertEqual(audit["error_code"], code)
-                self.assertTrue(audit["errors"])
+        with patch.object(llm_client, "call_structured", new=AsyncMock()) as call:
+            response = self.client.post("/api/extraction/run", json={"case_id": case["case_id"]})
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "extraction_existing_results_conflict")
+        call.assert_not_awaited()
+        stored = case_store.load_case(case["case_id"])
+        self.assertEqual(stored.info_units[0].id, valid["info_units"][0]["id"])
+        self.assertEqual(stored.core_issue, valid["core_issue"])
+        self.assertEqual(stored.stage_runs[-1].status.value, "failed")
 
     def test_model_call_failures_are_502_and_raw_errors_are_redacted(self):
         case = self.registered_case()
@@ -203,15 +199,16 @@ class TestExtractionAPI(IsolatedCaseTest):
         self.assertEqual(response.json()['detail']['code'],'llm_configuration_missing')
         self.assertEqual(case_store.load_case(case['case_id']).stage_runs[-1].status.value,'failed')
 
-    def test_invalid_quote_unit_id_fails_in_api_and_keeps_prior_results(self):
+    def test_unlocatable_batch_error_fails_without_partial_acceptance(self):
         case=self.registered_case('case.txt','重复\n重复\n唯一引用'.encode('utf-8'))
         fid=case['files'][0]['file_id']
-        valid,_=self.run_with_reply(case,model_result([model_unit(fid,self.evidence(case,'唯一引用'))]))
-        self.assertEqual(valid.status_code,200,valid.text)
-        response,_=self.run_with_reply(case,model_result([model_unit(fid,'quote-does-not-exist')]))
+        invalid = json.loads(model_result([model_unit(fid, self.evidence(case, '唯一引用'))]))
+        del invalid['info_units'][0]['local_id']
+        response, call = self.run_with_reply(case, json.dumps(invalid, ensure_ascii=False))
         self.assertEqual(response.status_code,422,response.text)
-        self.assertEqual(response.json()['detail']['errors'][0]['code'],'invalid_evidence_id')
-        self.assertEqual(case_store.load_case(case['case_id']).info_units[0].id,valid.json()['info_units'][0]['id'])
+        self.assertEqual(response.json()['detail']['code'], 'extraction_schema_invalid')
+        self.assertEqual(call.await_count, 1)
+        self.assertEqual(case_store.load_case(case['case_id']).info_units, [])
 
     def test_missing_cache_is_traceable_even_when_stage_index_cannot_be_saved(self):
         case=self.registered_case()
@@ -238,25 +235,43 @@ class TestExtractionAPI(IsolatedCaseTest):
         self.assertEqual(response.json()['detail']['code'],'extraction_audit_persistence_failed')
         self.assertEqual(case_store.load_case(case['case_id']).info_units,[])
 
-    def test_invalid_evidence_audit_keeps_passed_and_failed_candidates(self):
+    def test_invalid_evidence_discards_only_failed_candidate_and_audits_minimal_input(self):
         case = self.registered_case()
         fid = case['files'][0]['file_id']
         valid_id = self.evidence(case, '甲：我已付款')
         valid_unit = model_unit(fid, valid_id)
         invalid_unit = model_unit(fid, 'quote-does-not-exist', content='乙称尚未收到款项。', speaker='乙')
-        response, call = self.run_with_reply(case, model_result([valid_unit, invalid_unit]))
-        self.assertEqual(response.status_code, 422, response.text)
-        self.assertEqual(call.await_count, 1)
+        repair_reply = json.dumps({
+            'repairs': [], 'unresolved_ids': [invalid_unit['local_id']],
+        }, ensure_ascii=False)
+        replies = [
+            llm_client.LLMReply(model_result([valid_unit, invalid_unit]), {'step': 'extract'}),
+            llm_client.LLMReply(repair_reply, {'step': 'repair'}),
+        ]
+        with patch.object(llm_client, 'load_config', return_value=CONFIG), patch.object(
+                llm_client, 'call_structured', new=AsyncMock(side_effect=replies)) as call:
+            response = self.client.post('/api/extraction/run', json={'case_id': case['case_id']})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(call.await_count, 2)
         stored = case_store.load_case(case['case_id'])
-        self.assertEqual(stored.info_units, [])
+        self.assertEqual(len(stored.info_units), 1)
+        self.assertEqual(stored.info_units[0].title, valid_unit['title'])
         audit = json.loads((self.data_dir / case['case_id'] /
                             stored.stage_runs[-1].output_snapshot_path).read_text(encoding='utf-8'))
-        diagnostics = audit['source_validation']
-        self.assertEqual(diagnostics['passed_local_ids'], [valid_unit['local_id']])
-        self.assertEqual(diagnostics['failed_local_ids'], [invalid_unit['local_id']])
-        self.assertEqual(diagnostics['candidates'][1]['errors'][0]['candidate_id'], 'quote-does-not-exist')
+        self.assertEqual(audit['result_status'], 'partial_success')
+        self.assertEqual(audit['initial_validation']['accepted_ids'], [valid_unit['local_id']])
+        self.assertEqual(audit['initial_validation']['failed_ids'], [invalid_unit['local_id']])
+        error = audit['initial_validation']['errors'][0]
+        self.assertEqual(set(error), {'item_id', 'field_path', 'error_code', 'message'})
+        self.assertEqual(error['error_code'], 'invalid_evidence_id')
+        repair_input = json.loads((self.data_dir / case['case_id'] /
+                                   audit['repair']['input_path']).read_text(encoding='utf-8'))
+        self.assertEqual([item['original']['local_id'] for item in repair_input['failed_items']],
+                         [invalid_unit['local_id']])
+        self.assertNotIn(valid_unit, [item['original'] for item in repair_input['failed_items']])
+        self.assertNotIn('files', repair_input)
 
-    def test_enabled_evidence_repair_changes_only_ids_once(self):
+    def test_validation_repair_replaces_failed_candidate_once(self):
         case = self.registered_case()
         fid = case['files'][0]['file_id']
         valid_id = self.evidence(case, '甲：我已付款')
@@ -264,15 +279,15 @@ class TestExtractionAPI(IsolatedCaseTest):
         repaired_payload = json.loads(invalid)
         repaired_payload['info_units'][0]['evidence_ids'] = [valid_id]
         local_id = repaired_payload['info_units'][0]['local_id']
-        repair_reply = json.dumps({'repairs': [{'local_id': local_id, 'evidence_ids': [valid_id]}]}, ensure_ascii=False)
+        repair_reply = json.dumps({
+            'repairs': [repaired_payload['info_units'][0]], 'unresolved_ids': [],
+        }, ensure_ascii=False)
         replies = [
             llm_client.LLMReply(invalid, {'step': 'extract'}),
             llm_client.LLMReply(repair_reply, {'step': 'repair'}),
         ]
-        with patch.object(llm_client, 'load_config', return_value=CONFIG), \
-                patch.object(llm_client, 'configuration_values',
-                             return_value={'EXTRACTION_EVIDENCE_REPAIR_ENABLED': 'true'}), \
-                patch.object(llm_client, 'call_structured', new=AsyncMock(side_effect=replies)) as call:
+        with patch.object(llm_client, 'load_config', return_value=CONFIG), patch.object(
+                llm_client, 'call_structured', new=AsyncMock(side_effect=replies)) as call:
             response = self.client.post('/api/extraction/run', json={'case_id': case['case_id']})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(call.await_count, 2)
@@ -280,43 +295,152 @@ class TestExtractionAPI(IsolatedCaseTest):
         audit = json.loads((self.data_dir / case['case_id'] /
                             stored.stage_runs[-1].output_snapshot_path).read_text(encoding='utf-8'))
         self.assertEqual(audit['model_request_attempts'], 2)
-        self.assertEqual(audit['evidence_repair_attempts'], 1)
-        self.assertEqual(audit['evidence_repair']['changes'], [
-            {'local_id': local_id, 'before': ['quote-does-not-exist'], 'after': [valid_id]}])
+        self.assertIn({
+            'item_id': local_id, 'field_path': 'evidence_ids',
+            'before': ['quote-does-not-exist'], 'after': [valid_id],
+        }, audit['repair']['changes'])
         self.assertEqual(audit['result']['info_units'][0]['source_refs'][0]['quote'], '甲：我已付款')
         self.assertEqual([record['prompt_name'] for record in audit['model_calls']], [
-            'extraction', 'evidence_repair',
+            'extraction', 'extraction_validation_repair',
         ])
         repair_record = audit['model_calls'][1]
         self.assertRegex(repair_record['prompt_version'], r'^v[1-9][0-9]*$')
         self.assertRegex(repair_record['prompt_sha256'], r'^[0-9a-f]{64}$')
         self.assertEqual(repair_record['schema_version'], '0.3')
 
-    def test_failed_evidence_repair_is_not_retried_or_partially_committed(self):
+    def test_failed_validation_repair_is_not_retried_or_committed(self):
         case = self.registered_case()
         fid = case['files'][0]['file_id']
         invalid_payload = json.loads(model_result([model_unit(fid, 'quote-does-not-exist')]))
         local_id = invalid_payload['info_units'][0]['local_id']
         invalid = json.dumps(invalid_payload, ensure_ascii=False)
+        failed_item = dict(invalid_payload['info_units'][0])
+        failed_item['evidence_ids'] = ['quote-still-invalid']
         failed_repair = json.dumps({
-            'repairs': [{'local_id': local_id, 'evidence_ids': ['quote-still-invalid']}]
+            'repairs': [failed_item], 'unresolved_ids': [],
         }, ensure_ascii=False)
         replies = [llm_client.LLMReply(invalid, {'step': 'extract'}),
                    llm_client.LLMReply(failed_repair, {'step': 'repair'})]
-        with patch.object(llm_client, 'load_config', return_value=CONFIG), \
-                patch.object(llm_client, 'configuration_values',
-                             return_value={'EXTRACTION_EVIDENCE_REPAIR_ENABLED': 'true'}), \
-                patch.object(llm_client, 'call_structured', new=AsyncMock(side_effect=replies)) as call:
+        with patch.object(llm_client, 'load_config', return_value=CONFIG), patch.object(
+                llm_client, 'call_structured', new=AsyncMock(side_effect=replies)) as call:
             response = self.client.post('/api/extraction/run', json={'case_id': case['case_id']})
         self.assertEqual(response.status_code, 422, response.text)
-        self.assertEqual(response.json()['detail']['code'], 'extraction_source_invalid')
+        self.assertEqual(response.json()['detail']['code'], 'extraction_no_acceptable_candidates')
         self.assertEqual(call.await_count, 2)
         stored = case_store.load_case(case['case_id'])
         self.assertEqual(stored.info_units, [])
         audit = json.loads((self.data_dir / case['case_id'] /
                             stored.stage_runs[-1].output_snapshot_path).read_text(encoding='utf-8'))
-        self.assertEqual((audit['model_request_attempts'], audit['evidence_repair_attempts']), (2, 1))
-        self.assertIn('source_validation_after_repair', audit)
+        self.assertEqual(audit['model_request_attempts'], 2)
+        self.assertIsNotNone(audit['revalidation'])
+        self.assertEqual(audit['revalidation']['failed_ids'], [local_id])
+
+    def test_classification_error_can_be_repaired_with_full_replacement(self):
+        case = self.registered_case()
+        fid = case['files'][0]['file_id']
+        original = model_unit(fid, self.evidence(case, '甲：我已付款'), type='unknown')
+        repaired = dict(original)
+        repaired['type'] = 'event'
+        replies = [
+            llm_client.LLMReply(model_result([original]), {'step': 'extract'}),
+            llm_client.LLMReply(json.dumps({
+                'repairs': [repaired], 'unresolved_ids': [],
+            }, ensure_ascii=False), {'step': 'repair'}),
+        ]
+        with patch.object(llm_client, 'load_config', return_value=CONFIG), patch.object(
+                llm_client, 'call_structured', new=AsyncMock(side_effect=replies)) as call:
+            response = self.client.post('/api/extraction/run', json={'case_id': case['case_id']})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(call.await_count, 2)
+        self.assertEqual(response.json()['info_units'][0]['type'], 'event')
+
+    def test_mock_langfuse_records_repair_generation_resolution_and_revalidation(self):
+        case = self.registered_case()
+        fid = case['files'][0]['file_id']
+        original = model_unit(fid, 'missing-quote')
+        repaired = dict(original)
+        repaired['evidence_ids'] = [self.evidence(case, '甲：我已付款')]
+        replies = [
+            llm_client.LLMReply(model_result([original]), {'step': 'extract'}),
+            llm_client.LLMReply(json.dumps({
+                'repairs': [repaired], 'unresolved_ids': [],
+            }, ensure_ascii=False), {'step': 'repair'}),
+        ]
+        backend = MagicMock()
+        backend.propagate_attributes.return_value = nullcontext()
+        spans = []
+
+        def start_observation(**kwargs):
+            span = MagicMock()
+            spans.append((kwargs, span))
+            return nullcontext(span)
+
+        backend.client.start_as_current_observation.side_effect = start_observation
+        settings = observability.ObservabilitySettings(
+            enabled=True, capture_content=True, public_key='pk-test', secret_key='sk-test',
+            base_url='https://cloud.langfuse.com', environment='test')
+        with patch.object(llm_client, 'load_config', return_value=CONFIG), patch.object(
+                llm_client, 'call_structured', new=AsyncMock(side_effect=replies)), patch.object(
+                observability, 'load_settings', return_value=settings), patch.object(
+                observability, '_get_backend', return_value=backend):
+            response = self.client.post('/api/extraction/run', json={'case_id': case['case_id']})
+        self.assertEqual(response.status_code, 200, response.text)
+        names = [start['name'] for start, _ in spans]
+        self.assertIn('Extraction Validation Repair · model call', names)
+        self.assertIn('Extraction Validation Repair · resolution', names)
+        self.assertIn('Extraction Validation Repair · revalidate', names)
+        repair_generation = next(start for start, _ in spans
+                                 if start['name'] == 'Extraction Validation Repair · model call')
+        self.assertEqual(repair_generation['version'], 'v1')
+        self.assertEqual(
+            repair_generation['metadata']['prompt_name'], 'extraction_validation_repair')
+
+    def test_repair_transport_failure_does_not_save_initially_valid_candidate(self):
+        case = self.registered_case()
+        fid = case['files'][0]['file_id']
+        valid = model_unit(fid, self.evidence(case, '甲：我已付款'))
+        invalid = model_unit(fid, 'missing-quote', title='另一候选')
+        failure = llm_client.LLMFailure('llm_call_failed', 'mock repair outage')
+        side_effect = [
+            llm_client.LLMReply(model_result([valid, invalid]), {'step': 'extract'}), failure,
+        ]
+        with patch.object(llm_client, 'load_config', return_value=CONFIG), patch.object(
+                llm_client, 'call_structured', new=AsyncMock(side_effect=side_effect)) as call:
+            response = self.client.post('/api/extraction/run', json={'case_id': case['case_id']})
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertEqual(call.await_count, 2)
+        self.assertEqual(case_store.load_case(case['case_id']).info_units, [])
+
+    def test_invalid_dependency_is_not_silently_saved(self):
+        case = self.registered_case()
+        fid = case['files'][0]['file_id']
+        evidence_id = self.evidence(case, '甲：我已付款')
+        independent = model_unit(fid, evidence_id, title='独立付款记录')
+        entity = model_unit(
+            fid, 'missing-quote', type='entity', subtype='person', title='甲方',
+            content='材料中的甲方主体', speaker=None, side=None, related_issue=None,
+        )
+        dependent = model_unit(
+            fid, evidence_id, title='依赖实体的行为', actor_local_id=entity['local_id'])
+        unresolved = [entity['local_id'], dependent['local_id']]
+        replies = [
+            llm_client.LLMReply(model_result([independent, entity, dependent]), {'step': 'extract'}),
+            llm_client.LLMReply(json.dumps({
+                'repairs': [], 'unresolved_ids': unresolved,
+            }, ensure_ascii=False), {'step': 'repair'}),
+        ]
+        with patch.object(llm_client, 'load_config', return_value=CONFIG), patch.object(
+                llm_client, 'call_structured', new=AsyncMock(side_effect=replies)) as call:
+            response = self.client.post('/api/extraction/run', json={'case_id': case['case_id']})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(call.await_count, 2)
+        stored = case_store.load_case(case['case_id'])
+        self.assertEqual([item.title for item in stored.info_units], ['独立付款记录'])
+        audit = json.loads((self.data_dir / case['case_id'] /
+                            stored.stage_runs[-1].output_snapshot_path).read_text(encoding='utf-8'))
+        by_id = {error['item_id']: error for error in audit['initial_validation']['errors']}
+        self.assertEqual(by_id[entity['local_id']]['error_code'], 'invalid_evidence_id')
+        self.assertEqual(by_id[dependent['local_id']]['error_code'], 'dependency_invalid')
 
 
 if __name__ == "__main__":

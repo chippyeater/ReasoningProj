@@ -19,6 +19,12 @@
       "sha256": "08d483e75d35b4026987885385dcdc8e0aab94f074995fd559c045d1fd52b1f2"
     },
     {
+      "name": "extraction_validation_repair",
+      "path": "backend/prompts/extraction_validation_repair_prompt.md",
+      "version": 1,
+      "sha256": "4d50767c75da4e70c68e3f9d7e3e068becfc41d4e3608747a2ae51bf8a424357"
+    },
+    {
       "name": "hypothesis_composer",
       "path": "backend/prompts/hypothesis_composer_prompt.md",
       "version": 1,
@@ -39,8 +45,14 @@
     {
       "name": "relation",
       "path": "backend/prompts/relation_system_prompt.md",
+      "version": 2,
+      "sha256": "cb43553c429cfdd663e2ec23938f73d9ad3e19508a5faad84092f1a2f3fc207d"
+    },
+    {
+      "name": "relation_validation_repair",
+      "path": "backend/prompts/relation_validation_repair_prompt.md",
       "version": 1,
-      "sha256": "d6b58a632bb1d824266ad34f28bb040970b69a6035ebe8050999ea570f6a1deb"
+      "sha256": "640a7ac4ac9269bd4b0d23fdb02d90ca9d8230d90e020383c7a62de17ad86196"
     },
     {
       "name": "timeline_composer",

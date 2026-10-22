@@ -10,7 +10,7 @@
 - 原文件保存在 `backend/data/{case_id}/upload_files/`，完整正文保存在 `parsed/{file_id}.txt`。
 - `original_path`、`parsed_text_path` 均为案件目录下的相对路径。`case.json` 不复制完整正文。
 - 提取输入仅从缓存 TXT 构建；缓存缺失、空白或编码错误均返回错误，不重新解析原文件。
-- Extraction 已接通：完整有效 TXT → 全案 LLM 初稿 → 严格校验 → 显式全案合并复核 → 后端来源定位、正式 ID / 时间与去重 → 校验 → 原子保存。
+- Extraction 已接通：完整有效 TXT → 全案 LLM 初稿 → 逐项校验 → 必要时单次定向修复 → 后端来源定位、正式 ID / 时间与去重 → 完整复验 → 原子保存。
 - `InfoUnit`、争点、来源切片、直接关系和视图引用校验；完整定义全部 v0.3 模型。
 - 解析日志使用 `StageRun`，输入输出快照保存在案件目录的 `runs/` 下。
 
@@ -83,31 +83,30 @@ Set-Location backend
 
 `POST /api/extraction/run` 不接受子集参数：一次发送案件全部 `parsed` 文件的完整 TXT。
 `failed` / `unsupported` 文件不会进入模型，排除项和原因逐项记录在运行日志；没有有效文件时明确报错。
-正常 Extraction 只调用一次模型；首次生成的 `ModelExtraction` 通过严格 Schema、精确来源和案件引用完整性校验后直接物化并原子保存。
-仅当 `EXTRACTION_EVIDENCE_REPAIR_ENABLED=true` 且错误仅涉及可修复的 evidence ID 时，才额外调用一次受限 Evidence Repair；它只能修改失败节点的 `evidence_ids`，不能改写语义字段。
-任一结构或来源校验失败都会终止，不部分保存非法节点。
+初稿全部合法时 Extraction 只调用一次模型。存在可定位的候选错误时，仅把失败对象、结构化错误、必要实体依赖和有界 Quote Unit 证据候选发送给 `extraction_validation_repair`，最多增加一次修复调用；旧 Evidence Repair 不再形成第二条运行分支。
+修复可以替换失败候选的完整模型字段，但必须保留 `local_id`，且仍须重新通过分类、引用、来源物化和案件完整性校验。首次或修复后合法的节点可以部分接受；未修复节点及依赖失效节点只写入审计，不进入案件。
+最终接受集合一次性原子保存；没有安全候选、不可定位的批次错误、模型/网络/存储错误均整阶段失败。已有 InfoUnit 时在建立安全刷新策略前返回 409，不覆盖或删除现有数据。
 后端还会对内容、类型、发言人、角色、事件参与者和争点完全一致的重复节点进行确定性合并，保留来源并去掉重复引用。
 后端不使用相似度阈值猜测不同表述是否同一事实；语义最小性仍须通过真实评测审查。
 
 `validation.locate_source_ref` 从缓存 TXT 计算 Unicode 字符位置 `[start,end)`。
 找不到引用或存在多个匹配（含重叠匹配）均报错；已有精确位置的引用必须逐字匹配切片。
-`validate_extraction` 校验结果为 `ValidationResult[ExtractionOutput]`，不静默丢弃错误条目。
-任何条目校验失败时返回全部已发现来源错误，`valid=false`、`data=null`。
+`validate_extraction` 继续作为物化后的完整来源门禁；候选逐项校验会收集 `item_id / field_path / error_code / message`，并将舍弃项连同原因保留在运行审计中。
 
 模型边界只允许批内 `local_id`、语义字段及 `file_id + quote`；正式 ID、时间、来源类型和偏移不由模型生成。
 来源类型直接取 `CaseFile.source_kind`；保存案件时再次检查引文切片及文件来源类型一致性。
 模型输出 JSON Schema 通过五个联合分支直接约束一级类型与子类配对；初始 event 不允许 `verified`。这只是同一个 `InfoUnit` 的模型输出限制，不新增业务实体表。
 输入 JSON 不修复、不剥离 Markdown；重复 JSON 键、非法常量、额外字段、错误类型、非法分类或无效争点都明确拒绝。
-所有校验通过后才替换 `core_issue / issue_set / info_units`。失败只追加日志，不覆盖已有有效抽取。
+所有最终接受节点通过完整复验后，才一次性写入 `core_issue / issue_set / info_units`。失败只追加日志，不覆盖已有有效抽取。
 模型运行期间案件若发生变化，返回 409，避免覆盖其他请求；已有关系、视图或画布引用会因替换失效时也拒绝提交，不擅自删除下游数据。
 
 每次执行的 `StageRun` 记录模型、Prompt 数字版本、状态和输入/输出快照路径。
-`runs/{run_id}.input.json` 保存模型输入、Extraction Prompt 及可选 Evidence Repair Prompt；启用修复时，其输入另存为 `.evidence-repair.input.json`。
-`.output.json` 保存原始响应、模型 JSON、来源校验、物化结果、确定性精确去重记录、调用次数及失败步骤。
+`runs/{run_id}.input.json` 保存模型输入、Extraction Prompt 及 Validation Repair Prompt；发生修复时，最小修复输入另存为 `.validation-repair.input.json`。
+`.output.json` 保存初始输出、逐项错误、修复输出与字段差异、复验结果、接受/舍弃数量、物化结果、调用次数及失败步骤。
 `.stage.json` 独立保存运行索引；若缓存损坏导致 `case.json` 无法合法保存日志索引，接口明确返回审计持久化错误及原始错误代码，独立日志仍可定位。
 授权头不写日志，已配置 API Key / Token 在日志中脱敏。
 
-根目录 `versions.json` 登记 8 份稳定文件名 Prompt 的逻辑名称、路径、递增数字版本和内容 SHA-256，
+根目录 `versions.json` 登记稳定文件名 Prompt 的逻辑名称、路径、递增数字版本和内容 SHA-256，
 并独立登记当前 Schema `0.3` 与案件 A Gold `1.8`。修改 Prompt 后运行：
 
 ```powershell
@@ -125,7 +124,7 @@ StageRun 保持原结构；旧日志中 SHA-256 形式的 `prompt_version` 无�
 
 ## LLM Observability（Langfuse）
 
-后端使用 `langfuse==5.0.4` 的 OpenTelemetry API，为 Extraction、Evidence Repair、Relation 和
+后端使用 `langfuse==5.0.4` 的 OpenTelemetry API，为 Extraction、Extraction Validation Repair、Relation、Relation Validation Repair 和
 InfoUnit Agent 建立命名 Trace，并将模型调用、解析与校验记录为独立 Observation。默认关闭外部追踪；即使开启，
 默认也只发送字段名、长度和 SHA-256 等摘要，不发送 Prompt、案件正文或模型原始输出。现有 `runs/*.json` 审计文件与路径保持不变。
 默认隐私模式下，云端 Trace 名称中的案件简称也会替换为案件 ID 的短哈希；本地 Run 索引仍显示真实案件简称。
@@ -167,7 +166,7 @@ Azure 使用 `AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY / AZURE_OPENAI_MODEL`
 实现依据：[OpenAI 结构化输出](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=chat)、[Azure v1 端点与认证](https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle?tabs=key)。
 
 Relation 已接通为增量生成：`POST /api/relation/run` 接收 `{case_id}` 进行全案检查，或额外传入至少两个
-`selected_info_unit_ids` 仅检查选中节点；响应只返回本次 `added_relations`。正式 ID 由后端生成，等价关系不会重复追加。
+`selected_info_unit_ids` 仅检查选中节点；响应返回 `status`（`empty / success / partial_success`）、本次 `added_relations` 和 `discarded_count`。关系逐条校验，仅把失败关系及必要作用域摘要发送给单次 Relation Validation Repair；合法关系经完整复验后统一分配正式 ID 并原子追加，等价关系不会重复追加。
 `POST /api/extraction/run` 与 `POST /api/relation/run` 均可接收可选 `workflow_id`，用于关联一次用户工作流，不进入模型输入。
 单条手动关系通过 `/api/cases/{case_id}/relations` 的 POST，以及
 `/api/cases/{case_id}/relations/{relation_id}` 的 PATCH / DELETE 维护；读取继续复用案件接口。
@@ -181,7 +180,7 @@ Relation 已接通为增量生成：`POST /api/relation/run` 接收 `{case_id}` 
 
 没有 Mock、业务兜底或 LLM 隐式回退。
 `RunStatus.fallback` 仅因 v0.3 契约明确定义而保留枚举值；当前没有使用它的执行分支。
-Extraction、可选 Evidence Repair、Relation 与 InfoUnit Agent Prompt 已进入各自运行路径；4 份 Reasoning 视图 Prompt 已纳入版本注册表但尚未接通。
+Extraction、两阶段 Validation Repair、Relation 与 InfoUnit Agent Prompt 已进入各自运行路径；4 份 Reasoning 视图 Prompt 已纳入版本注册表但尚未接通。
 当前 Extraction 的技术流程已通过离线契约测试；尚未针对 Gold v1.8 运行新的真实模型评测。
 历史 v7.2 结果仍按 Gold v1.7 记录为整批拒绝，11/17 只属于诊断对齐，不是成功率。
 本地 `backend/data/laws.json` 已直接整理为 `LawEntry[]`，保留条文、条号、标题、ID 与来源。

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Literal
+from dataclasses import dataclass
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -16,6 +17,10 @@ from app.schemas import (
     InfoUnitType, SourceRef, Text, Title, ValidationInput, check_info_classification,
 )
 from app.validation import validate_extraction
+from app.validation_repair import (
+    BATCH_ITEM_ID, issue, item_errors, locatable_items, pydantic_issues,
+    require_exact_fields, strict_json_object,
+)
 
 
 class ModelInfoUnit(ContractModel):
@@ -104,31 +109,25 @@ class ModelExtraction(ContractModel):
         return self
 
 
-class EvidenceRepairItem(ContractModel):
+class ExtractionValidationRepair(ContractModel):
+    """One-shot full replacements for failed candidates only."""
     model_config = ConfigDict(extra="forbid", strict=True)
-    local_id: Text
-    evidence_ids: list[Text] = Field(min_length=1)
+    repairs: list[ModelInfoUnitUnion]
+    unresolved_ids: list[Text]
 
-    @field_validator("evidence_ids")
+    @field_validator("repairs", "unresolved_ids")
     @classmethod
-    def unique_evidence_ids(cls, value: list[str]) -> list[str]:
-        if len(value) != len(set(value)):
-            raise ValueError("evidence_ids must be unique")
-        return value
-
-
-class ModelEvidenceRepair(ContractModel):
-    """A bounded correction envelope that cannot rewrite semantic fields."""
-    model_config = ConfigDict(extra="forbid", strict=True)
-    repairs: list[EvidenceRepairItem] = Field(min_length=1)
-
-    @field_validator("repairs")
-    @classmethod
-    def unique_local_ids(cls, value: list[EvidenceRepairItem]) -> list[EvidenceRepairItem]:
-        ids = [item.local_id for item in value]
+    def unique_ids(cls, value):
+        ids = [item.local_id for item in value] if value and hasattr(value[0], "local_id") else value
         if len(ids) != len(set(ids)):
-            raise ValueError("repair local_id must be unique")
+            raise ValueError("repair IDs must be unique")
         return value
+
+    @model_validator(mode="after")
+    def disjoint_results(self) -> ExtractionValidationRepair:
+        if {item.local_id for item in self.repairs} & set(self.unresolved_ids):
+            raise ValueError("repairs and unresolved_ids must be disjoint")
+        return self
 
 
 class ExtractionFailure(AppError):
@@ -151,7 +150,7 @@ def _invalid_json_constant(value: str) -> None:
     raise ValueError(f"Non-JSON constant: {value}")
 
 
-def _parse_model(raw: str, model: type[ModelExtraction] | type[ModelEvidenceRepair]):
+def _parse_model(raw: str, model: type[ModelExtraction]):
     """No fence removal, JSON repair, type coercion, partial acceptance, or retry."""
     try:
         value = json.loads(raw, object_pairs_hook=_unique_json_keys, parse_constant=_invalid_json_constant)
@@ -169,31 +168,230 @@ def parse_model_extraction(raw: str) -> ModelExtraction:
     return _parse_model(raw, ModelExtraction)
 
 
-def parse_evidence_repair(raw: str) -> ModelEvidenceRepair:
-    return _parse_model(raw, ModelEvidenceRepair)
+_MODEL_BY_TYPE = {
+    "entity": ModelEntity,
+    "event": ModelEvent,
+    "state": ModelState,
+    "rule": ModelRule,
+    "position": ModelPosition,
+}
 
 
-def apply_evidence_repair(draft: ModelExtraction, repair: ModelEvidenceRepair,
-                          failed_local_ids: set[str]) -> tuple[ModelExtraction, list[dict]]:
-    repaired_ids = {item.local_id for item in repair.repairs}
-    if repaired_ids != failed_local_ids:
-        raise ExtractionFailure(
-            "extraction_schema_invalid",
-            "Evidence repair must address exactly the nodes with invalid evidence",
-            errors=[{"field": "repairs", "failed_local_ids": sorted(failed_local_ids),
-                     "repaired_local_ids": sorted(repaired_ids)}])
-    result = draft.model_copy(deep=True)
-    by_id = {item.local_id: item for item in repair.repairs}
-    changes: list[dict] = []
-    for unit in result.info_units:
-        item = by_id.get(unit.local_id)
-        if item is None:
-            continue
-        before = list(unit.evidence_ids)
-        unit.evidence_ids = list(item.evidence_ids)
-        changes.append({"local_id": unit.local_id, "before": before, "after": list(unit.evidence_ids)})
-    # Re-run the complete model boundary after the constrained field updates.
-    return ModelExtraction.model_validate(result.model_dump(mode="json"), strict=True), changes
+@dataclass
+class ExtractionCandidateReport:
+    core_issue: str | None
+    issue_set: list[str]
+    ordered_ids: list[str]
+    raw_by_id: dict[str, dict[str, Any]]
+    models_by_id: dict[str, ModelInfoUnitUnion]
+    errors: list[dict[str, str]]
+    source_diagnostics: list[dict[str, Any]]
+
+    @property
+    def failed_ids(self) -> set[str]:
+        return {error["item_id"] for error in self.errors if error["item_id"] != BATCH_ITEM_ID}
+
+    @property
+    def accepted_ids(self) -> list[str]:
+        failed = self.failed_ids
+        return [item_id for item_id in self.ordered_ids
+                if item_id in self.models_by_id and item_id not in failed]
+
+    def accepted_draft(self) -> ModelExtraction:
+        return ModelExtraction(
+            core_issue=self.core_issue,
+            issue_set=self.issue_set,
+            info_units=[self.models_by_id[item_id] for item_id in self.accepted_ids],
+        )
+
+    def audit_payload(self) -> dict[str, Any]:
+        grouped = item_errors(self.errors)
+        return {
+            "accepted_ids": self.accepted_ids,
+            "failed_ids": [item_id for item_id in self.ordered_ids if item_id in self.failed_ids],
+            "errors": self.errors,
+            "candidates": [
+                {
+                    "local_id": item_id,
+                    "status": "failed" if item_id in self.failed_ids else "accepted",
+                    "errors": grouped.get(item_id, []),
+                }
+                for item_id in self.ordered_ids
+            ],
+            "source_diagnostics": self.source_diagnostics,
+        }
+
+
+def _header(value: dict[str, Any]) -> tuple[str | None, list[str]]:
+    try:
+        validated = ModelExtraction.model_validate({
+            "core_issue": value.get("core_issue"),
+            "issue_set": value.get("issue_set"),
+            "info_units": [],
+        }, strict=True)
+    except ValidationError as exc:
+        raise AppError(
+            "extraction_schema_invalid", "Extraction batch header is invalid", 422,
+            details={"errors": pydantic_issues(BATCH_ITEM_ID, exc)},
+        ) from exc
+    return validated.core_issue, list(validated.issue_set)
+
+
+def parse_extraction_payload(raw: str) -> dict[str, Any]:
+    value = strict_json_object(raw, code="extraction_json_invalid", label="Extraction output")
+    require_exact_fields(
+        value, {"core_issue", "issue_set", "info_units"},
+        code="extraction_schema_invalid", label="Extraction output")
+    _header(value)
+    locatable_items(
+        value["info_units"], list_field="info_units", id_field="local_id",
+        code="extraction_schema_invalid", label="Extraction output")
+    return value
+
+
+def _validate_model_item(item_id: str, raw: dict[str, Any]) -> tuple[ModelInfoUnitUnion | None, list[dict[str, str]]]:
+    model = _MODEL_BY_TYPE.get(raw.get("type"))
+    if model is None:
+        return None, [issue(item_id, "type", "invalid_info_type",
+                            "type must be one of entity, event, state, rule, position")]
+    try:
+        return model.model_validate(raw, strict=True), []
+    except ValidationError as exc:
+        return None, pydantic_issues(item_id, exc)
+
+
+def validate_extraction_candidates(payload: dict[str, Any], case: CaseData) -> ExtractionCandidateReport:
+    """Validate locatable candidates independently, then propagate unsafe dependencies."""
+    require_exact_fields(
+        payload, {"core_issue", "issue_set", "info_units"},
+        code="extraction_schema_invalid", label="Extraction output")
+    core_issue, issue_set = _header(payload)
+    located = locatable_items(
+        payload["info_units"], list_field="info_units", id_field="local_id",
+        code="extraction_schema_invalid", label="Extraction output")
+    ordered_ids = [item_id for item_id, _ in located]
+    raw_by_id = {item_id: raw for item_id, raw in located}
+    models_by_id: dict[str, ModelInfoUnitUnion] = {}
+    errors: list[dict[str, str]] = []
+    for item_id, raw in located:
+        model, model_errors = _validate_model_item(item_id, raw)
+        errors.extend(model_errors)
+        if model is not None:
+            models_by_id[item_id] = model
+
+    index_events: list[QuoteIndexEvent] = []
+    catalog = quote_catalog(case, index_events)
+    stale_rebuild = any(event.reason in {"text_hash_changed", "segmentation_version_changed"}
+                        for event in index_events)
+    source_diagnostics: list[dict[str, Any]] = []
+    for item_id, unit in models_by_id.items():
+        refs: list[SourceRef] = []
+        source_errors: list[dict[str, str]] = []
+        for evidence_index, evidence_id in enumerate(unit.evidence_ids):
+            try:
+                resolved = catalog.get(evidence_id)
+                if resolved is None:
+                    error_code = "stale_evidence_id" if stale_rebuild else "invalid_evidence_id"
+                    raise AppError(error_code, f"Unknown current-case Quote Unit ID: {evidence_id}")
+                quote_unit, file = resolved
+                refs.append(source_ref_from_quote_unit(case.case_id, quote_unit, file))
+            except AppError as exc:
+                source_errors.append(issue(
+                    item_id, f"evidence_ids.{evidence_index}", exc.code, str(exc)))
+        errors.extend(source_errors)
+        source_diagnostics.append({
+            "local_id": item_id,
+            "evidence_ids": list(unit.evidence_ids),
+            "source_refs": [ref.model_dump(mode="json") for ref in refs],
+            "support_review": assess_evidence_support(unit.content, refs) if refs else {
+                "deterministic_status": "needs_review",
+                "semantic_support": "needs_review",
+                "findings": [{"code": "no_materialized_evidence",
+                              "message": "No evidence could be materialized"}],
+            },
+        })
+
+    for item_id, unit in models_by_id.items():
+        if unit.related_issue is not None and unit.related_issue not in issue_set:
+            errors.append(issue(item_id, "related_issue", "unknown_related_issue",
+                                "related_issue must occur in issue_set"))
+        for field in ("actor_local_id", "target_local_id"):
+            target_id = getattr(unit, field)
+            if target_id is None:
+                continue
+            target = models_by_id.get(target_id)
+            if target is None:
+                errors.append(issue(item_id, field, "invalid_info_unit_reference",
+                                    f"{field} must reference a valid entity local_id"))
+            elif target.type != InfoUnitType.entity:
+                errors.append(issue(item_id, field, "invalid_entity_reference",
+                                    f"{field} must reference an entity local_id"))
+
+    failed = {error["item_id"] for error in errors}
+    changed = True
+    while changed:
+        changed = False
+        for item_id, unit in models_by_id.items():
+            if item_id in failed:
+                continue
+            for field in ("actor_local_id", "target_local_id"):
+                target_id = getattr(unit, field)
+                if target_id is not None and target_id in failed:
+                    errors.append(issue(item_id, field, "dependency_invalid",
+                                        f"Referenced entity candidate {target_id} is not safely acceptable"))
+                    failed.add(item_id)
+                    changed = True
+                    break
+    return ExtractionCandidateReport(
+        core_issue=core_issue,
+        issue_set=issue_set,
+        ordered_ids=ordered_ids,
+        raw_by_id=raw_by_id,
+        models_by_id=models_by_id,
+        errors=errors,
+        source_diagnostics=source_diagnostics,
+    )
+
+
+def _text_signatures(value: str) -> set[str]:
+    normalized = "".join(character.lower() for character in value if character.isalnum())
+    if len(normalized) < 2:
+        return {normalized} if normalized else set()
+    return {normalized[index:index + 2] for index in range(len(normalized) - 1)}
+
+
+def extraction_repair_evidence(case: CaseData, failed_items: list[dict[str, Any]],
+                               *, limit_per_item: int = 10) -> list[dict[str, Any]]:
+    """Select a bounded, deterministic evidence neighborhood instead of resending all files."""
+    catalog = quote_catalog(case)
+    selected_ids: set[str] = set()
+    for raw in failed_items:
+        query = _text_signatures(" ".join(str(raw.get(field) or "")
+                                           for field in ("title", "content", "speaker")))
+        referenced = raw.get("evidence_ids") if isinstance(raw.get("evidence_ids"), list) else []
+        selected_ids.update(item for item in referenced if isinstance(item, str) and item in catalog)
+        ranked: list[tuple[int, int, str]] = []
+        for quote_id, (unit, _) in catalog.items():
+            if unit.role == "group_boundary":
+                continue
+            score = len(query & _text_signatures(unit.text))
+            ranked.append((score, -unit.start, quote_id))
+        ranked.sort(reverse=True)
+        selected_ids.update(quote_id for score, _, quote_id in ranked[:limit_per_item] if score > 0)
+    for quote_id in list(selected_ids):
+        unit, _ = catalog[quote_id]
+        selected_ids.update(context_id for context_id in unit.context_quote_ids if context_id in catalog)
+    return [
+        {
+            "quote_id": quote_id,
+            "file_id": unit.file_id,
+            "filename": file.filename,
+            "text": unit.text,
+            "role": unit.role,
+            "context_quote_ids": list(unit.context_quote_ids),
+        }
+        for quote_id, (unit, file) in catalog.items() if quote_id in selected_ids
+    ]
 
 
 def _semantic_key(unit: InfoUnit) -> tuple:

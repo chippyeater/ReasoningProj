@@ -370,7 +370,7 @@ const event: Partial<InfoUnit> = {
 
 ## 阶段 3：结构化数据校验与保存
 
-这一阶段默认不调用 LLM。输入为原始候选 `ModelExtraction`、当前 Quote Unit 索引、已解析文件和当前已有实体节点（若有）；输出为通过验证且引用已映射的 `ExtractionOutput`。若将 `EXTRACTION_EVIDENCE_REPAIR_ENABLED` 显式设为 `true`，单次 Extraction 运行最多增加一次只允许替换失败节点 `evidence_ids` 的受控调用；开关默认 `false`，修复不能改写任何语义字段，也不会进行第二次修复重试。
+这一阶段先对 `ModelExtraction` 候选逐项校验。若存在可定位错误，单次 Extraction 运行最多增加一次 Validation Repair 调用，只发送失败对象、结构化错误及修复所需的最小证据和依赖上下文；修复以原 `local_id` 返回完整替换对象。修复后重新执行 Schema、来源、引用和案件一致性校验，合法候选可以部分接受并原子保存，失败候选进入审计且不再重试。不可定位的批次错误和非内容故障仍按整阶段失败处理。
 
 ```ts
 type ValidationInput = {
