@@ -34,6 +34,7 @@ Set-Location backend
 
 ```powershell
 & .\backend\.venv\Scripts\python.exe -m unittest discover -s backend/tests -p 'test_*.py'
+& .\backend\.venv\Scripts\python.exe scripts/sync_versions.py --check
 & .\backend\.venv\Scripts\python.exe evals/case_a/tests/check_docx_parsing.py
 & .\backend\.venv\Scripts\python.exe evals/case_a/tests/validate_eval.py
 & .\backend\.venv\Scripts\python.exe -m unittest discover -s evals/case_a/tests -p 'test_*.py'
@@ -100,16 +101,27 @@ Set-Location backend
 所有校验通过后才替换 `core_issue / issue_set / info_units`。失败只追加日志，不覆盖已有有效抽取。
 模型运行期间案件若发生变化，返回 409，避免覆盖其他请求；已有关系、视图或画布引用会因替换失效时也拒绝提交，不擅自删除下游数据。
 
-每次执行的 `StageRun` 记录模型、Prompt 内容哈希版本、状态和输入/输出快照路径。
+每次执行的 `StageRun` 记录模型、Prompt 数字版本、状态和输入/输出快照路径。
 `runs/{run_id}.input.json` 保存模型输入、Extraction Prompt 及可选 Evidence Repair Prompt；启用修复时，其输入另存为 `.evidence-repair.input.json`。
 `.output.json` 保存原始响应、模型 JSON、来源校验、物化结果、确定性精确去重记录、调用次数及失败步骤。
 `.stage.json` 独立保存运行索引；若缓存损坏导致 `case.json` 无法合法保存日志索引，接口明确返回审计持久化错误及原始错误代码，独立日志仍可定位。
 授权头不写日志，已配置 API Key / Token 在日志中脱敏。
 
-运行 Prompt 使用不含版本号的稳定文件名。`prompt_version` 是实际加载文本的完整 SHA-256，
-`prompt_git_commit` 仅在该文件已被 Git 跟踪且相对 `HEAD` 无修改时记录最后一次修改它的 Commit；未提交修改或无法调用 Git 时为 `null`。
-`prompt_name / prompt_version / prompt_git_commit / schema_version / model` 按每次模型调用分别写入本地审计，
-并同步到对应 Langfuse Generation；StageRun 的 `prompt_version` 继续保存该阶段主 Prompt 的内容哈希，旧日志无需迁移。
+根目录 `versions.json` 登记 8 份稳定文件名 Prompt 的逻辑名称、路径、递增数字版本和内容 SHA-256，
+并独立登记当前 Schema `0.3` 与案件 A Gold `1.8`。修改 Prompt 后运行：
+
+```powershell
+& .\backend\.venv\Scripts\python.exe scripts/sync_versions.py --check
+& .\backend\.venv\Scripts\python.exe scripts/sync_versions.py --sync
+```
+
+`--check` 只读检查，`--sync` 仅对内容变化的 Prompt 将数字版本增加 1，并在完整校验后原子更新注册表；重复执行不会再次递增。
+新增 Prompt 必须先登记，Schema 与 Gold 版本不会由脚本自动更新。
+
+运行时 `prompt_version` 使用注册表中的可读版本（如 `v1`），`prompt_sha256` 始终按实际加载文本计算。
+`prompt_git_commit` 仅在 Prompt 可由 Git 验证时记录其最近 Commit；Prompt 或注册表尚未提交时，
+`prompt_release_status=uncommitted`。这些字段与 `prompt_name / schema_version / model` 按每次调用分别写入本地审计和 Langfuse Generation。
+StageRun 保持原结构；旧日志中 SHA-256 形式的 `prompt_version` 无需迁移并仍可读取。
 
 ## LLM Observability（Langfuse）
 
@@ -169,7 +181,7 @@ Relation 已接通为增量生成：`POST /api/relation/run` 接收 `{case_id}` 
 
 没有 Mock、业务兜底或 LLM 隐式回退。
 `RunStatus.fallback` 仅因 v0.3 契约明确定义而保留枚举值；当前没有使用它的执行分支。
-Extraction 初稿、合并复核与 Relation Prompt 已进入各自运行路径；其他视图 Prompt 尚未接通。
+Extraction、可选 Evidence Repair、Relation 与 InfoUnit Agent Prompt 已进入各自运行路径；4 份 Reasoning 视图 Prompt 已纳入版本注册表但尚未接通。
 当前 Extraction 的技术流程已通过离线契约测试；尚未针对 Gold v1.8 运行新的真实模型评测。
 历史 v7.2 结果仍按 Gold v1.7 记录为整批拒绝，11/17 只属于诊断对齐，不是成功率。
 本地 `backend/data/laws.json` 已直接整理为 `LawEntry[]`，保留条文、条号、标题、ID 与来源。

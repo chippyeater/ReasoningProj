@@ -100,7 +100,8 @@ class TestInfoUnitAgent(IsolatedCaseTest):
         agent_audit = json.loads(agent_audits[0].read_text(encoding="utf-8"))
         self.assertEqual(agent_audit["status"], "success")
         self.assertEqual(agent_audit["model_calls"][0]["prompt_name"], "info_unit_agent")
-        self.assertRegex(agent_audit["model_calls"][0]["prompt_version"], r"^[0-9a-f]{64}$")
+        self.assertRegex(agent_audit["model_calls"][0]["prompt_version"], r"^v[1-9][0-9]*$")
+        self.assertRegex(agent_audit["model_calls"][0]["prompt_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(agent_audit["model_calls"][0]["schema_version"], "0.3")
         self.assertEqual(agent_audit["model_calls"][0]["model"], "configured-model")
 

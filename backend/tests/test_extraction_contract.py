@@ -23,7 +23,7 @@ def batch(*units):
     return json.dumps({"core_issue": ISSUE, "issue_set": [ISSUE], "info_units": list(units)}, ensure_ascii=False)
 
 
-class TestV03ExtractionContract(IsolatedCaseTest):
+class TestExtractionContract(IsolatedCaseTest):
     def test_initial_extraction_rejects_verified_and_bad_local_references(self):
         entity = candidate("person", "entity", "person", "付款人甲", "材料记载甲为付款人。", "f", "甲")
         event = candidate("pay", "event", "reported", "甲称已经付款", "甲称已向对方支付款项。", "f", "甲",

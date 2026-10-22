@@ -30,7 +30,8 @@ def load_prompts() -> tuple[LoadedPrompt, LoadedPrompt]:
         prompt = load_prompt(PROMPT_PATH, "extraction")
         repair = load_prompt(EVIDENCE_REPAIR_PROMPT_PATH, "evidence_repair")
     except (OSError, UnicodeError, ValueError) as exc:
-        raise AppError("extraction_prompt_unavailable", "Extraction prompt could not be read", 500) from exc
+        raise AppError(
+            "extraction_prompt_unavailable", f"Extraction prompt could not be loaded: {exc}", 500) from exc
     return prompt, repair
 
 

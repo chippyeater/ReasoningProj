@@ -3,8 +3,7 @@ import hashlib
 import json
 import unittest
 
-from support import IsolatedCaseTest, quote_id_for
-from test_v02_extraction import model_result, model_unit
+from support import IsolatedCaseTest, model_result, model_unit, quote_id_for
 from app import case_store
 from app.extraction import ExtractionFailure, ModelExtraction, materialize_extraction, parse_model_extraction
 from app.quote_units import (

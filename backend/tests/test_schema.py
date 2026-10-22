@@ -18,14 +18,14 @@ def lines(name):
     return gold_lines(name)
 
 
-class TestV03Schema(unittest.TestCase):
+class TestSchema(unittest.TestCase):
     def setUp(self):
         self.units = lines("gold_info_units.jsonl")
         issues = json.loads((GOLD / "gold/gold_issues.json").read_text(encoding="utf-8"))
         self.extraction = ExtractionOutput(core_issue=issues["core_issue"], issue_set=issues["issue_set"],
                                            info_units=self.units)
 
-    def test_v03_gold_and_relations_obey_contract(self):
+    def test_current_gold_and_relations_obey_contract(self):
         self.assertEqual(len(self.extraction.info_units), 17)
         relations = [Relation.model_validate(row) for row in lines("gold_relations.jsonl")]
         self.assertEqual(len(relations), 7)
@@ -128,7 +128,7 @@ class TestV03Schema(unittest.TestCase):
                    effective_status="effective", verified_at=None)
         self.assertEqual(LawEntry(**law).text, "原文")
 
-    def test_relation_input_preserves_v03_fields(self):
+    def test_relation_input_preserves_current_fields(self):
         value = RelationInput(**self.extraction.model_dump(mode="json"))
         self.assertEqual(value.info_units, self.extraction.info_units)
 

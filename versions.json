@@ -1,0 +1,62 @@
+{
+  "prompts": [
+    {
+      "name": "conflict_layer_composer",
+      "path": "backend/prompts/conflict_layer_composer_prompt.md",
+      "version": 1,
+      "sha256": "dfa6089cbfb15a24b53f3d1c62517d8c5b0bad6a95aeae3b033368dd0c1df4db"
+    },
+    {
+      "name": "evidence_repair",
+      "path": "backend/prompts/extraction_evidence_repair_prompt.md",
+      "version": 1,
+      "sha256": "da65737a1047f701515518b491323b0ff2315d2476d4739ed3a119b7ed977d04"
+    },
+    {
+      "name": "extraction",
+      "path": "backend/prompts/extraction_system_prompt.md",
+      "version": 1,
+      "sha256": "08d483e75d35b4026987885385dcdc8e0aab94f074995fd559c045d1fd52b1f2"
+    },
+    {
+      "name": "hypothesis_composer",
+      "path": "backend/prompts/hypothesis_composer_prompt.md",
+      "version": 1,
+      "sha256": "fef329102a9ff76d7c0e3592bde589b2f451a39fcb312bed50b00ec6775f2a3c"
+    },
+    {
+      "name": "info_unit_agent",
+      "path": "backend/prompts/info_unit_agent_prompt.md",
+      "version": 1,
+      "sha256": "e997749919adb844e0cb16fe7b3d334ea787821cc365ab41491dc12696bfd7d4"
+    },
+    {
+      "name": "reasoning_selector",
+      "path": "backend/prompts/reasoning_selector_prompt.md",
+      "version": 1,
+      "sha256": "84076ba930602979b0cd819a6322bb92875a5dee7f9e0d7ac45327aa5864d720"
+    },
+    {
+      "name": "relation",
+      "path": "backend/prompts/relation_system_prompt.md",
+      "version": 1,
+      "sha256": "d6b58a632bb1d824266ad34f28bb040970b69a6035ebe8050999ea570f6a1deb"
+    },
+    {
+      "name": "timeline_composer",
+      "path": "backend/prompts/timeline_composer_prompt.md",
+      "version": 1,
+      "sha256": "db1dba49542ba476921a0958b94745ae7193975a0520c01af14b2e291edad454"
+    }
+  ],
+  "schema": {
+    "version": "0.3"
+  },
+  "gold": {
+    "case_a": {
+      "version": "1.8",
+      "manifest": "evals/case_a/tests/test_manifest.json",
+      "rubric": "evals/case_a/gold/evaluation_rubric.json"
+    }
+  }
+}

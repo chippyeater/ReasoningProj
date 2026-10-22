@@ -15,7 +15,7 @@ from app.errors import AppError
 from app.schemas import FileType
 
 
-class TestV02Uploads(IsolatedCaseTest):
+class TestUploads(IsolatedCaseTest):
     def test_upload_stores_exact_original_and_full_utf8_text(self):
         text = "第一段😀\r\n" + "完整正文" * 200 + "\r\n末段"
         raw = text.encode("utf-8")
@@ -253,7 +253,7 @@ class TestV02Uploads(IsolatedCaseTest):
         self.assertEqual(self.client.get("/api/cases/case-invalid").status_code, 409)
         self.assertEqual(self.client.get("/api/cases").status_code, 409)
 
-    def test_case_listing_selection_workspace_and_delete_use_v02(self):
+    def test_case_listing_selection_workspace_and_delete_use_current_contract(self):
         first = self.upload()
         second = self.upload()
         self.assertEqual(self.client.get("/api/cases").json()["current_case_id"], second["case_id"])

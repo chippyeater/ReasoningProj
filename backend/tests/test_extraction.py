@@ -1,30 +1,13 @@
 import json
-from itertools import count
 import unittest
 
-from support import IsolatedCaseTest, quote_id_for
+from support import IsolatedCaseTest, model_result, model_unit, quote_id_for
 from app import case_store
 from app.extraction import (
     ExtractionFailure, deduplicate_units, materialize_extraction,
     parse_model_extraction,
 )
 from app.schemas import SourceKind
-
-
-_LOCAL_IDS = count()
-
-
-def model_unit(_file_id, evidence_id, **changes):
-    value = dict(local_id=f"local-{next(_LOCAL_IDS)}", type="event", subtype="reported", title="付款陈述",
-                 content="甲称已付款，尚未经独立核实。", evidence_ids=[evidence_id],
-                 speaker="甲", side="付款方", actor_local_id=None, target_local_id=None,
-                 related_issue="款项是否已支付")
-    value.update(changes)
-    return value
-
-
-def model_result(units):
-    return json.dumps(dict(core_issue="款项是否已支付", issue_set=["款项是否已支付"], info_units=units), ensure_ascii=False)
 
 
 class TestExtractionBoundary(IsolatedCaseTest):

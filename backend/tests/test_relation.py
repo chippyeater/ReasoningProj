@@ -1,8 +1,7 @@
 import json
 from unittest.mock import AsyncMock, patch
 
-from support import IsolatedCaseTest, quote_id_for
-from test_v02_extraction import model_result, model_unit
+from support import IsolatedCaseTest, model_result, model_unit, quote_id_for
 from app import case_store, llm_client, observability, relation_service
 
 
@@ -76,7 +75,8 @@ class TestRelationAPI(IsolatedCaseTest):
         audit = json.loads((self.data_dir / self.case_id /
                             stored.stage_runs[-1].output_snapshot_path).read_text(encoding="utf-8"))
         self.assertEqual(audit["model_calls"][0]["prompt_name"], "relation")
-        self.assertRegex(audit["model_calls"][0]["prompt_version"], r"^[0-9a-f]{64}$")
+        self.assertRegex(audit["model_calls"][0]["prompt_version"], r"^v[1-9][0-9]*$")
+        self.assertRegex(audit["model_calls"][0]["prompt_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(audit["model_calls"][0]["schema_version"], "0.3")
         self.assertEqual(audit["model_calls"][0]["model"], "configured-model")
 

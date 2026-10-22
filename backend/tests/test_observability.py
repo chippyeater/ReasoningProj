@@ -20,8 +20,8 @@ SETTINGS = observability.ObservabilitySettings(
 CONFIG = llm_client.LLMConfig(
     "azure", "https://test.services.ai.azure.com/openai/v1", "mock-model", "secret")
 PROMPT = LoadedPrompt(
-    name="extraction", content="system prompt", version="a" * 64,
-    git_commit="b" * 40, schema_version="0.3",
+    name="extraction", content="system prompt", version="v3", sha256="a" * 64,
+    git_commit="b" * 40, schema_version="0.3", release_status="committed",
 )
 
 
@@ -100,7 +100,15 @@ class TestObservability(TestCase):
         self.assertEqual(
             generation_input["response_format"]["json_schema"]["schema"], {"type": "object"})
         self.assertEqual(backend.client.spans[1].start["version"], PROMPT.version)
+        generation_metadata = backend.client.spans[1].start["metadata"]
+        self.assertEqual(
+            {key: generation_metadata[key] for key in PROMPT.metadata(CONFIG.model)},
+            PROMPT.metadata(CONFIG.model),
+        )
         self.assertEqual(backend.client.spans[1].start["metadata"]["prompt_git_commit"], PROMPT.git_commit)
+        self.assertEqual(backend.client.spans[1].start["metadata"]["prompt_sha256"], PROMPT.sha256)
+        self.assertEqual(
+            backend.client.spans[1].start["metadata"]["prompt_release_status"], "committed")
         self.assertEqual(backend.client.spans[1].start["metadata"]["schema_version"], "0.3")
         self.assertEqual(generation_update["usage_details"]["total_tokens"], 14)
         self.assertEqual(generation_update["output"]["content"], "{\"ok\":true}")

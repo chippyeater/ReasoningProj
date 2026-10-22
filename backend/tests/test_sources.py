@@ -9,7 +9,7 @@ from app.schemas import (
     CaseFile, ExtractionOutput, RelationInput, RelationOutput, SourceKind, ValidationInput,
 )
 from app.validation import locate_source_ref, validate_extraction, validate_relations
-class TestV02Sources(IsolatedCaseTest):
+class TestSources(IsolatedCaseTest):
     def gold_validation_input(self):
         manifest = json.loads((GOLD / "fixtures/file_manifest.json").read_text(encoding="utf-8"))
         files = []

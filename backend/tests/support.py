@@ -1,4 +1,5 @@
 import io
+from itertools import count
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from app.main import app
 from app.quote_units import load_or_build_quote_index
 
 GOLD = REPO / "evals/case_a"
+_MODEL_LOCAL_IDS = count()
 
 
 def gold_lines(name):
@@ -40,6 +42,25 @@ def quote_id_for(case_id, file_id, text):
     if len(matches) != 1:
         raise AssertionError(f"Expected one Quote Unit for {text!r}, found {len(matches)}")
     return matches[0]
+
+
+def model_unit(_file_id, evidence_id, **changes):
+    value = dict(
+        local_id=f"local-{next(_MODEL_LOCAL_IDS)}", type="event", subtype="reported",
+        title="付款陈述", content="甲称已付款，尚未经独立核实。", evidence_ids=[evidence_id],
+        speaker="甲", side="付款方", actor_local_id=None, target_local_id=None,
+        related_issue="款项是否已支付",
+    )
+    value.update(changes)
+    return value
+
+
+def model_result(units):
+    return json.dumps({
+        "core_issue": "款项是否已支付",
+        "issue_set": ["款项是否已支付"],
+        "info_units": units,
+    }, ensure_ascii=False)
 
 
 class IsolatedCaseTest(unittest.TestCase):

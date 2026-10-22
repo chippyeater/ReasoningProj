@@ -57,7 +57,9 @@ def _prompt() -> LoadedPrompt:
     try:
         return load_prompt(PROMPT_PATH, "info_unit_agent")
     except (OSError, UnicodeError, ValueError) as exc:
-        raise AppError("info_unit_agent_prompt_unavailable", "InfoUnit Agent prompt could not be read", 500) from exc
+        raise AppError(
+            "info_unit_agent_prompt_unavailable",
+            f"InfoUnit Agent prompt could not be loaded: {exc}", 500) from exc
 
 
 def _write_agent_audit(case_id: str, path: str, payload: dict) -> None:

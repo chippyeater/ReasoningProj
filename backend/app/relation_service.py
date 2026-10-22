@@ -103,7 +103,8 @@ def _load_prompt() -> LoadedPrompt:
     try:
         return load_prompt(PROMPT_PATH, "relation")
     except (OSError, UnicodeError, ValueError) as exc:
-        raise AppError("relation_prompt_unavailable", "Relation prompt could not be read", 500) from exc
+        raise AppError(
+            "relation_prompt_unavailable", f"Relation prompt could not be loaded: {exc}", 500) from exc
 
 
 def _snapshot_bytes(case_id: str) -> bytes:

@@ -2,8 +2,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from support import IsolatedCaseTest, docx_bytes, quote_id_for
-from test_v02_extraction import model_result, model_unit
+from support import IsolatedCaseTest, docx_bytes, model_result, model_unit, quote_id_for
 from app import case_store, file_parsers, llm_client
 from app.case_service import now_iso
 from app import extraction_service
@@ -48,7 +47,7 @@ class TestExtractionAPI(IsolatedCaseTest):
         run = stored["stage_runs"][-1]
         self.assertEqual(run["status"], "success")
         self.assertEqual(run["model"], "configured-model")
-        self.assertRegex(run["prompt_version"], r"^[0-9a-f]{64}$")
+        self.assertRegex(run["prompt_version"], r"^v[1-9][0-9]*$")
         root = self.data_dir / case["case_id"]
         input_audit = json.loads((root / run["input_snapshot_path"]).read_text(encoding="utf-8"))
         self.assertEqual(set(input_audit["prompts"]), {"extraction", "evidence_repair"})
@@ -58,6 +57,9 @@ class TestExtractionAPI(IsolatedCaseTest):
         self.assertEqual(audit["result"], output)
         self.assertEqual(audit["model_request_attempts"], 1)
         self.assertEqual([record["prompt_name"] for record in audit["model_calls"]], ["extraction"])
+        self.assertEqual(audit["model_calls"][0], input_audit["prompts"]["extraction"] | {"step": "extraction"})
+        self.assertRegex(audit["model_calls"][0]["prompt_sha256"], r"^[0-9a-f]{64}$")
+        self.assertIn(audit["model_calls"][0]["prompt_release_status"], {"committed", "uncommitted"})
         self.assertTrue(all(record["schema_version"] == "0.3" for record in audit["model_calls"]))
         self.assertTrue(all(record["model"] == "configured-model" for record in audit["model_calls"]))
         self.assertEqual(run["prompt_version"], audit["model_calls"][0]["prompt_version"])
@@ -286,7 +288,8 @@ class TestExtractionAPI(IsolatedCaseTest):
             'extraction', 'evidence_repair',
         ])
         repair_record = audit['model_calls'][1]
-        self.assertRegex(repair_record['prompt_version'], r'^[0-9a-f]{64}$')
+        self.assertRegex(repair_record['prompt_version'], r'^v[1-9][0-9]*$')
+        self.assertRegex(repair_record['prompt_sha256'], r'^[0-9a-f]{64}$')
         self.assertEqual(repair_record['schema_version'], '0.3')
 
     def test_failed_evidence_repair_is_not_retried_or_partially_committed(self):
