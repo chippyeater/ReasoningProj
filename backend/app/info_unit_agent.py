@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from uuid import uuid4
 
 from pydantic import ValidationError
 
@@ -24,12 +25,14 @@ from app.case_service import (
     create_info_unit,
     evidence_ids_for_info_unit,
     list_quote_units,
+    now_iso,
     prepare_info_unit_creation,
     prepare_info_unit_update,
     update_info_unit,
 )
 from app.case_store import load_case_snapshot
 from app.errors import AppError
+from app.observability import RunTrace
 from app.schemas import CaseData
 
 
@@ -186,31 +189,58 @@ async def generate_info_unit_proposal(case: CaseData,
     base_hash = case_content_hash(case)
     model_input = {
         **_model_context(case),
-        "request": request.model_dump(mode="json"),
+        "request": request.model_dump(mode="json", exclude={"workflow_id"}),
     }
-    config = llm_client.load_config()
-    reply = await llm_client.call_structured(
-        config, _prompt(), model_input, ModelInfoUnitAgentProposal.model_json_schema())
-    result = _strict_model_proposal(reply.content)
-    latest = load_case_snapshot(case.case_id)
-    if latest is None or case_content_hash(latest) != base_hash:
-        raise AppError(
-            "case_changed_during_info_unit_proposal",
-            "Case changed while the proposal was being generated; generate a new proposal",
-            409,
-        )
-    if result.action in {InfoUnitAgentAction.clarify, InfoUnitAgentAction.unsupported}:
-        return InfoUnitAgentProposalResponse(
-            action=result.action, target_info_unit_id=None, proposed=None,
-            changes=[], unchanged_fields=[], evidence=[], base_case_hash=base_hash,
-            message=result.message,
-        )
-    if result.target_info_unit_id is not None and result.target_info_unit_id not in known_ids:
-        raise AppError(
-            "info_unit_not_found", f"InfoUnit not found: {result.target_info_unit_id}", 404)
-    action = InfoUnitMutationAction(result.action.value)
-    _validate_operation(latest, action, result.target_info_unit_id, result.proposed)
-    return _proposal_response(latest, action, result.target_info_unit_id, result.proposed, base_hash)
+    workflow_id = request.workflow_id or f"workflow-{uuid4().hex}"
+    trace = RunTrace(
+        case_id=case.case_id, case_title=case.case_title, stage="InfoUnit Agent",
+        run_id=f"agent-run-{uuid4().hex}", workflow_id=workflow_id, created_at=now_iso(),
+        initial_input=model_input,
+    )
+    try:
+        config = llm_client.load_config()
+        prompt = _prompt()
+        schema = ModelInfoUnitAgentProposal.model_json_schema()
+        with trace.generation(
+                "InfoUnit Agent · model call", config=config, prompt=prompt,
+                model_input=model_input, schema=schema) as generation:
+            reply = await llm_client.call_structured(config, prompt, model_input, schema)
+            generation.record_reply(reply)
+        with trace.observation(
+                "InfoUnit Agent · parse", as_type="evaluator", input=reply.content) as parse_span:
+            result = _strict_model_proposal(reply.content)
+            parse_span.update(output=result.model_dump(mode="json"))
+        latest = load_case_snapshot(case.case_id)
+        if latest is None or case_content_hash(latest) != base_hash:
+            raise AppError(
+                "case_changed_during_info_unit_proposal",
+                "Case changed while the proposal was being generated; generate a new proposal",
+                409,
+            )
+        if result.action in {InfoUnitAgentAction.clarify, InfoUnitAgentAction.unsupported}:
+            response = InfoUnitAgentProposalResponse(
+                action=result.action, target_info_unit_id=None, proposed=None,
+                changes=[], unchanged_fields=[], evidence=[], base_case_hash=base_hash,
+                message=result.message,
+            )
+            trace.finish_success(response.model_dump(mode="json"))
+            return response
+        if result.target_info_unit_id is not None and result.target_info_unit_id not in known_ids:
+            raise AppError(
+                "info_unit_not_found", f"InfoUnit not found: {result.target_info_unit_id}", 404)
+        action = InfoUnitMutationAction(result.action.value)
+        with trace.observation(
+                "InfoUnit Agent · validate proposal", as_type="guardrail",
+                input=result.model_dump(mode="json")) as validation_span:
+            _validate_operation(latest, action, result.target_info_unit_id, result.proposed)
+            response = _proposal_response(
+                latest, action, result.target_info_unit_id, result.proposed, base_hash)
+            validation_span.update(output={"valid": True, "action": action.value})
+        trace.finish_success(response.model_dump(mode="json"))
+        return response
+    except Exception as exc:
+        trace.finish_error(exc, step=trace.active_step)
+        raise
 
 
 def confirm_info_unit_proposal(case: CaseData,

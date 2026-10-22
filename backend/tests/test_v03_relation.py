@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 from support import IsolatedCaseTest, quote_id_for
 from test_v02_extraction import model_result, model_unit
-from app import case_store, llm_client, relation_service
+from app import case_store, llm_client, observability, relation_service
 
 
 CONFIG = llm_client.LLMConfig(
@@ -46,13 +46,15 @@ class TestRelationAPI(IsolatedCaseTest):
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()["case"]["info_units"][-1]
 
-    def _run(self, content, selected=None, side_effect=None):
+    def _run(self, content, selected=None, side_effect=None, workflow_id=None):
         reply = llm_client.LLMReply(content, {"mock": True})
         with patch.object(llm_client, "load_config", return_value=CONFIG), patch.object(
                 llm_client, "call_structured", new=AsyncMock(side_effect=side_effect, return_value=reply)) as call:
             payload = {"case_id": self.case_id}
             if selected is not None:
                 payload["selected_info_unit_ids"] = selected
+            if workflow_id is not None:
+                payload["workflow_id"] = workflow_id
             response = self.client.post("/api/relation/run", json=payload)
         return response, call
 
@@ -139,7 +141,25 @@ class TestRelationAPI(IsolatedCaseTest):
         self.assertEqual([unit.model_dump(mode="json") for unit in stored.info_units], before)
         self.assertEqual(stored.relations, [])
 
+    def test_observability_outage_does_not_break_relation_or_local_audit(self):
+        settings = observability.ObservabilitySettings(
+            enabled=True, capture_content=False, public_key="pk-test", secret_key="sk-test",
+            base_url="https://cloud.langfuse.com", environment="test",
+        )
+        source, target = self.units[1], self.units[2]
+        with patch.object(observability, "load_settings", return_value=settings), patch.object(
+                observability, "_Backend", side_effect=RuntimeError("mock telemetry outage")):
+            response, _ = self._run(relation_result(source["id"], target["id"], "support"))
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = case_store.load_case(self.case_id)
+        run = stored.stage_runs[-1]
+        audit = json.loads((self.data_dir / self.case_id / run.output_snapshot_path).read_text(
+            encoding="utf-8"))
+        self.assertEqual(audit["status"], "success")
+        self.assertEqual(len(stored.relations), 1)
+
     def test_successful_extraction_then_relation_failure_keeps_extracted_units(self):
+        workflow_id = "workflow-cross-stage-test"
         file_id = self.case["files"][0]["file_id"]
         evidence_id = quote_id_for(self.case_id, file_id, "付款行为已发生")
         draft = model_result([
@@ -158,11 +178,13 @@ class TestRelationAPI(IsolatedCaseTest):
                     llm_client.LLMReply(draft, {"mock": "extraction"}),
                     llm_client.LLMReply(review, {"mock": "consolidation"}),
                 ])):
-            extracted = self.client.post("/api/extraction/run", json={"case_id": self.case_id})
+            extracted = self.client.post("/api/extraction/run", json={
+                "case_id": self.case_id, "workflow_id": workflow_id,
+            })
         self.assertEqual(extracted.status_code, 200, extracted.text)
 
         failure = llm_client.LLMFailure("llm_call_failed", "mock relation failure")
-        response, _ = self._run("", side_effect=failure)
+        response, _ = self._run("", side_effect=failure, workflow_id=workflow_id)
         self.assertEqual(response.status_code, 502, response.text)
         stored = case_store.load_case(self.case_id)
         self.assertEqual(
@@ -170,6 +192,13 @@ class TestRelationAPI(IsolatedCaseTest):
             extracted.json()["info_units"],
         )
         self.assertEqual(stored.relations, [])
+        stage_runs = stored.stage_runs[-2:]
+        self.assertEqual([run.stage.value for run in stage_runs], ["extraction", "relation"])
+        audits = [json.loads((self.data_dir / self.case_id / run.output_snapshot_path).read_text(
+            encoding="utf-8")) for run in stage_runs]
+        self.assertEqual([audit["workflow_id"] for audit in audits], [workflow_id, workflow_id])
+        self.assertIn("Extraction", audits[0]["run_name"])
+        self.assertIn("Relation", audits[1]["run_name"])
 
     def test_manual_crud_for_all_types_and_persists(self):
         ids = [unit["id"] for unit in self.units]

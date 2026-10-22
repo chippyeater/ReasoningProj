@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from app import llm_client
+from app.observability import RunTrace
 from app.api_models import CreateRelationInput, RelationRunResponse, UpdateRelationInput
 from app.case_service import now_iso
 from app.case_store import artifact_path, case_dir, load_case_snapshot, save_case, write_json
@@ -117,15 +118,23 @@ def _write_audit(case_id: str, run: StageRun, audit: dict) -> None:
     write_json(artifact_path(case_id, f"runs/{run.id}.stage.json"), run.model_dump(mode="json"))
 
 
-async def run_relation(case: CaseData, selected_info_unit_ids: list[str] | None = None) -> RelationRunResponse:
+async def run_relation(case: CaseData, selected_info_unit_ids: list[str] | None = None,
+                       *, workflow_id: str | None = None) -> RelationRunResponse:
     run_id = f"run-{uuid4().hex}"
+    workflow_id = workflow_id or f"workflow-{uuid4().hex}"
     run = StageRun(
         id=run_id, stage=PipelineStage.relation, status=RunStatus.failed, model=None,
         prompt_version=None, input_snapshot_path=f"runs/{run_id}.input.json",
         output_snapshot_path=f"runs/{run_id}.output.json", error_message=None, created_at=now_iso(),
     )
+    trace = RunTrace(
+        case_id=case.case_id, case_title=case.case_title, stage="Relation",
+        run_id=run_id, workflow_id=workflow_id, created_at=run.created_at,
+        initial_input={"case_id": case.case_id, "selected_info_unit_ids": selected_info_unit_ids},
+    )
     scope_ids = selected_info_unit_ids or [unit.id for unit in case.info_units]
-    audit: dict = {"run_id": run_id, "status": "started", "scope_info_unit_ids": scope_ids,
+    audit: dict = {"run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
+                   "status": "started", "scope_info_unit_ids": scope_ids,
                    "raw_response": None, "model_content": None, "added_relations": [], "errors": []}
     initial_snapshot = _snapshot_bytes(case.case_id)
     try:
@@ -140,7 +149,8 @@ async def run_relation(case: CaseData, selected_info_unit_ids: list[str] | None 
             if selected_info_unit_ids is not None:
                 raise AppError("relation_scope_too_small", "At least two InfoUnits are required", 422)
             write_json(artifact_path(case.case_id, run.input_snapshot_path), {
-                "run_id": run_id, "case_id": case.case_id, "model_skipped": "fewer_than_two_info_units",
+                "run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
+                "case_id": case.case_id, "model_skipped": "fewer_than_two_info_units",
             })
             run.status = RunStatus.success
             audit["status"] = "success"
@@ -150,6 +160,7 @@ async def run_relation(case: CaseData, selected_info_unit_ids: list[str] | None 
             candidate.stage_runs.append(run)
             candidate.updated_at = now_iso()
             save_case(candidate, set_current=False)
+            trace.finish_success({"status": "success", "added_relations": [], "model_skipped": True})
             return RelationRunResponse(added_relations=[])
 
         scope_set = set(scope_ids)
@@ -168,22 +179,40 @@ async def run_relation(case: CaseData, selected_info_unit_ids: list[str] | None 
         config = llm_client.load_config()
         run.model = config.model
         write_json(artifact_path(case.case_id, run.input_snapshot_path), llm_client.redact({
-            "run_id": run_id, "model_input": model_input, "system_prompt": prompt,
+            "run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
+            "model_input": model_input, "system_prompt": prompt,
             "prompt_version": version, "configuration": config.public_metadata(),
             "case_snapshot_sha256": hashlib.sha256(initial_snapshot).hexdigest(),
         }))
         _write_audit(case.case_id, run, audit)
-        reply = await llm_client.call_structured(config, prompt, model_input, RelationOutput.model_json_schema())
+        schema = RelationOutput.model_json_schema()
+        with trace.generation(
+                "Relation · model call", config=config, prompt=prompt,
+                model_input=model_input, schema=schema) as generation:
+            reply = await llm_client.call_structured(config, prompt, model_input, schema)
+            generation.record_reply(reply)
         audit["raw_response"] = reply.response
         audit["model_content"] = reply.content
-        try:
-            output = RelationOutput.model_validate_json(reply.content)
-        except (ValidationError, ValueError) as exc:
-            raise AppError("relation_schema_invalid", "Model output does not match RelationOutput", 422) from exc
-        validation = validate_relations(output, context)
-        if not validation.valid:
-            raise AppError("relation_validation_failed", "Generated Relations are invalid", 422,
-                           details={"errors": [error.model_dump(mode="json") for error in validation.errors]})
+        with trace.observation(
+                "Relation · parse", as_type="evaluator", input=reply.content) as parse_span:
+            try:
+                output = RelationOutput.model_validate_json(reply.content)
+            except (ValidationError, ValueError) as exc:
+                raise AppError("relation_schema_invalid", "Model output does not match RelationOutput", 422) from exc
+            parse_span.update(output=output.model_dump(mode="json"))
+        with trace.observation(
+                "Relation · validate", as_type="guardrail",
+                input=output.model_dump(mode="json")) as validation_span:
+            validation = validate_relations(output, context)
+            validation_payload = validation.model_dump(mode="json")
+            validation_span.update(
+                output=validation_payload,
+                level="ERROR" if not validation.valid else None,
+                status_message="relation_validation_failed" if not validation.valid else None,
+            )
+            if not validation.valid:
+                raise AppError("relation_validation_failed", "Generated Relations are invalid", 422,
+                               details={"errors": [error.model_dump(mode="json") for error in validation.errors]})
 
         existing_keys = {_relation_key(item) for item in case.relations}
         seen_keys: set[tuple[str, str, RelationType]] = set()
@@ -207,6 +236,10 @@ async def run_relation(case: CaseData, selected_info_unit_ids: list[str] | None 
         if _snapshot_bytes(case.case_id) != initial_snapshot:
             raise AppError("case_changed_during_relation", "Case changed while the model was running; Relations were not committed", 409)
         save_case(candidate, set_current=False)
+        trace.finish_success({
+            "status": "success",
+            "added_relations": [item.model_dump(mode="json") for item in generated],
+        })
         return RelationRunResponse(added_relations=generated)
     except Exception as exc:
         if isinstance(exc, AppError):
@@ -222,10 +255,12 @@ async def run_relation(case: CaseData, selected_info_unit_ids: list[str] | None 
         audit["errors"] = failure.details.get("errors", [{"code": failure.code, "message": str(failure)}])
         if isinstance(exc, llm_client.LLMFailure):
             audit["raw_response"] = exc.response
+        trace.finish_error(exc, step=trace.active_step)
         try:
             if not artifact_path(case.case_id, run.input_snapshot_path).exists():
                 write_json(artifact_path(case.case_id, run.input_snapshot_path), {
-                    "run_id": run_id, "case_id": case.case_id, "input_preparation_failed": True,
+                    "run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
+                    "case_id": case.case_id, "input_preparation_failed": True,
                 })
             _write_audit(case.case_id, run, audit)
             latest = load_case_snapshot(case.case_id)

@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from app import llm_client
+from app.observability import RunTrace
 from app.case_service import now_iso
 from app.case_store import artifact_path, case_dir, load_case_snapshot, save_case, write_json
 from app.errors import AppError
@@ -60,10 +61,21 @@ def _write_audit(case_id: str, run: StageRun, audit: dict) -> None:
 async def _materialize_with_optional_repair(
         draft: ModelExtraction, case: CaseData, *, stage_name: str, model_input: dict,
         config: llm_client.LLMConfig, repair_prompt: str, repair_enabled: bool,
-        run: StageRun, audit: dict) -> tuple[ModelExtraction, ExtractionOutput, list[dict]]:
+        run: StageRun, audit: dict, trace: RunTrace) -> tuple[ModelExtraction, ExtractionOutput, list[dict]]:
     diagnostics: dict = {}
     try:
-        result, merges = materialize_extraction(draft, case, diagnostics)
+        with trace.observation(
+                f"{stage_name.title()} · source validation", as_type="guardrail",
+                input=draft.model_dump(mode="json")) as validation_span:
+            try:
+                result, merges = materialize_extraction(draft, case, diagnostics)
+            except ExtractionFailure as exc:
+                validation_span.update(output={
+                    "valid": False, "diagnostics": exc.diagnostics or diagnostics,
+                    "errors": exc.errors,
+                }, level="ERROR", status_message=exc.code)
+                raise
+            validation_span.update(output={"valid": True, "diagnostics": diagnostics, "merges": merges})
     except ExtractionFailure as exc:
         audit[f"{stage_name}_source_validation"] = exc.diagnostics or diagnostics
         repairable_codes = {"invalid_evidence_id", "quote_unit_not_evidence"}
@@ -94,32 +106,57 @@ async def _materialize_with_optional_repair(
                                     "failed_local_ids": sorted(failed_ids)}
         write_json(artifact_path(case.case_id, repair_path), llm_client.redact(repair_input))
         write_json(artifact_path(case.case_id, run.output_snapshot_path), llm_client.redact(audit))
-        reply = await llm_client.call_structured(
-            config, repair_prompt, repair_input, ModelEvidenceRepair.model_json_schema())
+        repair_schema = ModelEvidenceRepair.model_json_schema()
+        with trace.generation(
+                f"{stage_name.title()} Evidence Repair · model call", config=config,
+                prompt=repair_prompt, model_input=repair_input, schema=repair_schema) as generation:
+            reply = await llm_client.call_structured(config, repair_prompt, repair_input, repair_schema)
+            generation.record_reply(reply)
         audit["evidence_repair"]["raw_response"] = reply.response
         audit["evidence_repair"]["content"] = reply.content
-        repair = parse_evidence_repair(reply.content)
+        with trace.observation(
+                f"{stage_name.title()} Evidence Repair · parse", as_type="evaluator",
+                input=reply.content) as parse_span:
+            repair = parse_evidence_repair(reply.content)
+            parse_span.update(output=repair.model_dump(mode="json"))
         repaired, changes = apply_evidence_repair(draft, repair, failed_ids)
         audit["evidence_repair"]["changes"] = changes
         audit["evidence_repair"]["repaired_result"] = repaired.model_dump(mode="json")
         repaired_diagnostics: dict = {}
-        try:
-            result, merges = materialize_extraction(repaired, case, repaired_diagnostics)
-        except ExtractionFailure as repaired_exc:
-            audit[f"{stage_name}_source_validation_after_repair"] = repaired_exc.diagnostics or repaired_diagnostics
-            raise
+        with trace.observation(
+                f"{stage_name.title()} Evidence Repair · source validation", as_type="guardrail",
+                input=repaired.model_dump(mode="json")) as repaired_validation_span:
+            try:
+                result, merges = materialize_extraction(repaired, case, repaired_diagnostics)
+            except ExtractionFailure as repaired_exc:
+                audit[f"{stage_name}_source_validation_after_repair"] = repaired_exc.diagnostics or repaired_diagnostics
+                repaired_validation_span.update(output={
+                    "valid": False, "diagnostics": repaired_exc.diagnostics or repaired_diagnostics,
+                    "errors": repaired_exc.errors,
+                }, level="ERROR", status_message=repaired_exc.code)
+                raise
+            repaired_validation_span.update(output={
+                "valid": True, "diagnostics": repaired_diagnostics, "merges": merges,
+            })
         audit[f"{stage_name}_source_validation_after_repair"] = repaired_diagnostics
         return repaired, result, merges
     audit[f"{stage_name}_source_validation"] = diagnostics
     return draft, result, merges
 
 
-async def run_extraction(case: CaseData) -> ExtractionOutput:
+async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> ExtractionOutput:
     run_id = f"run-{uuid4().hex}"
+    workflow_id = workflow_id or f"workflow-{uuid4().hex}"
     run = StageRun(id=run_id, stage=PipelineStage.extraction, status=RunStatus.failed,
                    model=None, prompt_version=None, input_snapshot_path=f"runs/{run_id}.input.json",
                    output_snapshot_path=f"runs/{run_id}.output.json", error_message=None, created_at=now_iso())
-    audit: dict = {"run_id": run_id, "status": "started", "raw_response": None,
+    trace = RunTrace(
+        case_id=case.case_id, case_title=case.case_title, stage="Extraction",
+        run_id=run_id, workflow_id=workflow_id, created_at=run.created_at,
+        initial_input={"case_id": case.case_id, "stage": "extraction"},
+    )
+    audit: dict = {"run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
+                   "status": "started", "raw_response": None,
                    "model_content": None, "parsed_result": None, "result": None, "errors": [],
                    "active_step": "preparation", "model_request_attempts": 0,
                    "evidence_repair_attempts": 0}
@@ -145,7 +182,8 @@ async def run_extraction(case: CaseData) -> ExtractionOutput:
         model_input["confirmed_source_kinds"] = {
             f.file_id: f.source_kind.value for f in case.files if f.file_id in parsed_ids}
         write_json(artifact_path(case.case_id, run.input_snapshot_path), llm_client.redact({
-            "run_id": run_id, "model_input": model_input, "system_prompt": prompt,
+            "run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
+            "model_input": model_input, "system_prompt": prompt,
             "consolidation_prompt": consolidation_prompt, "evidence_repair_prompt": repair_prompt,
             "evidence_repair_enabled": repair_enabled,
             "prompt_version": version, "configuration": config.public_metadata(),
@@ -155,14 +193,21 @@ async def run_extraction(case: CaseData) -> ExtractionOutput:
         # Write the attempted step before the call, including on interruption.
         write_json(artifact_path(case.case_id, run.output_snapshot_path), audit)
         schema = ModelExtraction.model_json_schema()
-        reply = await llm_client.call_structured(config, prompt, model_input, schema)
+        with trace.generation(
+                "Extraction · model call", config=config, prompt=prompt,
+                model_input=model_input, schema=schema) as generation:
+            reply = await llm_client.call_structured(config, prompt, model_input, schema)
+            generation.record_reply(reply)
         audit["raw_response"] = reply.response
         audit["model_content"] = reply.content
-        draft = parse_model_extraction(reply.content)
+        with trace.observation(
+                "Extraction · parse", as_type="evaluator", input=reply.content) as parse_span:
+            draft = parse_model_extraction(reply.content)
+            parse_span.update(output=draft.model_dump(mode="json"))
         audit["parsed_result"] = draft.model_dump(mode="json")
         draft, validated_draft, draft_merges = await _materialize_with_optional_repair(
             draft, case, stage_name="draft", model_input=model_input, config=config,
-            repair_prompt=repair_prompt, repair_enabled=repair_enabled, run=run, audit=audit)
+            repair_prompt=repair_prompt, repair_enabled=repair_enabled, run=run, audit=audit, trace=trace)
         audit["validated_draft"] = validated_draft.model_dump(mode="json")
         audit["draft_merges"] = draft_merges
         if _snapshot_bytes(case.case_id) != initial_snapshot:
@@ -176,17 +221,26 @@ async def run_extraction(case: CaseData) -> ExtractionOutput:
         write_json(artifact_path(case.case_id, consolidation_path), llm_client.redact(consolidation_input))
         audit["model_request_attempts"] += 1
         write_json(artifact_path(case.case_id, run.output_snapshot_path), llm_client.redact(audit))
-        consolidated = await llm_client.call_structured(
-            config, consolidation_prompt, consolidation_input, ModelConsolidation.model_json_schema())
+        consolidation_schema = ModelConsolidation.model_json_schema()
+        with trace.generation(
+                "Consolidation · model call", config=config, prompt=consolidation_prompt,
+                model_input=consolidation_input, schema=consolidation_schema) as generation:
+            consolidated = await llm_client.call_structured(
+                config, consolidation_prompt, consolidation_input, consolidation_schema)
+            generation.record_reply(consolidated)
         audit["consolidation_raw_response"] = consolidated.response
         audit["consolidation_content"] = consolidated.content
-        review = parse_model_consolidation(consolidated.content, len(draft.info_units))
+        with trace.observation(
+                "Consolidation · parse", as_type="evaluator",
+                input=consolidated.content) as parse_span:
+            review = parse_model_consolidation(consolidated.content, len(draft.info_units))
+            parse_span.update(output=review.model_dump(mode="json"))
         audit["consolidation_review"] = review.model_dump(mode="json", exclude={"extraction"})
         consolidated_draft = review.extraction
         audit["consolidated_result"] = consolidated_draft.model_dump(mode="json")
         consolidated_draft, result, merges = await _materialize_with_optional_repair(
             consolidated_draft, case, stage_name="consolidated", model_input=model_input, config=config,
-            repair_prompt=repair_prompt, repair_enabled=repair_enabled, run=run, audit=audit)
+            repair_prompt=repair_prompt, repair_enabled=repair_enabled, run=run, audit=audit, trace=trace)
         audit["consolidated_result"] = consolidated_draft.model_dump(mode="json")
         audit["merges"] = merges
         audit["result"] = result.model_dump(mode="json")
@@ -207,6 +261,7 @@ async def run_extraction(case: CaseData) -> ExtractionOutput:
         candidate.stage_runs.append(run)
         candidate.updated_at = now_iso()
         save_case(candidate, set_current=False)
+        trace.finish_success({"status": "success", "result": audit["result"]})
         return result
     except Exception as exc:
         if isinstance(exc, AppError):
@@ -228,10 +283,12 @@ async def run_extraction(case: CaseData) -> ExtractionOutput:
                 audit.setdefault("evidence_repair", {})["raw_response"] = exc.response
             else:
                 audit["raw_response"] = exc.response
+        trace.finish_error(exc, step=audit["active_step"])
         try:
             if not artifact_path(case.case_id, run.input_snapshot_path).exists():
                 write_json(artifact_path(case.case_id, run.input_snapshot_path), {
-                    "run_id": run_id, "case_id": case.case_id, "input_preparation_failed": True})
+                    "run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
+                    "case_id": case.case_id, "input_preparation_failed": True})
             _write_audit(case.case_id, run, audit)
             latest = load_case_snapshot(case.case_id)
             if latest is None:

@@ -108,6 +108,40 @@ Set-Location backend
 `.stage.json` 独立保存运行索引；若缓存损坏导致 `case.json` 无法合法保存日志索引，接口明确返回审计持久化错误及原始错误代码，独立日志仍可定位。
 授权头不写日志，已配置 API Key / Token 在日志中脱敏。
 
+## LLM Observability（Langfuse）
+
+后端使用 `langfuse==5.0.4` 的 OpenTelemetry API，为 Extraction、Consolidation、Relation 和
+InfoUnit Agent 建立命名 Trace，并将模型调用、解析与校验记录为独立 Observation。默认关闭外部追踪；即使开启，
+默认也只发送字段名、长度和 SHA-256 等摘要，不发送 Prompt、案件正文或模型原始输出。现有 `runs/*.json` 审计文件与路径保持不变。
+默认隐私模式下，云端 Trace 名称中的案件简称也会替换为案件 ID 的短哈希；本地 Run 索引仍显示真实案件简称。
+
+在根目录 `.env` 或进程环境中配置：
+
+```dotenv
+LOGICWEAVER_OBSERVABILITY_ENABLED=true
+LOGICWEAVER_OBSERVABILITY_CAPTURE_CONTENT=false
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_TRACING_ENVIRONMENT=development
+```
+
+只有在案件数据已获外发授权时，才将 `LOGICWEAVER_OBSERVABILITY_CAPTURE_CONTENT` 改为 `true`；密钥仍会脱敏。
+追踪初始化、写入或刷新失败只记录后端警告，不中断业务与本地 JSON 审计。「开始提取」为 Extraction 与 Relation
+传递同一个 `workflow_id`，Langfuse 中表现为相同 Session；每个阶段保留独立 Trace 与可读名称。
+
+启动服务并完成一次 Mock 或获授权的调用后，登录 `LANGFUSE_BASE_URL`，进入对应项目的 Tracing/Traces，按
+Session（`workflow_id`）、Trace 名称或 `logicweaver` 标签筛选即可。SDK 与接口依据：
+[Langfuse Python instrumentation](https://langfuse.com/docs/observability/sdk/instrumentation)、
+[Python v4 → v5 migration](https://langfuse.com/docs/observability/sdk/upgrade-path/python-v4-to-v5)。
+
+本地运行索引不访问 Langfuse，可按案件、阶段、状态和 ISO 时间筛选并输出对应 JSON 绝对路径：
+
+```powershell
+Set-Location backend
+& .\.venv\Scripts\python.exe -m app.run_index --case 租赁 --stage extraction --status success --since 2026-10-22
+```
+
 错误代码区分 `llm_call_failed / llm_timeout`、`llm_response_invalid / llm_incomplete / llm_refused`、
 `extraction_json_invalid`、`extraction_schema_invalid`、`extraction_source_invalid`、存储错误及并发冲突。
 JSON / Schema / 来源错误通常为 422，模型调用失败为 502，缺少配置为 503；错误响应提供 `run_id`。
@@ -119,6 +153,7 @@ Azure 使用 `AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY / AZURE_OPENAI_MODEL`
 
 Relation 已接通为增量生成：`POST /api/relation/run` 接收 `{case_id}` 进行全案检查，或额外传入至少两个
 `selected_info_unit_ids` 仅检查选中节点；响应只返回本次 `added_relations`。正式 ID 由后端生成，等价关系不会重复追加。
+`POST /api/extraction/run` 与 `POST /api/relation/run` 均可接收可选 `workflow_id`，用于关联一次用户工作流，不进入模型输入。
 单条手动关系通过 `/api/cases/{case_id}/relations` 的 POST，以及
 `/api/cases/{case_id}/relations/{relation_id}` 的 PATCH / DELETE 维护；读取继续复用案件接口。
 

@@ -1,4 +1,5 @@
 """FastAPI entrypoint for the v0.3 upload and cached-document contract."""
+from contextlib import asynccontextmanager
 import json
 from typing import Annotated
 
@@ -24,6 +25,7 @@ from app.case_store import (
 from app.errors import AppError
 from app.extraction_service import run_extraction
 from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_proposal
+from app.observability import flush as flush_observability
 from app.quote_units import QuoteUnit
 from app.relation_service import create_relation, delete_relation, run_relation, update_relation
 from app.schemas import (
@@ -31,7 +33,13 @@ from app.schemas import (
     UploadRequest, WorkspaceState,
 )
 
-app = FastAPI(title="LogicWeaver API", version="0.3")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    flush_observability()
+
+
+app = FastAPI(title="LogicWeaver API", version="0.3", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -242,7 +250,7 @@ async def extraction_run(payload: ExtractionRunInput) -> ExtractionOutput:
     case = load_case_snapshot(payload.case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
-    return await run_extraction(case)
+    return await run_extraction(case, workflow_id=payload.workflow_id)
 
 
 @app.post("/api/relation/run", response_model=RelationRunResponse)
@@ -250,7 +258,7 @@ async def relation_run(payload: RelationRunInput) -> RelationRunResponse:
     case = load_case_snapshot(payload.case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
-    return await run_relation(case, payload.selected_info_unit_ids)
+    return await run_relation(case, payload.selected_info_unit_ids, workflow_id=payload.workflow_id)
 
 
 @app.post("/api/reasoning/run", status_code=501)

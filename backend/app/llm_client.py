@@ -109,8 +109,10 @@ class LLMFailure(AppError):
         self.response = response
 
 
-async def call_structured(config: LLMConfig, system_prompt: str, model_input: dict, schema: dict) -> LLMReply:
-    payload = {
+def structured_request_payload(config: LLMConfig, system_prompt: str,
+                               model_input: dict, schema: dict) -> dict:
+    """Build the exact provider payload used by calls and observability."""
+    return {
         "model": config.model,
         "messages": [{"role": "system", "content": system_prompt},
                      {"role": "user", "content": json.dumps(model_input, ensure_ascii=False)}],
@@ -118,6 +120,10 @@ async def call_structured(config: LLMConfig, system_prompt: str, model_input: di
             "name": "logicweaver_extraction", "strict": True, "schema": schema}},
         "max_completion_tokens": config.max_completion_tokens,
     }
+
+
+async def call_structured(config: LLMConfig, system_prompt: str, model_input: dict, schema: dict) -> LLMReply:
+    payload = structured_request_payload(config, system_prompt, model_input, schema)
     headers = {"Content-Type": "application/json"}
     if config.provider == "azure":
         headers["api-key"] = config.api_key

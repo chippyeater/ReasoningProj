@@ -903,6 +903,7 @@ export type RouteResponsePayload = {
 
 export type ExtractionRunRequest = {
   case_id: string;
+  workflow_id?: string;
 };
 
 export type ExtractionRunResponse = {
@@ -980,6 +981,7 @@ export async function runExtraction(payload: ExtractionRunRequest): Promise<Extr
 export async function runRelation(payload: {
   case_id: string;
   selected_info_unit_ids?: string[];
+  workflow_id?: string;
 }): Promise<RelationRunResponse> {
   return readJson<RelationRunResponse>(
     await fetch(`${API_BASE}/api/relation/run`, {

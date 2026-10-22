@@ -1268,12 +1268,13 @@ export default function App() {
 
   async function onRunExtraction() {
     if (!currentCase) return;
+    const workflowId = crypto.randomUUID();
     setExtractionRunning(true);
     setError("");
     try {
-      await runExtraction({ case_id: currentCase.case_id });
+      await runExtraction({ case_id: currentCase.case_id, workflow_id: workflowId });
       try {
-        await runRelation({ case_id: currentCase.case_id });
+        await runRelation({ case_id: currentCase.case_id, workflow_id: workflowId });
       } catch (relationError) {
         const refreshed = await getCaseById(currentCase.case_id);
         setCurrentCase(refreshed.case);

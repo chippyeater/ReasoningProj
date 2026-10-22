@@ -23,6 +23,7 @@ class UpdateCaseInput(ContractModel):
 
 
 EvidenceIds = Annotated[list[Text], Field(min_length=1)]
+WorkflowId = Annotated[str, Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")]
 
 
 class CreateInfoUnitInput(ContractModel):
@@ -74,6 +75,7 @@ class InfoUnitMutationAction(str, Enum):
 class InfoUnitAgentRequest(ContractModel):
     instruction: Annotated[str, Field(min_length=1, max_length=2000, pattern=r"\S")]
     selected_info_unit_ids: list[Text] = Field(default_factory=list)
+    workflow_id: WorkflowId | None = None
 
     @field_validator("selected_info_unit_ids")
     @classmethod
@@ -174,11 +176,13 @@ class ConfirmInfoUnitAgentProposalInput(ContractModel):
 
 class ExtractionRunInput(ContractModel):
     case_id: Text
+    workflow_id: WorkflowId | None = None
 
 
 class RelationRunInput(ContractModel):
     case_id: Text
     selected_info_unit_ids: Annotated[list[Text], Field(min_length=2)] | None = None
+    workflow_id: WorkflowId | None = None
 
     @field_validator("selected_info_unit_ids")
     @classmethod

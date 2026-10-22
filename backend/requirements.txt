@@ -6,3 +6,4 @@ httpx==0.28.1
 pypdf==5.4.0
 python-docx==1.1.2
 python-multipart==0.0.22
+langfuse==5.0.4
