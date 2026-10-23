@@ -52,7 +52,7 @@ class InvestigationResult(InvestigationOutput):
     relevant_relation_ids: IDs
     evidence_refs: Pointers
     open_questions: Annotated[list[BoundedText], Field(max_length=20)]
-    completion_status: Literal["completed", "evidence_insufficient", "budget_exhausted"]
+    completion_status: Literal["completed", "evidence_insufficient", "budget_exhausted", "unsupported"]
 
 
 def _function(name: str, description: str, properties: dict) -> dict:
@@ -174,6 +174,10 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict) -> Investi
             raise AppError("invalid_investigation_reference", "Invalid SourceRef index")
     if result.goal != goal:
         raise AppError("investigation_result_invalid", "Final goal must match the requested goal")
+    if result.completion_status == "unsupported" and (
+            result.findings or result.relevant_info_unit_ids or result.relevant_relation_ids
+            or result.evidence_refs or not result.open_questions):
+        raise AppError("investigation_result_invalid", "Unsupported requests require an explanation and no findings")
     for finding in result.findings:
         check(finding.info_unit_ids, set(result.relevant_info_unit_ids))
         check(finding.relation_ids, set(result.relevant_relation_ids))
@@ -262,7 +266,7 @@ async def run_investigation(case: CaseData, goal: str,
                     elif stop_reason or limitations or not result.findings or not result.evidence_refs:
                         if result.completion_status == "completed":
                             result.completion_status = "evidence_insufficient"
-                    if not result.evidence_refs:
+                    if not result.evidence_refs and result.completion_status != "unsupported":
                         limitations.append("最终结果未使用可精确回溯的原文证据；摘要和空结果均不能证明事实成立或证据不存在。")
                     result.open_questions = list(dict.fromkeys([*result.open_questions, *limitations]))
                     try:

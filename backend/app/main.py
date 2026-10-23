@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from app.api_models import (
+    AgentRunInput,
     CaseResponse, CasesResponse, ConfirmInfoUnitAgentProposalInput, CreateInfoUnitInput,
     CreateRelationInput, ExtractionRunInput, InfoUnitAgentProposalResponse, InfoUnitAgentRequest,
     RelationRunInput, RelationRunResponse, UpdateCaseInput, UpdateInfoUnitInput, UpdateRelationInput,
@@ -25,6 +26,7 @@ from app.case_store import (
 from app.errors import AppError
 from app.extraction_service import run_extraction
 from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_proposal
+from app.investigation_agent import run_investigation
 from app.observability import flush as flush_observability
 from app.quote_units import QuoteUnit
 from app.relation_service import create_relation, delete_relation, run_relation, update_relation
@@ -86,6 +88,20 @@ async def get_current_case() -> CaseResponse:
 @app.get("/api/cases/{case_id}", response_model=CaseResponse)
 async def get_case(case_id: str) -> CaseResponse:
     return CaseResponse(case=require_case(case_id))
+
+
+@app.post("/api/cases/{case_id}/agent/run")
+async def agent_run(case_id: str, payload: AgentRunInput) -> dict:
+    case = require_case(case_id)
+    result = await run_investigation(case, payload.goal, payload.selected_info_unit_ids)
+    units = {unit.id: unit for unit in case.info_units}
+    files = {file.file_id: file for file in case.files}
+    # Hydrate only validated, actually used pointers for the UI. Never model input.
+    evidence = []
+    for pointer in result["evidence_refs"]:
+        ref = units[pointer["info_unit_id"]].source_refs[pointer["source_ref_index"]]
+        evidence.append({**pointer, **ref.model_dump(mode="json"), "filename": files[ref.file_id].filename})
+    return {**result, "evidence": evidence}
 
 
 def require_multipart(request: Request) -> None:

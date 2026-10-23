@@ -18,6 +18,18 @@ class CasesResponse(ContractModel):
     current_case_id: str | None
 
 
+class AgentRunInput(ContractModel):
+    goal: Annotated[str, Field(min_length=1, max_length=2000, pattern=r"\S")]
+    selected_info_unit_ids: Annotated[list[Text], Field(max_length=5)] = Field(default_factory=list)
+
+    @field_validator("selected_info_unit_ids")
+    @classmethod
+    def unique_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("selected_info_unit_ids must be unique")
+        return value
+
+
 class UpdateCaseInput(ContractModel):
     case_title: Text
 
