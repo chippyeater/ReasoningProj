@@ -14,25 +14,36 @@ const assert = require('node:assert/strict');
       ...seed.workspace_state, selected_node_ids: [], focused_node_id: null,
       viewport: { zoom: 1, offset_x: 0, offset_y: 0 },
     } });
+    const workspaces = await (await page.request.get(`http://127.0.0.1:8018/api/cases/${seed.case_id}/issue-workspaces`)).json();
+    for (const [issue, workspace] of Object.entries(workspaces.workspaces)) {
+      await page.request.patch(`http://127.0.0.1:8018/api/cases/${seed.case_id}/issue-workspaces`, { data: {
+        issue, canvas: { ...workspace.canvas,
+          node_positions: Object.fromEntries(seed.info_units.map((unit, index) => [unit.id, { x: 80 + (index % 3) * 440, y: 100 + Math.floor(index / 3) * 200 }])),
+          selected_node_ids: [], focused_node_id: null, viewport: { zoom: 1, offset_x: 0, offset_y: 0 } },
+      } });
+    }
     await page.goto('http://127.0.0.1:5178');
     await page.waitForFunction(() => !document.querySelector('.canvas-agent-shortcut')?.disabled);
     const before = await (await page.request.get('http://127.0.0.1:8018/api/case')).json();
     const issues = [...new Set([before.case.core_issue, ...before.case.issue_set].filter(Boolean))];
     assert.equal(await page.locator('.canvas-edit-toolbar').count(), 0);
-    const issueTrigger = page.getByLabel('切换当前 Issue');
-    assert.equal(await issueTrigger.innerText(), issues[0]);
+    await page.waitForFunction(() => document.querySelector('[role=tab][aria-selected=true]'));
+    const issueTab = issue => page.getByRole('tab', { name: issue, exact: true });
     let caseReloads = 0;
     page.on('request', request => { if (request.url().endsWith('/api/case')) caseReloads++; });
-    await issueTrigger.click();
-    const list = page.getByRole('group', { name: 'Issue 列表' });
-    assert.equal(await list.getByRole('button').count(), issues.length);
-    await list.getByRole('button', { name: issues[1], exact: true }).click();
-    assert.equal(await issueTrigger.innerText(), issues[1]);
+    assert.equal(await page.getByRole('tab').count(), issues.length);
+    await issueTab(issues[1]).click();
+    await page.waitForFunction(() => [...document.querySelectorAll('[role=tab]')][1]?.getAttribute('aria-selected') === 'true');
+    assert.equal(await issueTab(issues[1]).getAttribute('aria-selected'), 'true');
     assert.equal(caseReloads, 0);
     const afterIssue = await (await page.request.get('http://127.0.0.1:8018/api/case')).json();
     assert.deepEqual(afterIssue, before);
+    await issueTab(issues[0]).click();
+    await page.waitForFunction(() => [...document.querySelectorAll('[role=tab]')][0]?.getAttribute('aria-selected') === 'true');
+    await page.locator('.canvas-wrapper').click({ button: 'right', position: { x: 30, y: 830 } });
+    await page.getByRole('menuitem', { name: '恢复旧画布节点' }).click();
     const canvas = page.locator('.canvas-wrapper');
-    const blank = { x: 30, y: 870 };
+    const blank = { x: 30, y: 830 };
     await canvas.click({ button: 'right', position: blank });
     const menu = page.getByRole('menu', { name: '画布操作' });
     assert.equal(await menu.count(), 1);
@@ -43,13 +54,13 @@ const assert = require('node:assert/strict');
     await menu.getByRole('menuitem', { name: '向 Agent 提问' }).click();
     assert.equal(await menu.count(), 0);
     assert.equal(await page.locator('.dynamic-island').count(), 1);
-    assert.match(await page.locator('.island-context').innerText(), new RegExp(issues[1]));
+    assert.match(await page.locator('.island-context').innerText(), new RegExp(issues[0]));
     const input = page.getByPlaceholder('提出调查问题（当前仅支持只读调查）…');
     await input.fill('核对损失说法');
     const request = page.waitForRequest(request => request.url().endsWith('/agent/run'));
     await page.getByRole('button', { name: '发送调查问题' }).click();
     const sent = (await request).postDataJSON();
-    assert.match(sent.goal, new RegExp(issues[1]));
+    assert.equal(sent.current_issue, issues[0]);
     assert.deepEqual(sent.selected_info_unit_ids, []);
     await page.getByRole('region', { name: 'Agent 调查结果' }).waitFor();
     // Right-click an unselected node; it becomes the context, without opening another island.
@@ -92,7 +103,7 @@ const assert = require('node:assert/strict');
     const content = page.locator('.canvas-content');
     const oldTransform = await content.getAttribute('style');
     const bounds = await canvas.boundingBox();
-    await page.mouse.move(bounds.x + 30, bounds.y + 870);
+    await page.mouse.move(bounds.x + 30, bounds.y + 830);
     await page.keyboard.down('Control'); await page.mouse.wheel(0, -100); await page.keyboard.up('Control');
     await page.waitForTimeout(250);
     assert.notEqual(await content.getAttribute('style'), oldTransform);
@@ -126,8 +137,8 @@ const assert = require('node:assert/strict');
     await page.locator('.canvas-initial-action').waitFor();
     assert.equal(await page.locator('.canvas-initial-action').getByRole('button', { name: '开始提取' }).isVisible(), true);
     assert.match(await page.locator('.canvas-initial-action').innerText(), /先上传/);
-    assert.equal(await issueTrigger.innerText(), '暂无 Issue');
+    assert.match(await page.locator('.issue-tabs-empty').innerText(), /暂无 Issue/);
     assert.deepEqual(errors, []);
-    console.log('PASS: Issue navigation without reload/write, one context menu, island invocation, selected-node payload, multi-selection, editors, drag/zoom/fit and empty-case extraction entry.');
+    console.log('PASS: Issue tabs without case reload/business writes, one context menu, island invocation, selected-node payload, multi-selection, editors, drag/zoom/fit and empty-case extraction entry.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

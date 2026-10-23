@@ -31,6 +31,7 @@ class TestIssueWorkspaces(unittest.TestCase):
                          [u.id for u in self.case.info_units if u.related_issue == a])
         self.assertLess(len(state.workspaces[a].canvas.visible_node_ids), len(self.case.info_units))
         self.assertEqual(state.workspaces[a].canvas.node_positions["U029"].x, 123)
+        self.assertTrue(set(state.workspaces[b].canvas.visible_node_ids) <= state.workspaces[b].canvas.node_positions.keys())
         client = TestClient(main.app)
         with patch.object(main, "require_case", return_value=self.case):
             canvas = state.workspaces[a].canvas.model_dump(mode="json")

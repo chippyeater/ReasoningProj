@@ -15,7 +15,7 @@ export type AgentResult = {
   tool_call_count: number;
 };
 
-export async function runAgent(caseId: string, input: { goal: string; selected_info_unit_ids: string[] }): Promise<AgentResult> {
+export async function runAgent(caseId: string, input: { goal: string; selected_info_unit_ids: string[]; current_issue?: string }): Promise<AgentResult> {
   return readJson<AgentResult>(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/agent/run`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
   }));
@@ -367,6 +367,25 @@ type V03WorkspaceState = {
   display_levels: Record<string, 1 | 2 | 3>;
   viewport: { zoom: number; offset_x: number; offset_y: number };
 };
+
+export type IssueStatus = "pending" | "investigating" | "closed";
+export type IssueCanvas = V03WorkspaceState & { visible_node_ids: string[] };
+export type IssueWorkspaces = {
+  active_issue: string | null;
+  workspaces: Record<string, { status: IssueStatus; canvas: IssueCanvas }>;
+};
+
+export async function getIssueWorkspaces(caseId: string): Promise<IssueWorkspaces> {
+  return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/issue-workspaces`));
+}
+
+export async function updateIssueWorkspace(caseId: string, patch: {
+  issue: string; status?: IssueStatus; canvas?: IssueCanvas;
+}): Promise<IssueWorkspaces> {
+  return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/issue-workspaces`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch), keepalive: true,
+  }));
+}
 
 function relationEdgeType(type: Relation["relation_type"]): EdgeType {
   if (type === "support") return "supports";

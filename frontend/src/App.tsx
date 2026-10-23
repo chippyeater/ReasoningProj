@@ -25,6 +25,8 @@ import {
   updateInfoUnit,
   updateRelation,
   updateWorkspaceState,
+  getIssueWorkspaces, updateIssueWorkspace,
+  type IssueWorkspaces, type IssueCanvas, type IssueStatus,
   type CaseData,
   type CaseSummary,
   type InferenceCard,
@@ -561,14 +563,21 @@ export default function App() {
   const [nodeSizes, setNodeSizes] = useState<Record<string, NodeSize>>({});
 
   const [island, setIsland] = useState({ visible: false, x: 20, y: 20, text: "" });
-  const [selectedIssue, setSelectedIssue] = useState<{ caseId: string; issue: string } | null>(null);
+  const [issueState, setIssueState] = useState<{ caseId: string; data: IssueWorkspaces } | null>(null);
+  const issueStateRef = useRef(issueState);
+  const [workspaceError, setWorkspaceError] = useState("");
+  const workspaceErrorRef = useRef("");
+  const [workspaceSaving, setWorkspaceSaving] = useState(0);
+  const [nodePickerOpen, setNodePickerOpen] = useState(false);
+  const [nodePickerSearch, setNodePickerSearch] = useState("");
   const issues = [...new Set([currentCase?.core_issue, ...(currentCase?.issue_set ?? [])]
-    .filter((issue): issue is string => Boolean(issue?.trim())).map((issue) => issue.trim()))];
-  const activeIssue = selectedIssue?.caseId === currentCase?.case_id && issues.includes(selectedIssue?.issue ?? "")
-    ? selectedIssue!.issue : (issues[0] ?? "");
+    .filter((issue): issue is string => Boolean(issue)))];
+  const issueData = issueState?.caseId === currentCase?.case_id ? issueState?.data : null;
+  const activeIssue = issueData?.active_issue ?? "";
+  const issueCanvas = activeIssue ? issueData?.workspaces[activeIssue]?.canvas : null;
+  const positionsScopeRef = useRef("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string | null; relationId: string | null } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
-  const issueSelectorRef = useRef<HTMLDetailsElement | null>(null);
   const [islandHeight, setIslandHeight] = useState(ISLAND_MIN_HEIGHT);
   const [agentResult, setAgentResult] = useState<AgentResult | null>(null);
   const agentRequestRef = useRef(0);
@@ -704,23 +713,59 @@ export default function App() {
   useEffect(() => {
     agentRequestRef.current += 1;
     setContextMenu(null);
-    if (issueSelectorRef.current) issueSelectorRef.current.open = false;
     setAgentBusy(false);
     setAgentResult(null);
     setAgentError("");
-  }, [currentCase?.case_id]);
+  }, [currentCase?.case_id, activeIssue]);
+
+  useEffect(() => {
+    const caseId = currentCase?.case_id;
+    let cancelled = false;
+    setWorkspaceError(""); workspaceErrorRef.current = "";
+    setNodePickerOpen(false);
+    if (!caseId) { issueStateRef.current = null; setIssueState(null); return; }
+    void (async () => {
+      try {
+        await workspaceMutationQueueRef.current;
+        const data = await getIssueWorkspaces(caseId);
+        if (cancelled) return;
+        const next = { caseId, data };
+        issueStateRef.current = next;
+        setIssueState(next);
+        if (data.active_issue) queueIssueSave(caseId, { issue: data.active_issue });
+      } catch (err) {
+        if (!cancelled) setWorkspaceError(`工作区加载失败：${err instanceof Error ? err.message : "未知错误"}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentCase?.case_id, issues.join("\u0000"), currentCase?.info_units.map(unit => unit.id).join("\u0000")]);
+
+  useLayoutEffect(() => {
+    if (!issueCanvas) return;
+    setSelectedNodeIds(issueCanvas.selected_node_ids);
+    setFocusedNodeId(issueCanvas.focused_node_id);
+    const viewport = issueCanvas.viewport;
+    const restored = { x: viewport.offset_x, y: viewport.offset_y, zoom: viewport.zoom };
+    transformRef.current = restored;
+    setTransform(restored);
+    setContextMenu(null);
+    setNodePickerOpen(false);
+  }, [issueState?.caseId, activeIssue]);
 
   function pickSelectedNodeIds(nextCase: CaseData | null) {
     if (!nextCase) return [] as string[];
-    const ids = nextCase.workspace_state?.selected_card_ids ?? [];
-    if (ids.length > 0) return ids;
+    const canvas = issueStateRef.current?.caseId === nextCase.case_id
+      ? issueStateRef.current.data.workspaces[issueStateRef.current.data.active_issue ?? ""]?.canvas : null;
+    const ids = canvas?.selected_node_ids ?? nextCase.workspace_state?.selected_card_ids ?? [];
+    const known = new Set([...nextCase.info_units.map(unit => unit.id), ...nextCase.reasoning_views.map(view => view.id)]);
+    if (canvas || ids.length > 0) return ids.filter(id => known.has(id));
     const focused = nextCase.workspace_state?.focused_card_id;
     return focused ? [focused] : [];
   }
 
   function pickFocusedNodeId(nextCase: CaseData | null) {
     if (!nextCase) return null;
-    return nextCase.workspace_state?.focused_card_id ?? pickSelectedNodeIds(nextCase)[0] ?? null;
+    return pickSelectedNodeIds(nextCase)[0] ?? null;
   }
 
   function getNodeVisualLevel(node: CanvasNode): 1 | 2 | 3 {
@@ -772,7 +817,7 @@ export default function App() {
 
   useEffect(() => {
     if (selectedNodeIds.length === 0) {
-      setFocusedNodeId(currentCase?.workspace_state?.focused_card_id ?? null);
+      setFocusedNodeId(issueCanvas ? issueCanvas.focused_node_id : currentCase?.workspace_state?.focused_card_id ?? null);
       return;
     }
 
@@ -780,7 +825,7 @@ export default function App() {
       if (current && selectedNodeIds.includes(current)) return current;
       return selectedNodeIds[selectedNodeIds.length - 1] ?? null;
     });
-  }, [currentCase?.workspace_state?.focused_card_id, selectedNodeIds]);
+  }, [currentCase?.workspace_state?.focused_card_id, selectedNodeIds, activeIssue]);
 
   useEffect(() => {
     const clampCurrentViewport = () => {
@@ -795,7 +840,6 @@ export default function App() {
   useEffect(() => {
     const onWindowClick = (event: MouseEvent) => {
       if (contextMenuRef.current && !event.composedPath().includes(contextMenuRef.current)) setContextMenu(null);
-      if (issueSelectorRef.current && !event.composedPath().includes(issueSelectorRef.current)) issueSelectorRef.current.open = false;
       if (!caseSelectorRef.current) return;
       if (event.composedPath().includes(caseSelectorRef.current)) return;
       setCaseMenuOpen(false);
@@ -842,7 +886,7 @@ export default function App() {
     return items.filter((item) => item.name.toLowerCase().includes(keyword));
   }, [evidences, currentCase, searchKeyword]);
 
-    const canvasData = useMemo(() => {
+    const allCanvasData = useMemo(() => {
     if (!currentCase) {
       return { nodes: [] as CanvasNode[], edges: [] as CanvasEdge[] };
     }
@@ -850,7 +894,7 @@ export default function App() {
     const nodes: CanvasNode[] = [];
     const edges: CanvasEdge[] = [];
 
-    currentCase.meta_cards.slice(0, 24).forEach((card, index) => {
+    currentCase.meta_cards.forEach((card, index) => {
       const matchedInfoUnit = findMatchedInfoUnit(currentCase, card);
       const description = card.detail.description || card.summary || card.title;
       nodes.push({
@@ -987,7 +1031,7 @@ export default function App() {
       });
     });
 
-    currentCase.edges.slice(0, 60).forEach((edge) => {
+    currentCase.edges.forEach((edge) => {
       const businessRelation = currentCase.relations.find((relation) => relation.id === edge.id) ?? null;
       edges.push({
         id: edge.id,
@@ -1002,6 +1046,18 @@ export default function App() {
     return { nodes, edges };
   }, [currentCase, evidences]);
 
+  const canvasData = useMemo(() => {
+    if (issues.length && !issueCanvas) return { nodes: [], edges: [] };
+    const visible = issueCanvas ? new Set(issueCanvas.visible_node_ids) : null;
+    const nodes = allCanvasData.nodes.filter(node => !visible || visible.has(node.id)).map((node, index) => ({
+      ...node, level: issueCanvas?.display_levels[node.id] ?? node.level,
+      x: issueCanvas ? issueCanvas.node_positions[node.id]?.x ?? (120 + (index % 2) * 440) : node.x,
+      y: issueCanvas ? issueCanvas.node_positions[node.id]?.y ?? (120 + Math.floor(index / 2) * 210) : node.y,
+    }));
+    const ids = new Set(nodes.map(node => node.id));
+    return { nodes, edges: allCanvasData.edges.filter(edge => ids.has(edge.sourceId) && ids.has(edge.targetId)) };
+  }, [allCanvasData, issueCanvas, issues.length]);
+
   const canvasNodeIdsKey = canvasData.nodes.map((node) => node.id).join("\u0000");
   const canvasNodeLayoutKey = canvasData.nodes.map((node) => `${node.id}:${node.level}`).join("\u0000");
 
@@ -1011,12 +1067,15 @@ export default function App() {
       return;
     }
 
+    const scope = `${currentCase?.case_id}\u0000${activeIssue}`;
+    const switched = positionsScopeRef.current !== scope;
+    positionsScopeRef.current = scope;
     setNodePositions((previous) => {
-      const next: Record<string, Point> = { ...previous };
-      let changed = false;
+      const next: Record<string, Point> = switched ? {} : { ...previous };
+      let changed = switched;
       canvasData.nodes.forEach((node) => {
         if (!next[node.id]) {
-          next[node.id] = { x: node.x, y: node.y };
+          next[node.id] = issueCanvas?.node_positions[node.id] ?? { x: node.x, y: node.y };
           changed = true;
         }
       });
@@ -1028,7 +1087,7 @@ export default function App() {
       });
       return changed ? next : previous;
     });
-  }, [canvasNodeIdsKey]);
+  }, [canvasNodeIdsKey, currentCase?.case_id, activeIssue]);
 
   useEffect(() => {
     const handleMove = (event: MouseEvent) => {
@@ -1179,7 +1238,7 @@ export default function App() {
         panRafRef.current = null;
       }
     };
-  }, [nodePositions, currentCase]);
+  }, [nodePositions, currentCase, activeIssue]);
 
   function addDroppedFiles(fileList: FileList | File[]) {
     const list = Array.from(fileList);
@@ -1260,7 +1319,7 @@ export default function App() {
       closeRelationEditor();
       setSelectedNodeIds(pickSelectedNodeIds(response.case));
       setFocusedNodeId(pickFocusedNodeId(response.case));
-      if (response.case.workspace_state?.viewport) {
+      if (!issueCanvas && response.case.workspace_state?.viewport) {
         const viewport = response.case.workspace_state.viewport;
         setTransform(clampViewportToWrapper({
           x: viewport.offset_x,
@@ -1361,8 +1420,105 @@ export default function App() {
     return queued;
   }
 
+  function queueIssueSave(caseId: string, patch: { issue: string; status?: IssueStatus; canvas?: IssueCanvas }) {
+    const latest = issueStateRef.current;
+    const workspace = latest?.caseId === caseId ? latest.data.workspaces[patch.issue] : null;
+    // Every acknowledgement covers a complete Issue snapshot, including changes
+    // whose earlier write may have failed.
+    const snapshot = workspace ? { ...workspace, ...patch } : patch;
+    setWorkspaceSaving(count => count + 1);
+    void enqueueWorkspaceMutation(async () => {
+      await updateIssueWorkspace(caseId, snapshot);
+      if (issueStateRef.current?.caseId === caseId) { setWorkspaceError(""); workspaceErrorRef.current = ""; }
+    }).catch(err => {
+      if (issueStateRef.current?.caseId === caseId) {
+        workspaceErrorRef.current = `工作区尚未保存：${err instanceof Error ? err.message : "未知错误"}`;
+        setWorkspaceError(workspaceErrorRef.current);
+      }
+    }).finally(() => setWorkspaceSaving(count => count - 1));
+  }
+
+  function patchIssueCanvas(patch: Partial<IssueCanvas>) {
+    const state = issueStateRef.current;
+    const workspace = state?.data.workspaces[activeIssue];
+    if (!state || state.caseId !== currentCase?.case_id || !workspace) return;
+    const canvas = { ...workspace.canvas, ...patch };
+    const next = { ...state, data: { ...state.data, workspaces: {
+      ...state.data.workspaces, [activeIssue]: { ...workspace, canvas },
+    } } };
+    issueStateRef.current = next;
+    setIssueState(next);
+    queueIssueSave(state.caseId, { issue: activeIssue, canvas });
+  }
+
+  async function switchIssue(issue: string) {
+    const state = issueStateRef.current;
+    if (!state || issue === activeIssue || !state.data.workspaces[issue]) return;
+    // Finish the old canvas before changing scope, including any pending pan.
+    const canvas = state.data.workspaces[activeIssue]?.canvas;
+    if (canvas) patchIssueCanvas({ node_positions: { ...canvas.node_positions, ...nodePositions },
+      viewport: { zoom: transformRef.current.zoom, offset_x: transformRef.current.x, offset_y: transformRef.current.y } });
+    if (selectionSyncTimerRef.current) clearTimeout(selectionSyncTimerRef.current);
+    if (viewportSyncTimerRef.current) clearTimeout(viewportSyncTimerRef.current);
+    Object.values(displayLevelSyncTimersRef.current).forEach(clearTimeout);
+    await workspaceMutationQueueRef.current;
+    if (workspaceErrorRef.current || issueStateRef.current?.caseId !== state.caseId) return;
+    const next = { ...issueStateRef.current!, data: { ...issueStateRef.current!.data, active_issue: issue } };
+    issueStateRef.current = next;
+    setIssueState(next);
+    queueIssueSave(state.caseId, { issue });
+  }
+
+  function changeIssueStatus(status: IssueStatus) {
+    const state = issueStateRef.current;
+    const workspace = state?.data.workspaces[activeIssue];
+    if (!state || !workspace) return;
+    const next = { ...state, data: { ...state.data, workspaces: {
+      ...state.data.workspaces, [activeIssue]: { ...workspace, status },
+    } } };
+    issueStateRef.current = next;
+    setIssueState(next);
+    queueIssueSave(state.caseId, { issue: activeIssue, status });
+  }
+
+  function addVisibleNodes(ids: string[]) {
+    const canvas = issueStateRef.current?.data.workspaces[activeIssue]?.canvas;
+    if (!canvas) return;
+    const positions = { ...canvas.node_positions };
+    ids.forEach((id, index) => {
+      if (!positions[id]) positions[id] = nodePositions[id] ?? {
+        x: Math.max(0, (120 - transformRef.current.x) / transformRef.current.zoom + index * 40),
+        y: Math.max(70, (140 - transformRef.current.y) / transformRef.current.zoom + index * 40),
+      };
+    });
+    patchIssueCanvas({ visible_node_ids: [...new Set([...canvas.visible_node_ids, ...ids])], node_positions: positions });
+  }
+
+  function hideSelectedNodes() {
+    const canvas = issueStateRef.current?.data.workspaces[activeIssue]?.canvas;
+    if (!canvas) return;
+    const hidden = new Set(selectedInfoUnitIds);
+    patchIssueCanvas({ visible_node_ids: canvas.visible_node_ids.filter(id => !hidden.has(id)),
+      selected_node_ids: [], focused_node_id: null });
+    setSelectedNodeIds([]);
+    setFocusedNodeId(null);
+  }
+
+  function restoreLegacyNodes() {
+    if (!currentCase) return;
+    // The former canvas displayed the case nodes. Retain explicit coordinates,
+    // including nodes hidden by the initial related_issue recommendation.
+    const canvas = issueStateRef.current?.data.workspaces[activeIssue]?.canvas;
+    if (!canvas) return;
+    patchIssueCanvas({ visible_node_ids: allCanvasData.nodes.filter(node => !["placeholder", "evidence"].includes(node.source)).map(node => node.id),
+      node_positions: { ...Object.fromEntries(allCanvasData.nodes.map(node => [node.id, { x: node.x, y: node.y }])),
+        ...currentCase.workspace_state.node_positions, ...canvas.node_positions } });
+  }
+
   async function persistWorkspace(nextTransform: CanvasTransform) {
     if (!currentCase?.case_id) return;
+    if (issueCanvas) { patchIssueCanvas({ viewport: { zoom: nextTransform.zoom, offset_x: nextTransform.x, offset_y: nextTransform.y } }); return; }
+    if (issues.length) return;
     try {
       await enqueueWorkspaceMutation(async () => {
         await updateWorkspaceState(currentCase.case_id, {
@@ -1379,6 +1535,7 @@ export default function App() {
   }
 
   function scheduleViewportSync(nextTransform: CanvasTransform) {
+    if (issueCanvas) { void persistWorkspace(nextTransform); return; }
     if (viewportSyncTimerRef.current) clearTimeout(viewportSyncTimerRef.current);
     viewportSyncTimerRef.current = setTimeout(() => {
       void persistWorkspace(nextTransform);
@@ -1408,6 +1565,13 @@ export default function App() {
   }
 
   function scheduleSelectionSync(nodeIds: string[], focusedNodeId: string | null) {
+    if (issueCanvas) {
+      const visible = new Set(issueStateRef.current?.data.workspaces[activeIssue]?.canvas.visible_node_ids ?? []);
+      patchIssueCanvas({ selected_node_ids: nodeIds.filter(id => visible.has(id)),
+        focused_node_id: focusedNodeId && visible.has(focusedNodeId) ? focusedNodeId : null });
+      return;
+    }
+    if (issues.length) return;
     if (selectionSyncTimerRef.current) {
       clearTimeout(selectionSyncTimerRef.current);
     }
@@ -1417,6 +1581,12 @@ export default function App() {
   }
 
   async function persistCardPosition(cardId: string, point: Point) {
+    if (issueCanvas) {
+      const canvas = issueStateRef.current?.data.workspaces[activeIssue]?.canvas;
+      if (canvas) patchIssueCanvas({ node_positions: { ...canvas.node_positions, [cardId]: point } });
+      return;
+    }
+    if (issues.length) return;
     if (!currentCase?.case_id) return;
     const isKnownCard =
       currentCase.meta_cards.some((card) => card.id === cardId) ||
@@ -1451,6 +1621,12 @@ export default function App() {
   }
 
   function updateCardDisplayLevelLocally(cardId: string, displayLevel: 1 | 2 | 3) {
+    if (issueCanvas) {
+      const canvas = issueStateRef.current?.data.workspaces[activeIssue]?.canvas;
+      if (canvas) patchIssueCanvas({ display_levels: { ...canvas.display_levels, [cardId]: displayLevel } });
+      return;
+    }
+    if (issues.length) return;
     pendingDisplayLevelsRef.current[cardId] = displayLevel;
     setCurrentCase((existing) => {
       if (!existing) return existing;
@@ -1594,6 +1770,8 @@ export default function App() {
         ? infoUnitEditor.infoUnitId
         : refreshed.info_units.find((unit) => !beforeIds.has(unit.id))?.id ?? null;
       if (savedId) {
+        addVisibleNodes([savedId]);
+        scheduleSelectionSync([savedId], savedId);
         setSelectedNodeIds([savedId]);
         setFocusedNodeId(savedId);
       }
@@ -1765,10 +1943,11 @@ export default function App() {
     const nodeId = target.closest<HTMLElement>(".canvas-node")?.dataset.nodeId ?? null;
     const relationId = target.closest<SVGElement>("[data-relation-id]")?.getAttribute("data-relation-id") ?? null;
     if (nodeId) {
-      if (!selectedNodeIds.includes(nodeId)) setSelectedNodeIds([nodeId]);
+      const ids = selectedNodeIds.includes(nodeId) ? selectedNodeIds : [nodeId];
+      setSelectedNodeIds(ids);
       setFocusedNodeId(nodeId);
+      scheduleSelectionSync(ids, nodeId);
     }
-    if (issueSelectorRef.current) issueSelectorRef.current.open = false;
     setContextMenu({ x: event.clientX - rect.left, y: event.clientY - rect.top, nodeId, relationId });
   }
 
@@ -1816,19 +1995,20 @@ export default function App() {
     if (agentBusy) return;
     setAgentResult(null);
     if (!currentCase) { setAgentError("请先选择案件。"); return; }
+    if (issues.length && !issueData) { setAgentError("请先加载当前 Issue 工作区。"); return; }
     const goal = island.text.trim();
     if (!goal) { setAgentError("请输入调查问题。"); return; }
     if (selectedInfoUnitIds.length > 5) { setAgentError("每次最多选择 5 个信息节点。"); return; }
-    const investigationGoal = !selectedInfoUnitIds.length && activeIssue
-      ? `当前议题：${activeIssue}\n调查问题：${goal}` : goal;
-    if (investigationGoal.length > 2000) { setAgentError("调查问题与议题信息合计不能超过 2000 字。"); return; }
     const caseId = currentCase.case_id;
     const request = ++agentRequestRef.current;
     setAgentBusy(true);
     setAgentError("");
     setAgentResult(null);
     try {
-      const result = await runAgent(caseId, { goal: investigationGoal, selected_info_unit_ids: selectedInfoUnitIds });
+      await workspaceMutationQueueRef.current;
+      if (request !== agentRequestRef.current || agentCaseIdRef.current !== caseId) return;
+      if (workspaceErrorRef.current) throw new Error("请先重试保存当前工作区，再开展调查。");
+      const result = await runAgent(caseId, { goal, selected_info_unit_ids: selectedInfoUnitIds, ...(activeIssue ? { current_issue: activeIssue } : {}) });
       if (request === agentRequestRef.current && agentCaseIdRef.current === caseId) setAgentResult(result);
     } catch (err) {
       if (request === agentRequestRef.current && agentCaseIdRef.current === caseId)
@@ -1839,14 +2019,16 @@ export default function App() {
   }
 
   function locateAgentNode(id: string) {
-    const node = canvasData.nodes.find((item) => item.id === id);
+    const node = allCanvasData.nodes.find((item) => item.id === id);
     if (!node) { setAgentError("该节点已不在当前案件中，请重新调查。"); return; }
+    addVisibleNodes([id]);
     setSelectedNodeIds([id]);
     setFocusedNodeId(id);
+    scheduleSelectionSync([id], id);
     const rect = wrapperRef.current?.getBoundingClientRect();
-    const point = nodePositions[id] ?? node;
+    const point = nodePositions[id] ?? issueStateRef.current?.data.workspaces[activeIssue]?.canvas.node_positions[id] ?? node;
     if (rect) applyCanvasTransform({ x: rect.width * (island.visible ? 0.75 : 0.5) - point.x - NODE_WIDTH / 2,
-      y: rect.height / 2 - point.y - NODE_HEIGHT / 2, zoom: 1 }, false);
+      y: rect.height / 2 - point.y - NODE_HEIGHT / 2, zoom: 1 }, Boolean(issueCanvas));
   }
 
   function beginCaseRename() {
@@ -1958,7 +2140,7 @@ export default function App() {
   }
 
   function onCanvasWheel(event: WheelEvent) {
-    if ((event.target as Element).closest(".dynamic-island, .canvas-context-menu, .issue-selector, .canvas-agent-shortcut")) return;
+    if ((event.target as Element).closest(".dynamic-island, .canvas-context-menu, .issue-tabs-bar, .canvas-agent-shortcut, .workspace-node-picker")) return;
     setContextMenu(null);
     event.preventDefault();
     if (event.ctrlKey) {
@@ -2742,36 +2924,46 @@ export default function App() {
         </aside>
 
         <section className="panel studio-view">
+            <div className="issue-tabs-bar" onMouseDown={event => event.stopPropagation()}
+              onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
+              <div className="issue-tabs" role="tablist" aria-label="Issue 工作区">
+                {issues.length ? issues.map(issue => <button type="button" role="tab" key={issue}
+                  title={issue} aria-label={issue} aria-selected={activeIssue === issue} disabled={!issueData}
+                  className={`issue-tab${activeIssue === issue ? " active" : ""}`} onClick={() => switchIssue(issue)}
+                  onKeyDown={event => {
+                    const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+                    if (!direction) return;
+                    event.preventDefault();
+                    const tabs = [...event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>("[role=tab]")];
+                    const next = tabs[(issues.indexOf(issue) + direction + issues.length) % issues.length];
+                    next?.click(); next?.focus(); next?.scrollIntoView({ block: "nearest", inline: "nearest" });
+                  }}>
+                  {issue === currentCase?.core_issue ? <span className="issue-core-marker">核心</span> : null}
+                  <span className="issue-tab-title">{issue}</span>
+                </button>) : <span className="issue-tabs-empty">暂无 Issue · 提取材料后开始调查</span>}
+              </div>
+              {activeIssue && issueData ? <select aria-label="当前 Issue 状态" className="issue-status"
+                value={issueData.workspaces[activeIssue].status} onChange={event => changeIssueStatus(event.target.value as IssueStatus)}>
+                <option value="pending">待调查</option><option value="investigating">调查中</option><option value="closed">已结束</option>
+              </select> : null}
+              <span className="workspace-save-state" role="status">{workspaceError || (workspaceSaving ? "保存中…" : "")}
+                {workspaceError ? issueData?.active_issue && currentCase
+                  ? <button type="button" onClick={() => queueIssueSave(currentCase.case_id, { issue: activeIssue })}>重试保存</button>
+                  : <button type="button" onClick={() => window.location.reload()}>重新加载工作区</button> : null}</span>
+            </div>
           <div
             ref={wrapperRef}
             className="canvas-wrapper"
             onMouseDown={onCanvasMouseDown}
             onContextMenu={onCanvasContextMenu}
             tabIndex={-1}
-            onKeyDown={(event) => { if (event.key === "Escape") { setContextMenu(null);
-              if (issueSelectorRef.current) issueSelectorRef.current.open = false;
+            onKeyDown={(event) => { if (event.key === "Escape") { setContextMenu(null); setNodePickerOpen(false);
               wrapperRef.current?.focus(); } }}
             style={{
               backgroundPosition: `${transform.x}px ${transform.y}px`,
               backgroundSize: `${42 * transform.zoom}px ${42 * transform.zoom}px`,
             }}
           >
-            <details className="issue-selector" ref={issueSelectorRef}
-              onMouseDown={(event) => event.stopPropagation()}
-              onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}>
-              <summary className="case-selector-trigger" aria-label="切换当前 Issue" title={activeIssue || "暂无 Issue"}>
-                <span>{activeIssue || "暂无 Issue"}</span><img src={chevronsUpIcon} alt="" className="case-selector-chevron" />
-              </summary>
-              <div className="case-selector-list" role="group" aria-label="Issue 列表">
-                <div className="case-selector-list-inner">
-                  {issues.length ? issues.map(issue => <button type="button" key={issue}
-                    className={`case-selector-item${issue === activeIssue ? " selected" : ""}`} aria-pressed={issue === activeIssue}
-                    onClick={() => { if (currentCase) setSelectedIssue({ caseId: currentCase.case_id, issue });
-                      if (issueSelectorRef.current) issueSelectorRef.current.open = false; }}><span>{issue}</span></button>)
-                    : <p className="case-selector-empty">提取材料后可查看议题</p>}
-                </div>
-              </div>
-            </details>
             <button type="button" className="canvas-agent-shortcut" disabled={!currentCase}
               onMouseDown={(event) => event.stopPropagation()} onClick={() => openAgentAt(20, 70)}>
               <img src={writeIcon} alt="" />Agent 调查
@@ -2789,6 +2981,9 @@ export default function App() {
               <button role="menuitem" type="button" disabled={!currentCase} onClick={() => openAgentAt(contextMenu.x + ISLAND_PADDING, contextMenu.y + ISLAND_PADDING)}>向 Agent 提问</button>
               <button role="menuitem" type="button" disabled={!canvasData.nodes.length} onClick={fitAllNodes}>适应全部节点</button>
               <button role="menuitem" type="button" disabled={!currentCase?.files.some(file => file.parse_status === "parsed") || extractionRunning || caseLoading} onClick={() => void onRunExtraction()}>{extractionRunning ? "提取中…" : "开始提取"}</button>
+              <button role="menuitem" type="button" disabled={!issueCanvas} onClick={() => { setNodePickerSearch(""); setNodePickerOpen(true); }}>添加已有节点</button>
+              {issueCanvas && selectedInfoUnitIds.length ? <button role="menuitem" type="button" onClick={hideSelectedNodes}>从当前画布移除</button> : null}
+              {issueCanvas && activeIssue === currentCase?.core_issue ? <button role="menuitem" type="button" onClick={restoreLegacyNodes}>恢复旧画布节点</button> : null}
               <button role="menuitem" type="button" disabled={!currentCase} onClick={() => void openInfoUnitEditor()}>新建 InfoUnit</button>
               <button role="menuitem" type="button" disabled={!currentCase || currentCase.info_units.length < 2} onClick={() => openRelationEditor()}>新建关系</button>
               {!contextMenu.relationId && selectedInfoUnit ? <button role="menuitem" type="button" onClick={() => void openInfoUnitEditor(selectedInfoUnit)}>编辑选中节点</button> : null}
@@ -2901,18 +3096,10 @@ export default function App() {
                       }
                       if (event.button !== 0) return;
                       const isMultiSelect = event.metaKey || event.ctrlKey;
-                      let nextSelectedNodeIds: string[] = [];
-
-                      setSelectedNodeIds((current) => {
-                        if (isMultiSelect) {
-                          nextSelectedNodeIds = current.includes(node.id)
-                            ? current.filter((id) => id !== node.id)
-                            : [...current, node.id];
-                          return nextSelectedNodeIds;
-                        }
-                        nextSelectedNodeIds = [node.id];
-                        return nextSelectedNodeIds;
-                      });
+                      const nextSelectedNodeIds = isMultiSelect
+                        ? selectedNodeIds.includes(node.id) ? selectedNodeIds.filter(id => id !== node.id) : [...selectedNodeIds, node.id]
+                        : [node.id];
+                      setSelectedNodeIds(nextSelectedNodeIds);
 
                       const nextFocusedNodeId = nextSelectedNodeIds.includes(node.id)
                         ? node.id
@@ -2984,6 +3171,21 @@ export default function App() {
               </div>
             ) : null}
 
+            {nodePickerOpen && issueCanvas ? <div className="workspace-node-picker" role="dialog" aria-label="添加已有节点"
+              onMouseDown={event => event.stopPropagation()} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
+              <div className="workspace-picker-header"><strong>添加案件信息</strong><button type="button" onClick={() => setNodePickerOpen(false)}>关闭</button></div>
+              <p>所有 Issue 共享同一份信息。添加节点不会复制材料。</p>
+              <input autoFocus aria-label="搜索案件节点" placeholder="按标题或内容搜索" value={nodePickerSearch} onChange={event => setNodePickerSearch(event.target.value)} />
+              <div className="workspace-picker-list">
+                {(currentCase?.info_units ?? []).filter(unit => !issueCanvas.visible_node_ids.includes(unit.id)
+                  && `${unit.title} ${unit.content}`.toLowerCase().includes(nodePickerSearch.trim().toLowerCase())).map(unit =>
+                    <button type="button" key={unit.id} onClick={() => addVisibleNodes([unit.id])}>{unit.title}<span>添加</span></button>)}
+              </div>
+            </div> : null}
+            {currentCase?.info_units.length && !canvasData.nodes.length ? <div className="canvas-empty canvas-initial-action">
+              <p>{!issueData ? workspaceError ? "工作区未能加载，请重试" : "正在加载 Issue 工作区…" : "此 Issue 尚无画布节点"}</p>
+              {issueCanvas ? <button type="button" onClick={() => { setNodePickerSearch(""); setNodePickerOpen(true); }}>添加已有节点</button> : null}
+            </div> : null}
             {!currentCase || !currentCase.info_units.length ? <div className="canvas-empty canvas-initial-action" onMouseDown={(event) => event.stopPropagation()}>
               <p>{currentCase?.files.length ? "材料已就绪，开始提取案件信息" : "先上传案件材料，再开始提取"}</p>
               <button type="button" disabled={!currentCase?.files.some(file => file.parse_status === "parsed") || extractionRunning}

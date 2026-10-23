@@ -87,10 +87,14 @@ def get_issue_workspaces(case: CaseData) -> IssueWorkspaces:
         visible = [u.id for u in case.info_units if u.related_issue == key]
         # Reuse the old core layout without changing it or displaying the full case.
         core = key == case.core_issue
+        positions = {uid: {"x": 120 + (index % 2) * 440, "y": 120 + (index // 2) * 210}
+                     for index, uid in enumerate(visible)}
+        if core:
+            positions.update(legacy.node_positions)
         projected[key] = IssueWorkspace(canvas=IssueCanvas(
             **{**legacy.model_dump(), "selected_node_ids": [], "focused_node_id": None,
                "current_view_id": None,
-               "node_positions": legacy.node_positions if core else {},
+               "node_positions": positions,
                "display_levels": legacy.display_levels if core else {},
                "viewport": legacy.viewport if core else {"zoom": 1, "offset_x": 0, "offset_y": 0}},
             visible_node_ids=visible))

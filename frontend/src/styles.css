@@ -467,13 +467,24 @@ button:disabled {
   cursor: grabbing;
 }
 
-.issue-selector { position: absolute; top: 16px; right: 16px; z-index: 80; max-width: calc(100% - 32px); }
-.issue-selector > summary { width: min(320px, 100%); min-width: 180px; height: 36px; list-style: none; background: rgba(18,16,36,.96); line-height: 1.4; }
-.issue-selector > summary::-webkit-details-marker { display: none; }
-.issue-selector[open] .case-selector-chevron { transform: rotate(0); }
-.issue-selector .case-selector-list { top: 44px; width: min(340px, calc(100vw - 48px)); background: rgba(18,16,36,.98); }
-.issue-selector .case-selector-list-inner { max-height: 50vh; overflow: auto; }
-.issue-selector .case-selector-item { width: 100%; height: auto; min-height: 40px; line-height: 1.5; }
+.issue-tabs-bar { position: relative; flex: 0 0 auto; z-index: 80; display: flex; align-items: center; gap: 10px; padding: 10px 12px 0; background: rgba(18,16,36,.88); backdrop-filter: blur(14px); border-bottom: 1px solid #655684; cursor: default; }
+.issue-tabs { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: #73648e transparent; }
+.issue-tab { flex: 0 0 auto; display: flex; align-items: center; gap: 7px; max-width: 260px; min-width: 110px; min-height: 42px; padding: 10px 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 10px 10px 0 0; background: rgba(68,57,88,.3); color: #bcb6cf; font-size: 13px; text-align: left; }
+.issue-tab.active { background: #3b3157; color: #f2ecff; border-color: #9b87c8; box-shadow: inset 0 3px #c6b3ee; }
+.issue-tab:focus-visible { outline: 2px solid #c6b3ee; outline-offset: -3px; }
+.issue-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.issue-core-marker { color: #d5ffaf; font-size: 10px; white-space: nowrap; }
+.issue-status { flex: 0 0 auto; width: 92px; margin-bottom: 8px; background: #282039; border: 1px solid #79678f; border-radius: 7px; padding: 6px; color: #eee8fc; }
+.issue-tabs-empty { padding: 12px; font-size: 13px; color: #bcb6cf; }
+.workspace-save-state { position: absolute; top: 100%; right: 12px; max-width: min(420px, 80%); color: #e1cca3; background: #201a30; font-size: 12px; }
+.workspace-save-state:empty { display: none; }
+.workspace-node-picker { position: absolute; z-index: 100; top: 70px; right: 16px; width: min(370px, calc(100% - 32px)); max-height: calc(100% - 100px); display: flex; flex-direction: column; padding: 16px; border: 1px solid #8277b5; border-radius: 12px; background: rgba(22,19,38,.98); box-shadow: 0 8px 28px #0008; cursor: default; }
+.workspace-picker-header { display: flex; align-items: center; justify-content: space-between; }
+.workspace-node-picker p { color: #bcb6cf; font-size: 12px; line-height: 1.6; }
+.workspace-node-picker input { width: 100%; box-sizing: border-box; }
+.workspace-picker-list { overflow: auto; margin-top: 12px; }
+.workspace-picker-list button { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin: 4px 0; padding: 10px; background: #342b48; border: 1px solid #645578; border-radius: 6px; }
+.workspace-picker-list button span { flex-shrink: 0; color: #d5ffaf; }
 .canvas-context-menu { position: absolute; z-index: 120; min-width: 210px; max-width: calc(100% - 16px); max-height: calc(100% - 16px); overflow: auto;
   display: flex; flex-direction: column; padding: 6px; border: 1px solid #8277b5; border-radius: 10px; background: #161326; box-shadow: 0 8px 28px #0008; cursor: default; }
 .canvas-context-menu button { text-align: left; border: 0; border-radius: 6px; background: transparent; color: #ece9fb; padding: 9px 12px; font-size: 13px; }
