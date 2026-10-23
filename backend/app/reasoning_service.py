@@ -49,12 +49,15 @@ def edit_reasoning(case: CaseData, edit: ReasoningEdit, *, proposal_key: str | N
             collection[collection.index(existing)] = obj
         else:
             collection.append(obj)
-        if edit.link:
-            target = next((h for h in state.hypotheses if h.id == obj.hypothesis_id), None)
-            if target:
-                target.revision += 1
-                target.updated_at, target.last_edited_by = now, editor
-        else:
+        if edit.link or edit.gap:
+            affected = {obj.hypothesis_id} if edit.link else set(obj.hypothesis_ids)
+            if existing:
+                affected.update([existing.hypothesis_id] if edit.link else existing.hypothesis_ids)
+            for target in state.hypotheses:
+                if target.id in affected:
+                    target.revision += 1
+                    target.updated_at, target.last_edited_by = now, editor
+        if not edit.link:
             canvas = workspace.canvas
             if obj.id not in canvas.visible_node_ids:
                 canvas.visible_node_ids.append(obj.id)

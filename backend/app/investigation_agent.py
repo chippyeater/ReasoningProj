@@ -18,6 +18,7 @@ from app.errors import AppError
 from app.observability import RunTrace
 from app.prompt_loader import load_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
+from app.reasoning_models import ReasoningProposal
 
 MAX_TOOL_CALLS = 8
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts/investigation_agent_prompt.md"
@@ -53,6 +54,7 @@ class InvestigationResult(InvestigationOutput):
     evidence_refs: Pointers
     open_questions: Annotated[list[BoundedText], Field(max_length=20)]
     completion_status: Literal["completed", "evidence_insufficient", "budget_exhausted", "unsupported"]
+    proposals: Annotated[list[ReasoningProposal], Field(max_length=6)] = Field(default_factory=list)
 
 
 def _function(name: str, description: str, properties: dict) -> dict:
@@ -152,7 +154,7 @@ def _remember(name: str, result: dict, seen: dict) -> None:
             seen["evidence"].add((item["info_unit_id"], item["source_ref_index"]))
 
 
-def _validate_result(raw: str, goal: str, case: CaseData, seen: dict) -> InvestigationResult:
+def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_context: dict | None = None) -> InvestigationResult:
     try:
         parsed = _strict_json(raw)
         result = InvestigationResult.model_validate(parsed)
@@ -176,7 +178,7 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict) -> Investi
         raise AppError("investigation_result_invalid", "Final goal must match the requested goal")
     if result.completion_status == "unsupported" and (
             result.findings or result.relevant_info_unit_ids or result.relevant_relation_ids
-            or result.evidence_refs or not result.open_questions):
+            or result.evidence_refs or result.proposals or not result.open_questions):
         raise AppError("investigation_result_invalid", "Unsupported requests require an explanation and no findings")
     for finding in result.findings:
         check(finding.info_unit_ids, set(result.relevant_info_unit_ids))
@@ -185,6 +187,17 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict) -> Investi
         check(refs, set(pointers))
         if not (finding.info_unit_ids or finding.relation_ids or refs):
             raise AppError("invalid_investigation_reference", "Each finding requires a retrieved basis")
+    targets = {obj["id"] for kind in ("hypotheses", "gaps")
+               for obj in (work_context or {}).get("reasoning", {}).get(kind, [])}
+    hypothesis_ids = {obj["id"] for obj in (work_context or {}).get("reasoning", {}).get("hypotheses", [])}
+    for proposal in result.proposals:
+        if not work_context:
+            raise AppError("invalid_reasoning_proposal", "Proposals require a bound Issue")
+        check(proposal.info_unit_ids, set(result.relevant_info_unit_ids))
+        check(proposal.hypothesis_ids, hypothesis_ids & targets)
+        check([(p.info_unit_id, p.source_ref_index) for p in proposal.evidence_refs], set(pointers))
+        if any(p.info_unit_id not in proposal.info_unit_ids for p in proposal.evidence_refs):
+            raise AppError("invalid_reasoning_proposal", "Proposal evidence must refer to its retrieved InfoUnits")
     return result
 
 
@@ -196,7 +209,8 @@ def _write_audit(case_id: str, path: str, payload: dict) -> None:
 
 
 async def run_investigation(case: CaseData, goal: str,
-                            selected_info_unit_ids: list[str] | None = None, *, work_context: dict | None = None) -> dict:
+                            selected_info_unit_ids: list[str] | None = None, *, work_context: dict | None = None,
+                            issue_key: str | None = None) -> dict:
     """Investigate without changing CaseData; only separate runs/* audits are written.
 
     Up to 8 tool attempts and one finalization turn. A duplicate is not executed.
@@ -235,6 +249,9 @@ async def run_investigation(case: CaseData, goal: str,
         prompt = load_prompt(PROMPT_PATH, "investigation_agent")
         definitions = tool_definitions()
         schema = InvestigationResult.model_json_schema()
+        # Keep old mock/API outputs valid while making every property required
+        # in the provider's strict output schema (proposals may be []).
+        schema["required"] = list(schema["properties"])
         metadata = prompt.metadata(config.model)
         messages = [{"role": "system", "content": prompt.content},
                     {"role": "user", "content": json.dumps(initial_input, ensure_ascii=False)}]
@@ -260,7 +277,7 @@ async def run_investigation(case: CaseData, goal: str,
             if not calls:
                 with trace.observation("Investigation Agent · validate result", as_type="guardrail",
                                        input=reply.content) as validation:
-                    result = _validate_result(reply.content, goal, bound_case, seen)
+                    result = _validate_result(reply.content, goal, bound_case, seen, work_context)
                     if result.completion_status == "budget_exhausted" and attempts != MAX_TOOL_CALLS:
                         raise AppError("investigation_result_invalid", "Tool budget has not been exhausted")
                     if attempts == MAX_TOOL_CALLS:
@@ -281,6 +298,9 @@ async def run_investigation(case: CaseData, goal: str,
                           "tool_call_count": executed, "tool_attempt_count": attempts,
                           "model_call_count": len(audit["model_calls"])}
                 audit.update(status="success", stop_reason=stop_reason, result=output)
+                if result.proposals:
+                    from app.reasoning_proposals import proposal_receipt
+                    audit["proposal_receipt"] = proposal_receipt(bound_case, issue_key, work_context, result.proposals)
                 _write_audit(bound_case.case_id, output_path, audit)
                 with trace.observation("Investigation Agent · stop", metadata={
                     "stop_reason": stop_reason, "completion_status": result.completion_status,

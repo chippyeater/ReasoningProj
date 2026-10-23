@@ -29,6 +29,8 @@ from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_p
 from app.investigation_agent import run_investigation
 from app.reasoning_models import ReasoningEdit
 from app.reasoning_service import edit_reasoning
+from app.reasoning_models import AcceptReasoningProposal
+from app.reasoning_proposals import accept_proposal
 from app.issue_workspaces import IssueWorkspacePatch, get_issue_workspaces, update_issue_workspace, investigation_context
 from app.observability import flush as flush_observability
 from app.quote_units import QuoteUnit
@@ -96,8 +98,10 @@ async def get_case(case_id: str) -> CaseResponse:
 @app.post("/api/cases/{case_id}/agent/run")
 async def agent_run(case_id: str, payload: AgentRunInput) -> dict:
     case = require_case(case_id)
-    context = investigation_context(case, payload.current_issue) if payload.current_issue is not None else None
-    result = await run_investigation(case, payload.goal, payload.selected_info_unit_ids, work_context=context)
+    if payload.selected_reasoning_ids and payload.current_issue is None:
+        raise AppError("unknown_issue", "Selected reasoning objects require a current Issue")
+    context = investigation_context(case, payload.current_issue, payload.goal, payload.selected_reasoning_ids) if payload.current_issue is not None else None
+    result = await run_investigation(case, payload.goal, payload.selected_info_unit_ids, work_context=context, issue_key=payload.current_issue)
     units = {unit.id: unit for unit in case.info_units}
     files = {file.file_id: file for file in case.files}
     # Hydrate only validated, actually used pointers for the UI. Never model input.
@@ -266,6 +270,11 @@ async def read_issue_workspaces(case_id: str):
 async def update_issue_reasoning(case_id: str, payload: ReasoningEdit):
     state, object_id = edit_reasoning(require_case(case_id), payload)
     return {"workspaces": state, "object_id": object_id}
+
+
+@app.post("/api/cases/{case_id}/reasoning-proposals/accept")
+async def accept_reasoning_proposal(case_id: str, payload: AcceptReasoningProposal):
+    return accept_proposal(require_case(case_id), payload)
 
 
 @app.patch("/api/cases/{case_id}/issue-workspaces")

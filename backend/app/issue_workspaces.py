@@ -146,12 +146,38 @@ def reasoning_references(case: CaseData, info_unit_id: str) -> list[dict]:
     return refs
 
 
-def investigation_context(case: CaseData, current_issue: str) -> dict:
+def investigation_context(case: CaseData, current_issue: str, goal: str = "", selected_reasoning_ids: list[str] | None = None) -> dict:
     state = get_issue_workspaces(case)
     if current_issue not in state.workspaces:
         raise AppError("unknown_issue", "Issue does not belong to the current case")
     # Metadata only. Never serialize canvas state, nodes, relations or operations.
     keys = list(dict.fromkeys([current_issue, *issue_keys(case)]))
-    return {"current_issue": current_issue[:500],
+    result = {"current_issue": current_issue[:500],
             "issues": [{"issue": key[:500], "status": state.workspaces[key].status} for key in keys[:30]],
             "issue_count": len(keys), "has_more_issues": len(keys) > 30}
+    reasoning = state.workspaces[current_issue].reasoning
+    objects = [*reasoning.hypotheses, *reasoning.gaps]
+    selected = selected_reasoning_ids or []
+    if not set(selected) <= {obj.id for obj in objects}:
+        raise AppError("unknown_reasoning_object", "Selected reasoning object is outside the current Issue")
+    # Explicit selection first, then goal overlap, then latest edits. Bounded
+    # summaries carry current user decisions, never a history or full canvas.
+    def rank(obj):
+        overlap = sum(goal[i:i+2] in obj.content for i in range(max(0, len(goal) - 1)))
+        return (obj.id in selected, overlap, obj.updated_at)
+    chosen = sorted(objects, key=rank, reverse=True)[:3]
+    hids = {obj.id for obj in chosen if hasattr(obj, "judgment")}
+    for obj in chosen:
+        if hasattr(obj, "hypothesis_ids"):
+            hids.update(obj.hypothesis_ids)
+    hypotheses = sorted((obj for obj in reasoning.hypotheses if obj.id in hids), key=rank, reverse=True)[:3]
+    hids = {obj.id for obj in hypotheses}
+    result["reasoning"] = {
+        "hypotheses": [{**h.model_dump(), "content": h.content[:300]} for h in hypotheses],
+        "gaps": [{**g.model_dump(), "content": g.content[:300], "info_unit_ids": g.info_unit_ids[:5],
+                  "hypothesis_ids": [hid for hid in g.hypothesis_ids if hid in hids]}
+                 for g in chosen if hasattr(g, "hypothesis_ids")][:3],
+        "links": [{**link.model_dump(), "rationale": link.rationale[:160]} for link in reasoning.links if link.hypothesis_id in hids][:5],
+        "has_more": len(objects) > len(chosen) or len(reasoning.links) > 5,
+    }
+    return result

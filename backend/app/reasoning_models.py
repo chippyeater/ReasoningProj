@@ -1,7 +1,7 @@
 """Issue reasoning objects, deliberately separate from InfoUnit/Relation Schema."""
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from app.schemas import ContractModel, Point, Text
 
@@ -105,3 +105,44 @@ class ReasoningEdit(ContractModel):
         if sum(value is not None for value in (self.hypothesis, self.gap, self.link, self.unlink_id)) != 1:
             raise ValueError("Exactly one reasoning edit is required")
         return self
+
+
+class ProposalEvidenceRef(ContractModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    info_unit_id: Text
+    source_ref_index: Annotated[int, Field(ge=0)]
+
+
+class ReasoningProposal(ContractModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    kind: Literal["hypothesis", "evidence_link", "evidence_gap", "hypothesis_status"]
+    content: ReasoningText | None
+    hypothesis_ids: Annotated[list[Text], Field(max_length=5)]
+    info_unit_ids: Annotated[list[Text], Field(min_length=1, max_length=5)]
+    meaning: LinkMeaning | None
+    judgment: Judgment | None
+    rationale: ReasoningText
+    evidence_refs: Annotated[list[ProposalEvidenceRef], Field(min_length=1, max_length=8)]
+
+    @model_validator(mode="after")
+    def shape(self):
+        if len(self.hypothesis_ids) != len(set(self.hypothesis_ids)) or len(self.info_unit_ids) != len(set(self.info_unit_ids)):
+            raise ValueError("Duplicate proposal references")
+        if self.kind == "hypothesis":
+            valid = self.content is not None and not self.hypothesis_ids and self.meaning is None and self.judgment is None
+        elif self.kind == "evidence_gap":
+            valid = self.content is not None and bool(self.hypothesis_ids) and self.meaning is None and self.judgment is None
+        elif self.kind == "evidence_link":
+            valid = self.content is None and len(self.hypothesis_ids) == 1 and len(self.info_unit_ids) == 1 and self.meaning is not None and self.judgment is None
+        else:
+            valid = self.content is None and len(self.hypothesis_ids) == 1 and self.meaning is None and self.judgment is not None
+        if not valid:
+            raise ValueError("Proposal fields do not match kind")
+        return self
+
+
+class AcceptReasoningProposal(ContractModel):
+    issue: Text
+    run_id: Annotated[str, Field(pattern=r"^investigation-[a-f0-9]{32}$")]
+    proposal_index: Annotated[int, Field(ge=0, lt=6)]
+    position: Point | None = None

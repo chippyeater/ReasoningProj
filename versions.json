@@ -39,8 +39,8 @@
     {
       "name": "investigation_agent",
       "path": "backend/prompts/investigation_agent_prompt.md",
-      "version": 2,
-      "sha256": "c79590254847ecc394ee0e8d1070f6b913d5e651955288fba164876c6dde04f5"
+      "version": 3,
+      "sha256": "58d2ef37be434525962271d3f079cc9d2613345b02d92cb2ae14f48093b8013e"
     },
     {
       "name": "reasoning_selector",
