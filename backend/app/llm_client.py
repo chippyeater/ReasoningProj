@@ -171,22 +171,25 @@ async def call_structured(config: LLMConfig, system_prompt: str, model_input: di
 
 
 def tool_request_payload(config: LLMConfig, messages: list[dict], tools: list[dict],
-                         schema: dict, *, tool_choice: str = "auto") -> dict:
-    return {
+                         schema: dict | None = None, *, tool_choice: str = "auto") -> dict:
+    payload = {
         "model": config.model, "messages": messages, "tools": tools,
         "tool_choice": tool_choice, "parallel_tool_calls": False,
-        "response_format": {"type": "json_schema", "json_schema": {
-            "name": "investigation_result", "strict": True, "schema": schema}},
         "max_completion_tokens": config.max_completion_tokens,
     }
+    if schema is not None:
+        payload["response_format"] = {"type": "json_schema", "json_schema": {
+            "name": "investigation_result", "strict": True, "schema": schema}}
+    return payload
 
 
 async def call_tools(config: LLMConfig, messages: list[dict], tools: list[dict],
-                     schema: dict, *, tool_choice: str = "auto") -> ToolReply:
+                     schema: dict | None = None, *, tool_choice: str = "auto") -> ToolReply:
     """One native tool turn, sharing authentication/transport with structured calls.
 
-    Exactly one function call or a final structured message; no retries/fallback.
-    Argument and final-result validation belong to the case-bound runtime.
+    Exactly one function call or final text; no retries/fallback.
+    The optional schema is for callers that still require structured content.
+    Argument and final-content validation belong to the case-bound runtime.
     """
     response = await _post_completion(
         config, tool_request_payload(config, messages, tools, schema, tool_choice=tool_choice))
@@ -223,7 +226,7 @@ async def call_tools(config: LLMConfig, messages: list[dict], tools: list[dict],
                     "name": function["name"], "arguments": function["arguments"]}}]}
         else:
             if calls or not isinstance(content, str) or not content.strip():
-                raise ValueError("Missing final structured content")
+                raise ValueError("Missing final content")
             normalized = {"role": "assistant", "content": content}
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         raise LLMFailure("llm_response_invalid", "Provider returned an invalid tool completion envelope",
