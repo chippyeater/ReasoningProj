@@ -167,6 +167,11 @@ Azure 使用 `AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY / AZURE_OPENAI_MODEL`
 
 Relation 已接通为增量生成：`POST /api/relation/run` 接收 `{case_id}` 进行全案检查，或额外传入至少两个
 `selected_info_unit_ids` 仅检查选中节点；响应返回 `status`（`empty / success / partial_success`）、本次 `added_relations` 和 `discarded_count`。关系逐条校验，仅把失败关系及必要作用域摘要发送给单次 Relation Validation Repair；合法关系经完整复验后统一分配正式 ID 并原子追加，等价关系不会重复追加。
+
+自然语言入口统一为画布工具栏的“Agent 调查”与同一个右键输入框，调用 `POST /api/cases/{case_id}/agent/run`。
+当前仅支持只读调查，结果与案件数据分离；发现、依据原文、未解决问题及任务状态可在输入框下查看，节点按钮可定位画布。
+旧 InfoUnit Agent 提案/确认后端能力保留供后续复用，前端不再以其作为自然语言入口；手动编辑与画布功能保留。
+运行边界和离线端到端验收见 [Investigation Agent 文档](docs/investigation_agent.md)。
 `POST /api/extraction/run` 与 `POST /api/relation/run` 均可接收可选 `workflow_id`，用于关联一次用户工作流，不进入模型输入。
 单条手动关系通过 `/api/cases/{case_id}/relations` 的 POST，以及
 `/api/cases/{case_id}/relations/{relation_id}` 的 PATCH / DELETE 维护；读取继续复用案件接口。

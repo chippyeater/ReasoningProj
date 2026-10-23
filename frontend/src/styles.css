@@ -1065,6 +1065,13 @@ button:disabled {
   font-size: 11px;
 }
 
+.investigation-result { max-height: min(60vh, 540px); overflow-y: auto; }
+.investigation-result h3 { margin: 4px 0; font-size: 12px; }
+.investigation-result p { margin: 4px 0; overflow-wrap: anywhere; }
+.investigation-result button { margin: 2px; }
+.investigation-result a { color: #d5ff72; }
+.investigation-result blockquote { margin: 8px 0; white-space: pre-wrap; }
+
 .agent-proposal header,
 .agent-proposal footer {
   display: flex;

@@ -1,5 +1,26 @@
 ﻿const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
+export type AgentEvidenceRef = { info_unit_id: string; source_ref_index: number };
+export type AgentResult = {
+  goal: string;
+  findings: Array<{ statement: string; info_unit_ids: string[]; relation_ids: string[]; evidence_refs: AgentEvidenceRef[] }>;
+  relevant_info_unit_ids: string[];
+  relevant_relation_ids: string[];
+  evidence_refs: AgentEvidenceRef[];
+  evidence: Array<AgentEvidenceRef & { file_id: string; filename: string; quote: string; start: number; end: number; source_kind: string }>;
+  open_questions: string[];
+  completion_status: "completed" | "evidence_insufficient" | "budget_exhausted" | "unsupported";
+  run_id: string;
+  stop_reason: string;
+  tool_call_count: number;
+};
+
+export async function runAgent(caseId: string, input: { goal: string; selected_info_unit_ids: string[] }): Promise<AgentResult> {
+  return readJson<AgentResult>(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/agent/run`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+  }));
+}
+
 export type FileType = "pdf" | "docx" | "image" | "txt" | "markdown" | "other";
 export type FileParseStatus = "pending" | "parsing" | "parsed" | "failed" | "unsupported";
 export type CardType = "meta" | "inference" | "law";

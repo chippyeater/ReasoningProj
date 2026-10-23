@@ -1,6 +1,6 @@
 # Investigation Agent Loop（阶段 2）
 
-后端入口：`app.investigation_agent.run_investigation(case, goal, selected_info_unit_ids=None)`，异步返回可 JSON 序列化的数据。传入当前有效 `CaseData`；可选选中节点为 0–5 个案件内唯一 ID。goal 为 1–2000 字符。没有新增 HTTP 路由、前端、布局生成或 Agent 框架。
+后端入口：`app.investigation_agent.run_investigation(case, goal, selected_info_unit_ids=None)`，异步返回可 JSON 序列化的数据。传入当前有效 `CaseData`；可选选中节点为 0–5 个案件内唯一 ID。goal 为 1–2000 字符。统一入口通过 `POST /api/cases/{case_id}/agent/run` 调用，无新增布局生成或 Agent 框架。
 
 ```python
 from app.investigation_agent import run_investigation
@@ -27,7 +27,7 @@ result = await run_investigation(case, "双方关于实际损失的说法有哪�
 - `findings`：每项有 `statement/info_unit_ids/relation_ids/evidence_refs`，至少一项实际获得的依据；最多 12 项发现。
 - `relevant_info_unit_ids/relevant_relation_ids/evidence_refs`：最终使用的引用清单；证据指针为 `{info_unit_id, source_ref_index}`，不复制原文或模型生成的偏移。
 - `open_questions`：尚未解决问题及运行时限制。
-- `completion_status`：`completed / evidence_insufficient / budget_exhausted`，分别表示目标范围内完成、依据不足、预算耗尽。
+- `completion_status`：`completed / evidence_insufficient / budget_exhausted / unsupported`，分别表示目标范围内完成、依据不足、预算耗尽、当前不支持的操作。
 - 运行元数据：`run_id/stop_reason/tool_call_count/tool_attempt_count/model_call_count`。
 
 后端只接受初始选中摘要、本轮搜索/一跳关系实际返回的节点，以及证据工具实际返回的节点与引用索引。关系依据列表中出现某个节点 ID，不等于读到了该节点。所有引用还需属于绑定案件；每项发现的引用必须列在顶层清单，证据指针的节点也必须列入相关节点。非法/重复/未取回的引用拒绝整份结果，原始失败输出保留在审计中，不静默丢弃。
@@ -52,3 +52,19 @@ result = await run_investigation(case, "双方关于实际损失的说法有哪�
 使用案件 A 当前 Gold/固定 TXT，在临时目录和 Mock 模型/MockTransport/假 Langfuse 后端下验证。包括直接证据核对、先关系后证据、空检索后换词再核对、预算与重复终止、错误恢复、引用拒绝和案件字节不变。无真实付费模型调用，不改 Gold 或历史记录。
 
 尚无真实模型效果或各 provider 部署兼容性结论。阶段 1 无分页，单节点引用超出预算仍无法遍历；运行时不判断后续收窄查询是否已经覆盖此前截断内容，因此完成状态偏保守。最终发现的事实真实性、语义支持程度和调查充分性不能仅靠引用 ID 校验保证。
+
+## 统一前端入口（MVP）
+
+点击画布工具栏的“Agent 调查”或在画布右键打开同一个输入框，输入调查目标发送。运行中禁用重复提交；完成后展示发现、相关节点、来源原文、未解决问题与任务状态。证据通过 API 按最终合法指针补全文件名、原文及 Unicode `[start,end)` 偏移；这部分展示适配不进入模型请求。点击依据节点定位画布，原文链接跳转结果中的具体证据。
+
+调查结果只保留在当前前端会话，切换案件会清空结果并丢弃旧请求的迟到响应；不写入 CaseData。编辑、布局等请求应由同一模型直接返回 unsupported 和能力说明，不另建分类器或先取全案。该语义判断仍有模型误判风险，尚未做真实模型验收；运行时始终只暴露只读工具。
+
+前端不再调用 InfoUnit Agent 提案/确认接口，但后端函数、接口与提案能力完整保留，手动 InfoUnit/Relation CRUD 与画布交互继续工作。
+
+浏览器端到端离线验收（复用已有 Playwright，不安装为应用依赖）：
+
+1. 运行 `backend/.venv/Scripts/python.exe backend/tests/serve_agent_smoke.py`，启动仅监听本机 8018 的隔离案件 A 后端，模型与追踪外发关闭，CRUD 与调查循环使用真实代码。
+2. 在 frontend 目录设置进程环境 `VITE_API_BASE=http://127.0.0.1:8018`，运行 `node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5178 --strictPort`。
+3. 在项目根目录设置 `PLAYWRIGHT_MODULE` 为本机已有 Playwright 或 playwright-core 模块路径，运行 `node frontend/tests/agent-smoke.cjs`。默认使用已安装的 `@playwright/test`，以可见浏览器测试。
+
+脚本覆盖前端提交到真实循环的两条不同路径、原文与偏移展示、节点定位、运行/失败/不支持状态、案件数据不变、手动节点保存、关系编辑器、画布适应和跨案件迟到响应隔离。测试仅修改临时案件，结束后停止两个本地测试进程。API 测试另外通过 MockTransport 检查实际 HTTP 模型请求体，初始请求不含全案正文。

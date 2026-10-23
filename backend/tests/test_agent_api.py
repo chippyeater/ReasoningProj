@@ -60,4 +60,3 @@ class TestAgentAPI(unittest.TestCase):
             self.assertEqual(response.status_code, 502)
             self.assertEqual(response.json()["detail"]["code"], "llm_timeout")
             self.assertEqual(client.post(f"/api/cases/{self.case.case_id}/agent/run", json={"goal": " "}).status_code, 422)
-

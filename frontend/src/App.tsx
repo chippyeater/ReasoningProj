@@ -1,6 +1,5 @@
 ﻿import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
-  confirmInfoUnitProposal,
   createCase,
   createInfoUnit,
   createRelation,
@@ -13,7 +12,7 @@ import {
   listCases,
   listQuoteUnits,
   selectCase,
-  proposeInfoUnit,
+  runAgent,
   routeTask,
   runExtraction,
   runRelation,
@@ -30,7 +29,7 @@ import {
   type CaseSummary,
   type InferenceCard,
   type InfoUnit,
-  type InfoUnitAgentProposal,
+  type AgentResult,
   type InfoUnitSubtype,
   type InfoUnitType,
   type InfoUnitMutationInput,
@@ -38,6 +37,7 @@ import {
   type Relation,
   type RelationMutationInput,
 } from "./api";
+import { InvestigationResultPanel } from "./components/InvestigationResultPanel";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
 import chevronsUpIcon from "./assets/chevrons-up.png";
@@ -518,11 +518,6 @@ function pickFileIcon(type: "document" | "image", fileName: string) {
   return docIcon;
 }
 
-function proposalValue(value: string | string[] | null) {
-  if (value === null) return "—";
-  return Array.isArray(value) ? value.join(", ") : value;
-}
-
 export default function App() {
   const [evidences, setEvidences] = useState<AddedEvidence[]>([]);
   const [currentCase, setCurrentCase] = useState<CaseData | null>(null);
@@ -567,7 +562,10 @@ export default function App() {
 
   const [island, setIsland] = useState({ visible: false, x: 20, y: 20, text: "" });
   const [islandHeight, setIslandHeight] = useState(ISLAND_MIN_HEIGHT);
-  const [agentProposal, setAgentProposal] = useState<InfoUnitAgentProposal | null>(null);
+  const [agentResult, setAgentResult] = useState<AgentResult | null>(null);
+  const agentRequestRef = useRef(0);
+  const agentCaseIdRef = useRef(currentCase?.case_id);
+  agentCaseIdRef.current = currentCase?.case_id;
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentError, setAgentError] = useState("");
 
@@ -674,7 +672,7 @@ export default function App() {
     input.style.height = "auto";
     const nextHeight = Math.min(ISLAND_MAX_INPUT_HEIGHT, Math.max(20, input.scrollHeight));
     input.style.height = `${nextHeight}px`;
-  }, [agentError, agentProposal, island.text, island.visible]);
+  }, [agentError, agentResult, island.text, island.visible]);
 
   useEffect(() => {
     const islandEl = islandContainerRef.current;
@@ -693,10 +691,12 @@ export default function App() {
         current.y, wrapperRect.height - nextHeight - ISLAND_PADDING));
       return x === current.x && y === current.y ? current : { ...current, x, y };
     });
-  }, [agentError, agentProposal, island.text, island.visible]);
+  }, [agentError, agentResult, island.text, island.visible]);
 
   useEffect(() => {
-    setAgentProposal(null);
+    agentRequestRef.current += 1;
+    setAgentBusy(false);
+    setAgentResult(null);
     setAgentError("");
   }, [currentCase?.case_id]);
 
@@ -1774,56 +1774,38 @@ export default function App() {
     };
   }
 
-  async function onGenerateInfoUnitProposal() {
-    if (!currentCase) {
-      setAgentError("当前没有可操作的案件。");
-      return;
-    }
-
-    const instruction = island.text.trim();
-    if (!instruction) {
-      setAgentError("请输入新增或修改要求。");
-      return;
-    }
+  async function onRunAgent() {
+    if (agentBusy) return;
+    setAgentResult(null);
+    if (!currentCase) { setAgentError("请先选择案件。"); return; }
+    const goal = island.text.trim();
+    if (!goal) { setAgentError("请输入调查问题。"); return; }
+    if (selectedInfoUnitIds.length > 5) { setAgentError("每次最多选择 5 个信息节点。"); return; }
+    const caseId = currentCase.case_id;
+    const request = ++agentRequestRef.current;
     setAgentBusy(true);
     setAgentError("");
-    setAgentProposal(null);
+    setAgentResult(null);
     try {
-      const infoUnitIds = new Set(currentCase.info_units.map((unit) => unit.id));
-      const selectedContextIds = [
-        ...(selectedInfoUnit ? [selectedInfoUnit.id] : []),
-        ...selectedNodeIds.filter((id) => infoUnitIds.has(id)),
-      ].filter((id, index, values) => values.indexOf(id) === index);
-      const proposal = await proposeInfoUnit(currentCase.case_id, {
-        instruction,
-        selected_info_unit_ids: selectedContextIds,
-      });
-      setAgentProposal(proposal);
+      const result = await runAgent(caseId, { goal, selected_info_unit_ids: selectedInfoUnitIds });
+      if (request === agentRequestRef.current && agentCaseIdRef.current === caseId) setAgentResult(result);
     } catch (err) {
-      setAgentError(err instanceof Error ? err.message : "InfoUnit 提案生成失败");
+      if (request === agentRequestRef.current && agentCaseIdRef.current === caseId)
+        setAgentError(err instanceof Error ? err.message : "调查失败，请重试。");
     } finally {
-      setAgentBusy(false);
+      if (request === agentRequestRef.current && agentCaseIdRef.current === caseId) setAgentBusy(false);
     }
   }
 
-  async function confirmAgentProposal() {
-    if (!currentCase || !agentProposal) return;
-    if (agentProposal.action !== "create" && agentProposal.action !== "update") return;
-    setAgentBusy(true);
-    setAgentError("");
-    try {
-      const result = await confirmInfoUnitProposal(currentCase.case_id, agentProposal);
-      const refreshed = await refreshAfterInfoUnitMutation(currentCase.case_id, result.case);
-      setCurrentCase(refreshed);
-      setSelectedNodeIds(pickSelectedNodeIds(refreshed));
-      setFocusedNodeId(pickFocusedNodeId(refreshed));
-      setAgentProposal(null);
-      setIsland((current) => ({ ...current, text: "" }));
-    } catch (err) {
-      setAgentError(err instanceof Error ? err.message : "InfoUnit 提案确认失败");
-    } finally {
-      setAgentBusy(false);
-    }
+  function locateAgentNode(id: string) {
+    const node = canvasData.nodes.find((item) => item.id === id);
+    if (!node) { setAgentError("该节点已不在当前案件中，请重新调查。"); return; }
+    setSelectedNodeIds([id]);
+    setFocusedNodeId(id);
+    const rect = wrapperRef.current?.getBoundingClientRect();
+    const point = nodePositions[id] ?? node;
+    if (rect) applyCanvasTransform({ x: rect.width * (island.visible ? 0.75 : 0.5) - point.x - NODE_WIDTH / 2,
+      y: rect.height / 2 - point.y - NODE_HEIGHT / 2, zoom: 1 }, false);
   }
 
   function beginCaseRename() {
@@ -2728,6 +2710,7 @@ export default function App() {
             }}
           >
             <div className="canvas-edit-toolbar" onMouseDown={(event) => event.stopPropagation()}>
+              <button type="button" disabled={!currentCase} onClick={() => setIsland((current) => ({ ...current, visible: true, x: 20, y: 70 }))}>Agent 调查</button>
               <button
                 type="button"
                 onClick={fitAllNodes}
@@ -2890,7 +2873,7 @@ export default function App() {
             {island.visible ? (
               <div
                 ref={islandContainerRef}
-                className={`dynamic-island${agentProposal ? " has-preview" : ""}`}
+                className={`dynamic-island${agentResult ? " has-preview" : ""}`}
                 style={{ left: island.x, top: island.y }}
                 onMouseDown={onIslandMouseDown}
                 onContextMenu={(event) => event.preventDefault()}
@@ -2904,18 +2887,20 @@ export default function App() {
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && !event.shiftKey) {
                         event.preventDefault();
-                        void onGenerateInfoUnitProposal();
+                        void onRunAgent();
                       }
                     }}
-                    placeholder="描述要新增或修改的案件信息…"
+                    placeholder="提出调查问题（当前仅支持只读调查）…"
+                    maxLength={2000}
+                    disabled={agentBusy}
                     rows={1}
                   />
                   <button
                     type="button"
                     className="icon-btn"
-                    onClick={() => void onGenerateInfoUnitProposal()}
+                    onClick={() => void onRunAgent()}
                     disabled={agentBusy}
-                    aria-label="生成 InfoUnit 提案"
+                    aria-label="发送调查问题"
                   >
                     <img src={sendIcon} alt="send" className="island-icon" />
                   </button>
@@ -2932,60 +2917,9 @@ export default function App() {
                 ) : null}
                 {relationStatus ? <p className="relation-run-status" role="status">{relationStatus}</p> : null}
                 {agentError ? <p className="agent-proposal-error" role="alert">{agentError}</p> : null}
-                {agentProposal ? (
-                  <section className="agent-proposal" aria-label="InfoUnit 提案预览">
-                    <header>
-                      <strong>{({
-                        create: "新增 InfoUnit",
-                        update: "修改 InfoUnit",
-                        clarify: "需要补充信息",
-                        unsupported: "暂不支持此操作",
-                      } as const)[agentProposal.action]}</strong>
-                      {agentProposal.target_info_unit_id ? <span>{agentProposal.target_info_unit_id}</span> : null}
-                    </header>
-                    {agentProposal.action === "clarify" || agentProposal.action === "unsupported" ? (
-                      <p className="agent-response-message">{agentProposal.message}</p>
-                    ) : (
-                      <>
-                        <div className="agent-change-list">
-                          {agentProposal.changes.map((change) => (
-                            <div className="agent-change" key={change.field}>
-                              <b>{change.field}</b>
-                              <span>{proposalValue(change.old_value)}</span>
-                              <i>→</i>
-                              <span>{proposalValue(change.new_value)}</span>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="agent-evidence-list">
-                          <b>证据</b>
-                          {agentProposal.evidence.map((item) => (
-                            <article key={item.quote_id}>
-                              <small>{item.filename} · {item.quote_id}</small>
-                              <p>{item.text}</p>
-                            </article>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                    <footer>
-                      <button
-                        type="button"
-                        className="editor-secondary"
-                        onClick={() => {
-                          setAgentProposal(null);
-                          setAgentError("");
-                        }}
-                        disabled={agentBusy}
-                      >{agentProposal.action === "create" || agentProposal.action === "update" ? "取消" : "关闭"}</button>
-                      {agentProposal.action === "create" || agentProposal.action === "update" ? (
-                        <button type="button" onClick={() => void confirmAgentProposal()} disabled={agentBusy}>
-                          {agentBusy ? "保存中…" : "确认写入"}
-                        </button>
-                      ) : null}
-                    </footer>
-                  </section>
-                ) : null}
+                {agentBusy ? <p role="status">调查中…正在按需检索和核对依据。</p> : null}
+                {agentResult ? <InvestigationResultPanel result={agentResult} onLocate={locateAgentNode}
+                  onClose={() => setAgentResult(null)} /> : null}
               </div>
             ) : null}
 
