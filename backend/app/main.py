@@ -27,6 +27,7 @@ from app.errors import AppError
 from app.extraction_service import run_extraction
 from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_proposal
 from app.investigation_agent import run_investigation
+from app.issue_workspaces import IssueWorkspacePatch, get_issue_workspaces, update_issue_workspace, investigation_context
 from app.observability import flush as flush_observability
 from app.quote_units import QuoteUnit
 from app.relation_service import create_relation, delete_relation, run_relation, update_relation
@@ -93,7 +94,8 @@ async def get_case(case_id: str) -> CaseResponse:
 @app.post("/api/cases/{case_id}/agent/run")
 async def agent_run(case_id: str, payload: AgentRunInput) -> dict:
     case = require_case(case_id)
-    result = await run_investigation(case, payload.goal, payload.selected_info_unit_ids)
+    context = investigation_context(case, payload.current_issue) if payload.current_issue is not None else None
+    result = await run_investigation(case, payload.goal, payload.selected_info_unit_ids, work_context=context)
     units = {unit.id: unit for unit in case.info_units}
     files = {file.file_id: file for file in case.files}
     # Hydrate only validated, actually used pointers for the UI. Never model input.
@@ -251,6 +253,16 @@ async def update_workspace(case_id: str, payload: WorkspaceState) -> CaseRespons
     case.updated_at = now_iso()
     save_case(case)
     return CaseResponse(case=case)
+
+
+@app.get("/api/cases/{case_id}/issue-workspaces")
+async def read_issue_workspaces(case_id: str):
+    return get_issue_workspaces(require_case(case_id))
+
+
+@app.patch("/api/cases/{case_id}/issue-workspaces")
+async def patch_issue_workspace(case_id: str, payload: IssueWorkspacePatch):
+    return update_issue_workspace(require_case(case_id), payload)
 
 
 @app.delete("/api/cases/{case_id}")

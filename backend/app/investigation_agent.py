@@ -196,7 +196,7 @@ def _write_audit(case_id: str, path: str, payload: dict) -> None:
 
 
 async def run_investigation(case: CaseData, goal: str,
-                            selected_info_unit_ids: list[str] | None = None) -> dict:
+                            selected_info_unit_ids: list[str] | None = None, *, work_context: dict | None = None) -> dict:
     """Investigate without changing CaseData; only separate runs/* audits are written.
 
     Up to 8 tool attempts and one finalization turn. A duplicate is not executed.
@@ -213,6 +213,8 @@ async def run_investigation(case: CaseData, goal: str,
         "info_unit_type_counts": {kind.value: counts[kind.value] for kind in InfoUnitType},
         "selected_info_units": [tools._summary(unit) for unit in selected],
     }
+    if work_context is not None:
+        initial_input["work_context"] = work_context
     run_id = f"investigation-{uuid4().hex}"
     created_at = now_iso()
     trace = RunTrace(case_id=bound_case.case_id, case_title=bound_case.case_title, stage="Investigation Agent",

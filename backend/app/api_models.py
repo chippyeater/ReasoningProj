@@ -21,6 +21,7 @@ class CasesResponse(ContractModel):
 class AgentRunInput(ContractModel):
     goal: Annotated[str, Field(min_length=1, max_length=2000, pattern=r"\S")]
     selected_info_unit_ids: Annotated[list[Text], Field(max_length=5)] = Field(default_factory=list)
+    current_issue: Text | None = None
 
     @field_validator("selected_info_unit_ids")
     @classmethod
