@@ -1,6 +1,17 @@
-import type { AgentResult, InfoUnit, Relation } from "../api";
+import type { AgentResult, InfoUnit, Relation, ReasoningState } from "../api";
 
 type Evidence = AgentResult["evidence"][number];
+
+/** Always address the original run array, before accepted/ignored items are filtered. */
+export function hypothesisProposalTargets(result: Pick<AgentResult, "run_id" | "proposals">, state: ReasoningState, index: number) {
+  return (result.proposals?.[index]?.hypothesis_proposal_indices ?? []).map(targetIndex => {
+    const proposal = result.proposals?.[targetIndex];
+    const key = `${result.run_id}:${targetIndex}`;
+    const id = state.accepted_proposals[key];
+    return { title: proposal?.kind === "hypothesis" ? proposal.content ?? "关联假设" : "关联假设不可用",
+      accepted: proposal?.kind === "hypothesis" && state.hypotheses.some(h => h.id === id && h.proposal_key === key) };
+  });
+}
 
 /** Exact source identity, never similarity, title or InfoUnit identity. */
 export function groupSources(evidence: Evidence[]) {

@@ -381,7 +381,7 @@ export type EvidenceLink = { id: string; hypothesis_id: string; info_unit_id: st
 export type ReasoningState = { hypotheses: Hypothesis[]; gaps: EvidenceGap[]; links: EvidenceLink[]; accepted_proposals: Record<string, string> };
 export type ReasoningProposal = { kind: "hypothesis" | "evidence_link" | "evidence_gap" | "hypothesis_status";
   content: string | null; hypothesis_ids: string[]; info_unit_ids: string[]; meaning: LinkMeaning | null;
-  judgment: Judgment | null; rationale: string; evidence_refs: AgentEvidenceRef[] };
+  judgment: Judgment | null; rationale: string; evidence_refs: AgentEvidenceRef[]; hypothesis_proposal_indices?: number[] };
 export type ReasoningEdit = { issue: string; hypothesis?: { id?: string; content: string; judgment: Judgment; work_status: "active" | "deprecated" };
   gap?: { id?: string; content: string; hypothesis_ids: string[]; info_unit_ids: string[]; status: "open" | "resolved" };
   link?: { id?: string; hypothesis_id: string; info_unit_id: string; meaning: LinkMeaning; rationale: string };

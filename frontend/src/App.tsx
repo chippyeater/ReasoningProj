@@ -42,6 +42,7 @@ import {
 } from "./api";
 import { ReasoningEditor, judgments, meanings, type ReasoningEditorTarget } from "./components/ReasoningEditor";
 import { ReasoningSuggestions, reasoningText } from "./components/ReasoningSuggestions";
+import { hypothesisProposalTargets } from "./components/investigationPresentation";
 import { InvestigationResultPanel } from "./components/InvestigationResultPanel";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
@@ -1475,6 +1476,7 @@ export default function App() {
   function reasoningFailure(err: unknown) {
     const text = err instanceof Error ? err.message : "";
     return text.includes("stale_reasoning_proposal") ? "推理或材料已被修改，请重新调查后再采纳。"
+      : text.includes("proposal_dependency_not_accepted") ? "请先采纳本次调查中的关联假设，再采纳此缺口。"
       : text.includes("duplicate_evidence_link") ? "该信息已与此假设关联，请编辑已有连线。"
       : "保存推理失败，内容尚未保存，请重试。";
   }
@@ -3247,14 +3249,17 @@ export default function App() {
                   </div>
                 );
               })}
-              {candidateProposals.map(({ item, index }) => <article key={`candidate-${index}`} className="reasoning-candidate"
+              {candidateProposals.map(({ item, index }) => {
+                const pending = agentResult ? hypothesisProposalTargets(agentResult, reasoning, index).some(target => !target.accepted) : false;
+                return <article key={`candidate-${index}`} className="reasoning-candidate"
                 aria-label="候选推理建议" style={{ left: candidatePositions[index]?.x, top: candidatePositions[index]?.y }}
                 onMouseDown={event => event.stopPropagation()} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
                 <strong>Agent 候选 · {item.kind === "hypothesis" ? "假设" : item.kind === "evidence_gap" ? "证据缺口" : item.kind === "evidence_link" ? meanings[item.meaning!] : "判断建议"}</strong>
                 <p>{currentCase ? reasoningText(item.content ?? reasoning.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "待确认的推理建议", currentCase, reasoning, agentResult?.evidence) : "待确认建议"}</p>
-                <span>尚未保存</span><button type="button" disabled={reasoningBusy} onClick={() => void mutateReasoning(undefined, index)}>采纳</button>
+                {pending ? <p>请先采纳关联假设；可在灵动岛查看关联。</p> : null}
+                <span>尚未保存</span><button type="button" disabled={reasoningBusy || pending} onClick={() => void mutateReasoning(undefined, index)}>采纳</button>
                 <button type="button" disabled={reasoningBusy} onClick={() => setDismissedProposals(ids => [...ids, index])}>忽略</button>
-              </article>)}
+              </article>; })}
             </div>
 
             {island.visible ? (

@@ -1,10 +1,32 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupSources, displayText, presentQuestion } from '../src/components/investigationPresentation.ts';
+import { groupSources, displayText, presentQuestion, hypothesisProposalTargets } from '../src/components/investigationPresentation.ts';
 
 const ref = Object.freeze({ info_unit_id: 'info-one', source_ref_index: 0,
   file_id: 'file-one', filename: '张某笔录.docx', quote: '他 3 月 8 号就直接搬进去住了',
   start: 78, end: 95, source_kind: 'testimony' });
+
+test('Gap targets use original indices and exact run adoption rather than filtered rows', () => {
+  const result = Object.freeze({ run_id: 'run-a', proposals: Object.freeze([
+    { kind: 'hypothesis', content: '无关建议' },
+    { kind: 'evidence_gap', hypothesis_proposal_indices: [2] },
+    { kind: 'hypothesis', content: '与缺口关联的假设' },
+  ]) });
+  const state = { hypotheses: [{ id: 'h', proposal_key: 'run-b:2' }], accepted_proposals: { 'run-b:2': 'h' } };
+  assert.deepEqual(hypothesisProposalTargets(result, state, 1), [{ title: '与缺口关联的假设', accepted: false }]);
+  state.accepted_proposals['run-a:2'] = 'h';
+  assert.equal(hypothesisProposalTargets(result, state, 1)[0].accepted, false);
+  state.hypotheses[0].proposal_key = 'run-a:2';
+  assert.equal(hypothesisProposalTargets(result, state, 1)[0].accepted, true);
+  assert.deepEqual(hypothesisProposalTargets(result, state, 0), []); // Older outputs omit the new field.
+  assert.equal(result.proposals[2].content, '与缺口关联的假设');
+});
+
+test('wrong proposal type, missing accepted object and invalid index never enable adoption', () => {
+  const state = { hypotheses: [], accepted_proposals: { 'run-a:0': 'deleted' } };
+  const result = { run_id: 'run-a', proposals: [{ kind: 'evidence_gap', hypothesis_proposal_indices: [0, 5] }] };
+  assert.ok(hypothesisProposalTargets(result, state, 0).every(target => !target.accepted));
+});
 
 test('same exact source groups all pointers without changing originals', () => {
   const second = Object.freeze({ ...ref, info_unit_id: 'info-two', source_ref_index: 3 });

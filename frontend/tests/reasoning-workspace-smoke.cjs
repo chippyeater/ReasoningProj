@@ -155,11 +155,54 @@ const api = 'http://127.0.0.1:8018';
     assert.equal((await current()).reasoning.gaps.length, preInvestigation.gaps.length + 1);
     assert.equal(await page.locator('.reasoning-candidate').count(), 0);
     await command('适应全部节点'); await saved();
+    // Gap -> same-run Hypothesis: original indices survive ignore/filter/adopt.
+    await page.getByRole('button', { name: 'Agent 调查', exact: true }).click();
+    await input.fill('检查同轮新假设与证据缺口');
+    const dependencyResponse = page.waitForResponse(response => response.url().endsWith('/agent/run'));
+    await page.getByRole('button', { name: '发送调查问题' }).click();
+    const dependencyResult = await (await dependencyResponse).json();
+    await page.waitForFunction(() => document.querySelectorAll('.reasoning-suggestion').length === 4);
+    const firstGap = page.locator('.reasoning-suggestion').filter({ has: page.getByText('核对同轮假设的租金流水。', { exact: true }) });
+    const secondGap = page.locator('.reasoning-suggestion').filter({ has: page.getByText('核对同轮假设的交房记录。', { exact: true }) });
+    const canvasGap = page.locator('.reasoning-candidate').filter({ has: page.getByText('核对同轮假设的租金流水。', { exact: true }) });
+    assert.ok(await firstGap.getByRole('button', { name: '采纳建议', exact: true }).isDisabled());
+    assert.ok(await canvasGap.getByRole('button', { name: '采纳', exact: true }).isDisabled());
+    await firstGap.getByText('关联假设', { exact: true }).click();
+    await firstGap.getByText('待采纳 · 同轮新假设：实际空置损失尚需核实。', { exact: true }).waitFor();
+    await page.locator('.reasoning-suggestion').first().getByRole('button', { name: '忽略建议' }).click();
+    assert.equal(await page.locator('.reasoning-suggestion').count(), 3);
+    assert.ok(await firstGap.getByRole('button', { name: '采纳建议', exact: true }).isDisabled());
+    const dependencyBefore = (await current()).reasoning;
+    const blocked = await page.request.post(`${api}/api/cases/${before.case_id}/reasoning-proposals/accept`, {
+      data: { issue, run_id: dependencyResult.run_id, proposal_index: 1 } });
+    assert.equal(blocked.status(), 409);
+    assert.deepEqual((await current()).reasoning, dependencyBefore);
+    await page.screenshot({ path: 'tmp/gap-dependency-pending.png' });
+    const target = page.locator('.reasoning-suggestion').filter({ has: page.getByText('同轮新假设：实际空置损失尚需核实。', { exact: true }) });
+    await target.getByRole('button', { name: '采纳建议', exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.reasoning-suggestion').length === 2);
+    assert.ok(await firstGap.getByRole('button', { name: '采纳建议', exact: true }).isEnabled());
+    assert.ok(await canvasGap.getByRole('button', { name: '采纳', exact: true }).isEnabled());
+    const parentId = (await current()).reasoning.accepted_proposals[`${dependencyResult.run_id}:2`];
+    assert.ok(parentId);
+    await firstGap.getByRole('button', { name: '采纳建议', exact: true }).click();
+    await firstGap.waitFor({ state: 'hidden' });
+    await secondGap.getByRole('button', { name: '采纳建议', exact: true }).click();
+    await secondGap.waitFor({ state: 'hidden' });
+    work = await current();
+    for (const index of [1, 3]) {
+      const id = work.reasoning.accepted_proposals[`${dependencyResult.run_id}:${index}`];
+      assert.deepEqual(work.reasoning.gaps.find(gap => gap.id === id).hypothesis_ids, [parentId]);
+    }
+    assert.equal(work.reasoning.hypotheses.length, dependencyBefore.hypotheses.length + 1);
+    await page.reload(); await page.waitForFunction(() => document.querySelector('[role=tab][aria-selected=true]')); await saved();
+    assert.deepEqual((await current()).reasoning, work.reasoning);
+    assert.equal(await page.locator('.reasoning-candidate').count(), 0);
     await page.screenshot({ path: 'tmp/reasoning-workspace.png' });
     const after = (await (await page.request.get(`${api}/api/case`)).json()).case;
     for (const field of ['info_units', 'relations', 'workspace_state']) assert.deepEqual(after[field], before[field]);
     assert.deepEqual(errors, []);
-    console.log('PASS: task 10231658 manual hypotheses/links/gaps, source verification, shared evidence, drag/restore, user corrections, real dynamic Agent, transient preview, ignore/adopt/retry/idempotency/stale protection, plain answer and old business data unchanged.');
+    console.log('PASS: manual reasoning/CRUD/source/restore; same-run Gap dependencies, disabled adoption, original indices after ignore, explicit parent adoption, sibling Gaps and reload; retry/idempotency/stale protection; business data unchanged.');
   } catch (error) {
     if (page) await page.screenshot({ path: 'tmp/reasoning-failure.png' }).catch(() => {});
     throw error;

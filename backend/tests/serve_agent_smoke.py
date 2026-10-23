@@ -45,6 +45,13 @@ async def model(config, messages, definitions, schema, **kwargs):
         if hypotheses:
             proposals.extend([suggestion("evidence_gap", hypotheses[0]["id"]),
                               suggestion("hypothesis_status", hypotheses[0]["id"])])
+        if "同轮" in goal:
+            target = suggestion("hypothesis")
+            target["content"] = "同轮新假设：实际空置损失尚需核实。"
+            first_gap, second_gap = suggestion("evidence_gap"), suggestion("evidence_gap")
+            first_gap.update(content="核对同轮假设的租金流水。", hypothesis_proposal_indices=[2])
+            second_gap.update(content="核对同轮假设的交房记录。", hypothesis_proposal_indices=[2])
+            proposals = [suggestion("hypothesis"), first_gap, target, second_gap]
         data = json.loads(reply.content)
         data["proposals"] = proposals
         reply.message["content"] = reply.content = json.dumps(data, ensure_ascii=False)

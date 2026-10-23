@@ -1,5 +1,5 @@
 import type { AgentResult, CaseData, ReasoningState } from "../api";
-import { displayText } from "./investigationPresentation";
+import { displayText, hypothesisProposalTargets } from "./investigationPresentation";
 import { judgments, meanings } from "./ReasoningEditor";
 
 export function reasoningText(value: string, caseData: CaseData, state: ReasoningState, evidence: AgentResult["evidence"] = []) {
@@ -22,12 +22,17 @@ export function ReasoningSuggestions({ result, state, caseData, dismissed, busy,
   if (!proposals.length && !error) return null;
   return <section className="reasoning-suggestions" aria-label="待确认推理建议">
     <h3>待确认建议</h3><p>采纳后才保存；建议不是已证实的事实。</p>
-    {proposals.map(({ item, index }) => <article key={index} className="reasoning-suggestion">
+    {proposals.map(({ item, index }) => {
+      const targets = hypothesisProposalTargets(result, state, index);
+      const pending = targets.some(target => !target.accepted);
+      return <article key={index} className="reasoning-suggestion">
       <strong>{kinds[item.kind]}{item.meaning ? ` · ${meanings[item.meaning]}` : item.judgment ? ` · ${judgments[item.judgment]}` : ""}</strong>
       <p>{text(item.content ?? state.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "检查现有推理")}</p>
+      {pending ? <p>请先采纳关联假设，再采纳此缺口。若已忽略该假设，请重新调查。</p> : null}
+      {targets.length ? <details><summary>关联假设</summary>{targets.map((target, offset) => <p key={offset}>{target.accepted ? "已采纳" : "待采纳"} · {text(target.title)}</p>)}</details> : null}
       <details><summary>查看建议依据</summary><p>{text(item.rationale)}</p>{item.info_unit_ids.map(id => <button type="button" key={id} onClick={() => onLocate(id)}>{caseData.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}</details>
-      <button type="button" disabled={busy} onClick={() => onAccept(index)}>采纳建议</button><button type="button" disabled={busy} onClick={() => onIgnore(index)}>忽略建议</button>
-    </article>)}
+      <button type="button" disabled={busy || pending} onClick={() => onAccept(index)}>采纳建议</button><button type="button" disabled={busy} onClick={() => onIgnore(index)}>忽略建议</button>
+    </article>; })}
     {error ? <p role="alert">{error}</p> : null}
   </section>;
 }
