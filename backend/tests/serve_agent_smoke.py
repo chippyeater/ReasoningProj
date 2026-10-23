@@ -62,6 +62,12 @@ async def model(config, messages, definitions, schema=None, **kwargs):
             statement="张某在笔录中提出相关说法，尚未独立核实。")
     if "总结失败" in goal:
         raise llm_client.LLMFailure("llm_timeout", "离线模拟总结超时")
+    if "超长总结" in goal:
+        return replies.final("重复的完整调查报告。" * 40)
+    if "安全格式检查" in goal:
+        return replies.final('实际损失**尚未证实**。\n\n<img src=x onerror="window.summaryInjected=true">[查看](javascript:alert(1))')
+    if analysis:
+        return replies.final("实际租金损失**尚未证实**。\n\n已提出两条假设和两项证据缺口，优先核实计租日及收款记录，以判断是否少收租金。可在画布中查看、采纳或忽略建议。")
     answer = "据张某陈述，替租人于 2026 年 3 月 8 日搬入，尚未独立核实。" if arrival else "现有陈述尚不足以确认实际租金损失。关键是计租起点和收款记录，仍需核实。"
     if proposals:
         answer += "已提出待确认建议，可在画布查看。"

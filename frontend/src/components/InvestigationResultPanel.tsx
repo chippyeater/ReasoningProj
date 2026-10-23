@@ -1,5 +1,6 @@
 import type { AgentResult, InfoUnit, Relation } from "../api";
 import { displayText, groupSources, presentQuestion, sourceKinds } from "./investigationPresentation";
+import { SummaryMarkdown } from "./SummaryMarkdown";
 
 const statuses = { completed: "本轮调查已结束", evidence_insufficient: "仍有材料待核实", budget_exhausted: "本轮核查暂告一段落", unsupported: "当前不支持此操作" };
 
@@ -58,7 +59,7 @@ export function InvestigationResultPanel({ result, infoUnits, relations, onLocat
   return <section className="agent-proposal investigation-result" aria-label="Agent 调查结果">
     <header><strong role="status">{result.summary_status === "failed" ? "本轮总结未完成" : statuses[result.completion_status]}</strong><button type="button" onClick={onClose}>关闭结果</button></header>
     {result.summary_status === "failed" ? <p role="alert">总结未完成，已核查的发现与待确认建议仍可查看。建议尚未采纳。</p>
-      : <p className="investigation-answer">{text(result.answer ?? firstFinding?.statement ?? "本轮未形成有依据的调查发现。")}</p>}
+      : <SummaryMarkdown text={text(result.answer ?? firstFinding?.statement ?? "本轮未形成有依据的调查发现。")} />}
     <aside className="investigation-limit" aria-label="判断范围与限制">
       <p>依据现有材料整理，材料记载或当事人陈述不等于已被独立核实。</p>
       {firstFinding && !primarySource ? <p>主要发现尚未取得对应的原文依据。</p> : null}
