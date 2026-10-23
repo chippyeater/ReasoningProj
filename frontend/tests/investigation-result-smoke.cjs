@@ -41,7 +41,7 @@ const assert = require('node:assert/strict');
     await page.goto('http://127.0.0.1:5178');
     await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent === 'Agent 调查' && !b.disabled));
     await page.getByRole('button', { name: 'Agent 调查', exact: true }).click();
-    await page.getByPlaceholder('提出调查问题（当前仅支持只读调查）…').fill(result.goal);
+    await page.getByPlaceholder('提出调查问题，或检查假设与证据缺口…').fill(result.goal);
     await page.getByRole('button', { name: '发送调查问题' }).click();
     const panel = page.getByRole('region', { name: 'Agent 调查结果' });
     await panel.getByText(answer, { exact: true }).waitFor();

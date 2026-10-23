@@ -92,6 +92,18 @@ class TestReasoningProposals(TestReasoningWorkspace):
         current = context["reasoning"]["hypotheses"][0]
         self.assertEqual((current["judgment"], current["work_status"], current["last_edited_by"]), ("refuted", "deprecated", "user"))
         self.assertIn("用户修正", current["content"])
+        next_run, requests = self.investigate(None, [hid])
+        self.assertEqual(next_run.status_code, 200, next_run.text)
+        wire = json.loads(requests[0]["messages"][1]["content"])["work_context"]["reasoning"]["hypotheses"][0]
+        self.assertEqual((wire["judgment"], wire["work_status"], wire["revision"]),
+                         (current["judgment"], current["work_status"], current["revision"]))
+        self.assertEqual(wire["content"], current["content"])
+        fresh, _ = self.investigate([suggestion("hypothesis_status", hid)], [hid])
+        self.assertEqual(fresh.status_code, 200, fresh.text)
+        self.assertEqual(self.accept(fresh.json()["run_id"]).status_code, 200)
+        adopted = get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses[0]
+        self.assertEqual((adopted.judgment, adopted.work_status, adopted.content),
+                         ("unverified", "deprecated", current["content"]))
         response, _ = self.investigate([suggestion("hypothesis")])
         unit = next(u for u in self.case.info_units if u.id == "U029")
         old = unit.content

@@ -35,8 +35,20 @@ async def model(config, messages, definitions, schema, **kwargs):
         uid = json.loads(calls[-1]["content"])["items"][0]["id"]
         return replies.tool("get_evidence", {"info_unit_ids": [uid]}, "verify")
     uid = "U026" if "入住" in goal else "U029"
-    return replies.final(goal, [uid], refs=[(uid, 0)], status="completed",
-                         statement="张某在材料中提出相关说法，仍需独立证据核实。")
+    reply = replies.final(goal, [uid], refs=[(uid, 0)], status="completed",
+                          statement="张某在材料中提出相关说法，仍需独立证据核实。")
+    if any(word in goal for word in ("假设", "缺口", "建议")):
+        context = json.loads(messages[1]["content"]).get("work_context", {})
+        hypotheses = context.get("reasoning", {}).get("hypotheses", [])
+        from test_reasoning_proposals import suggestion
+        proposals = [suggestion("hypothesis")]
+        if hypotheses:
+            proposals.extend([suggestion("evidence_gap", hypotheses[0]["id"]),
+                              suggestion("hypothesis_status", hypotheses[0]["id"])])
+        data = json.loads(reply.content)
+        data["proposals"] = proposals
+        reply.message["content"] = reply.content = json.dumps(data, ensure_ascii=False)
+    return reply
 
 
 if __name__ == "__main__":

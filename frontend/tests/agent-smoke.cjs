@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
     await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent === 'Agent 调查' && !b.disabled));
     const before = await (await page.request.get('http://127.0.0.1:8018/api/case')).json();
     await page.getByRole('button', { name: 'Agent 调查', exact: true }).click();
-    const input = page.getByPlaceholder('提出调查问题（当前仅支持只读调查）…');
+    const input = page.getByPlaceholder('提出调查问题，或检查假设与证据缺口…');
     const result = page.getByRole('region', { name: 'Agent 调查结果' });
     async function ask(goal) {
       await input.fill(goal);

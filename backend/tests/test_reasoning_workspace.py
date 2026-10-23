@@ -95,3 +95,6 @@ class TestReasoningWorkspace(unittest.TestCase):
         self.edit(link={"hypothesis_id": hid, "info_unit_id": "U029", "meaning": "verify", "rationale": "需核实"})
         from app.issue_workspaces import reasoning_references
         self.assertEqual(reasoning_references(self.case, "U029")[0]["kind"], "hypothesis_evidence")
+        rejected = self.client.delete(f"/api/cases/{self.case.case_id}/info-units/U029")
+        self.assertEqual(rejected.status_code, 409)
+        self.assertTrue(any(ref["kind"] == "hypothesis_evidence" for ref in rejected.json()["detail"]["references"]))

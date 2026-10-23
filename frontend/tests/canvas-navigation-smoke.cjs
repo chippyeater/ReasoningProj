@@ -55,7 +55,7 @@ const assert = require('node:assert/strict');
     assert.equal(await menu.count(), 0);
     assert.equal(await page.locator('.dynamic-island').count(), 1);
     assert.match(await page.locator('.island-context').innerText(), new RegExp(issues[0]));
-    const input = page.getByPlaceholder('提出调查问题（当前仅支持只读调查）…');
+    const input = page.getByPlaceholder('提出调查问题，或检查假设与证据缺口…');
     await input.fill('核对损失说法');
     const request = page.waitForRequest(request => request.url().endsWith('/agent/run'));
     await page.getByRole('button', { name: '发送调查问题' }).click();

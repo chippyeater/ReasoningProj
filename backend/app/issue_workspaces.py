@@ -164,7 +164,8 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
     # summaries carry current user decisions, never a history or full canvas.
     def rank(obj):
         overlap = sum(goal[i:i+2] in obj.content for i in range(max(0, len(goal) - 1)))
-        return (obj.id in selected, overlap, obj.updated_at)
+        related = bool(set(getattr(obj, "hypothesis_ids", [])) & set(selected))
+        return (obj.id in selected, related, overlap, obj.updated_at)
     chosen = sorted(objects, key=rank, reverse=True)[:3]
     hids = {obj.id for obj in chosen if hasattr(obj, "judgment")}
     for obj in chosen:

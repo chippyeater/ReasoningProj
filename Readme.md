@@ -57,6 +57,8 @@ Set-Location backend
 | `PATCH /api/cases/{case_id}` | `{case_title}` |
 | `PATCH /api/cases/{case_id}/workspace` | 完整 v0.3 `WorkspaceState`（旧全案画布） |
 | `GET/PATCH /api/cases/{case_id}/issue-workspaces` | 独立 Issue 画布和人工状态，不修改 CaseData |
+| `PATCH /api/cases/{case_id}/issue-reasoning` | 人工编辑当前 Issue 的假设、证据关联与缺口 |
+| `POST /api/cases/{case_id}/reasoning-proposals/accept` | 用户采纳经审计和校验的 Agent 建议 |
 | `DELETE /api/cases/{case_id}` | 删除指定案件及其文件 |
 | `DELETE /api/case` | 删除当前案件；不自动切换其他案件 |
 | `GET /api/cases/{case_id}/files/{file_id}/text` | `ParsedDocument`，读取已缓存正文 |
@@ -171,7 +173,7 @@ Relation 已接通为增量生成：`POST /api/relation/run` 接收 `{case_id}` 
 
 自然语言入口统一为画布左下角的“Agent 调查”快捷入口，以及右键菜单首项“向 Agent 提问”唤起的同一灵动岛，调用 `POST /api/cases/{case_id}/agent/run`。
 顶部 Issue 标签导航独立画布，状态由用户修改并持久化；切换不重载案件。各画布初次按 `related_issue` 推荐节点，可手动加入全案其他信息，位置、节点集合、视口与选择保存到案件目录的 `issue_workspaces.json`；业务数据与旧 `workspace_state` 不复制、不改写。原工具栏操作保留在右键菜单中。
-当前仅支持只读调查，结果与案件数据分离；发现、依据原文、未解决问题及任务状态可在输入框下查看，节点按钮可定位画布。
+调查工具保持只读，结果与案件数据分离；可选推理建议经用户采纳后保存到当前 Issue。画布支持人工假设、支持/反对/待核实关联和证据缺口，见 [Issue 协作推理](docs/issue_reasoning.md)。发现、依据原文、未解决问题及任务状态仍在灵动岛查看，节点按钮可定位画布。
 旧 InfoUnit Agent 提案/确认后端能力保留供后续复用，前端不再以其作为自然语言入口；手动编辑与画布功能保留。
 运行边界和离线端到端验收见 [Investigation Agent 文档](docs/investigation_agent.md)。
 `POST /api/extraction/run` 与 `POST /api/relation/run` 均可接收可选 `workflow_id`，用于关联一次用户工作流，不进入模型输入。

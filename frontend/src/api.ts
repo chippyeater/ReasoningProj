@@ -13,9 +13,10 @@ export type AgentResult = {
   run_id: string;
   stop_reason: string;
   tool_call_count: number;
+  proposals?: ReasoningProposal[];
 };
 
-export async function runAgent(caseId: string, input: { goal: string; selected_info_unit_ids: string[]; current_issue?: string }): Promise<AgentResult> {
+export async function runAgent(caseId: string, input: { goal: string; selected_info_unit_ids: string[]; current_issue?: string; selected_reasoning_ids?: string[] }): Promise<AgentResult> {
   return readJson<AgentResult>(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/agent/run`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
   }));
@@ -369,11 +370,41 @@ type V03WorkspaceState = {
 };
 
 export type IssueStatus = "pending" | "investigating" | "closed";
+export type Judgment = "unverified" | "verified" | "refuted";
+export type LinkMeaning = "support" | "oppose" | "verify";
+export type Hypothesis = { id: string; content: string; judgment: Judgment; work_status: "active" | "deprecated";
+  revision: number; updated_at: string; last_edited_by: "user" | "agent_accepted"; proposal_key: string | null };
+export type EvidenceGap = { id: string; content: string; hypothesis_ids: string[]; info_unit_ids: string[];
+  status: "open" | "resolved"; revision: number; updated_at: string; last_edited_by: "user" | "agent_accepted"; proposal_key: string | null };
+export type EvidenceLink = { id: string; hypothesis_id: string; info_unit_id: string; meaning: LinkMeaning;
+  rationale: string; origin: "user" | "agent"; last_edited_by: "user" | "agent_accepted"; proposal_key: string | null };
+export type ReasoningState = { hypotheses: Hypothesis[]; gaps: EvidenceGap[]; links: EvidenceLink[]; accepted_proposals: Record<string, string> };
+export type ReasoningProposal = { kind: "hypothesis" | "evidence_link" | "evidence_gap" | "hypothesis_status";
+  content: string | null; hypothesis_ids: string[]; info_unit_ids: string[]; meaning: LinkMeaning | null;
+  judgment: Judgment | null; rationale: string; evidence_refs: AgentEvidenceRef[] };
+export type ReasoningEdit = { issue: string; hypothesis?: { id?: string; content: string; judgment: Judgment; work_status: "active" | "deprecated" };
+  gap?: { id?: string; content: string; hypothesis_ids: string[]; info_unit_ids: string[]; status: "open" | "resolved" };
+  link?: { id?: string; hypothesis_id: string; info_unit_id: string; meaning: LinkMeaning; rationale: string };
+  unlink_id?: string; position?: CardPosition };
 export type IssueCanvas = V03WorkspaceState & { visible_node_ids: string[] };
 export type IssueWorkspaces = {
   active_issue: string | null;
-  workspaces: Record<string, { status: IssueStatus; canvas: IssueCanvas }>;
+  workspaces: Record<string, { status: IssueStatus; canvas: IssueCanvas; reasoning: ReasoningState }>;
 };
+
+export async function editIssueReasoning(caseId: string, edit: ReasoningEdit): Promise<{ workspaces: IssueWorkspaces; object_id: string }> {
+  return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/issue-reasoning`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(edit),
+  }));
+}
+
+export async function acceptReasoningProposal(caseId: string, input: {
+  issue: string; run_id: string; proposal_index: number; position: CardPosition;
+}): Promise<{ workspaces: IssueWorkspaces; object_id: string; already_accepted: boolean }> {
+  return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/reasoning-proposals/accept`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+  }));
+}
 
 export async function getIssueWorkspaces(caseId: string): Promise<IssueWorkspaces> {
   return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/issue-workspaces`));
@@ -601,6 +632,8 @@ async function readJson<T>(response: Response): Promise<T> {
             if (!item || typeof item !== "object") return [];
             const ref = item as Record<string, unknown>;
             const kind = typeof ref.kind === "string" ? ref.kind : "reference";
+            if (kind === "hypothesis_evidence" || kind === "evidence_gap")
+              return [`议题「${typeof ref.issue === "string" ? ref.issue : "当前议题"}」中的${kind === "hypothesis_evidence" ? "假设证据关联" : "证据缺口"}`];
             const id = typeof ref.id === "string" ? ref.id : "unknown";
             const field = typeof ref.field === "string" ? `.${ref.field}` : "";
             return [`${kind}:${id}${field}`];

@@ -128,7 +128,7 @@ const api = 'http://127.0.0.1:8018';
     // Agent receives Issue context with selected IDs, retaining full-case retrieval.
     await node.click({ button: 'right' });
     await menu.getByRole('menuitem', { name: '向 Agent 提问' }).click();
-    const input = page.getByPlaceholder('提出调查问题（当前仅支持只读调查）…');
+    const input = page.getByPlaceholder('提出调查问题，或检查假设与证据缺口…');
     await input.fill('核对损失说法');
     const request = page.waitForRequest(request => request.url().endsWith('/agent/run'));
     await page.getByRole('button', { name: '发送调查问题' }).click();
