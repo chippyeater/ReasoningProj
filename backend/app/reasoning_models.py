@@ -118,6 +118,8 @@ class ReasoningProposal(ContractModel):
     kind: Literal["hypothesis", "evidence_link", "evidence_gap", "hypothesis_status"]
     content: ReasoningText | None
     hypothesis_ids: Annotated[list[Text], Field(max_length=5)]
+    # Relative only to the immutable proposals array in the enclosing run.
+    hypothesis_proposal_indices: Annotated[list[Annotated[int, Field(ge=0, lt=6)]], Field(max_length=5)] = Field(default_factory=list)
     info_unit_ids: Annotated[list[Text], Field(min_length=1, max_length=5)]
     meaning: LinkMeaning | None
     judgment: Judgment | None
@@ -128,16 +130,24 @@ class ReasoningProposal(ContractModel):
     def shape(self):
         if len(self.hypothesis_ids) != len(set(self.hypothesis_ids)) or len(self.info_unit_ids) != len(set(self.info_unit_ids)):
             raise ValueError("Duplicate proposal references")
+        if len(self.hypothesis_proposal_indices) != len(set(self.hypothesis_proposal_indices)):
+            raise ValueError("Duplicate hypothesis_proposal_indices")
+        if self.kind != "evidence_gap" and self.hypothesis_proposal_indices:
+            raise ValueError("hypothesis_proposal_indices is only allowed for evidence_gap")
         if self.kind == "hypothesis":
             valid = self.content is not None and not self.hypothesis_ids and self.meaning is None and self.judgment is None
         elif self.kind == "evidence_gap":
-            valid = self.content is not None and bool(self.hypothesis_ids) and self.meaning is None and self.judgment is None
+            if not (self.hypothesis_ids or self.hypothesis_proposal_indices):
+                raise ValueError("Proposal fields do not match kind: evidence_gap requires hypothesis_ids or hypothesis_proposal_indices")
+            if len(self.hypothesis_ids) + len(self.hypothesis_proposal_indices) > 5:
+                raise ValueError("hypothesis_ids and hypothesis_proposal_indices must total at most 5 targets")
+            valid = self.content is not None and self.meaning is None and self.judgment is None
         elif self.kind == "evidence_link":
             valid = self.content is None and len(self.hypothesis_ids) == 1 and len(self.info_unit_ids) == 1 and self.meaning is not None and self.judgment is None
         else:
             valid = self.content is None and len(self.hypothesis_ids) == 1 and self.meaning is None and self.judgment is not None
         if not valid:
-            raise ValueError("Proposal fields do not match kind")
+            raise ValueError("Proposal fields do not match kind: check content, hypothesis_ids / hypothesis_proposal_indices, meaning and judgment")
         return self
 
 

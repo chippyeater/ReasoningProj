@@ -57,6 +57,47 @@ class InvestigationResult(InvestigationOutput):
     proposals: Annotated[list[ReasoningProposal], Field(max_length=6)] = Field(default_factory=list)
 
 
+def result_schema() -> dict:
+    """Provider constraints derived from the compatible runtime model.
+
+    Native strict schemas support anyOf, but not conditional if/then rules.
+    Only Gap's combined target count and cross-proposal references stay runtime-only.
+    """
+    schema = InvestigationResult.model_json_schema()
+    schema["required"] = list(schema["properties"])
+    base = schema["$defs"]["ReasoningProposal"]
+    variants = []
+    for kind in ("hypothesis", "evidence_gap", "evidence_link", "hypothesis_status"):
+        variant = deepcopy(base)
+        props = variant["properties"]
+        variant["required"] = list(props)
+        props["kind"] = {"type": "string", "enum": [kind]}
+        # This field defaults to [] only when reading older outputs, not on the wire.
+        props["hypothesis_proposal_indices"].pop("default", None)
+        for name, present in (("content", kind in {"hypothesis", "evidence_gap"}),
+                              ("meaning", kind == "evidence_link"),
+                              ("judgment", kind == "hypothesis_status")):
+            props[name] = next(part for part in props[name]["anyOf"]
+                               if (part.get("type") != "null") == present)
+        if kind == "hypothesis":
+            props["hypothesis_ids"]["maxItems"] = 0
+        elif kind != "evidence_gap":
+            props["hypothesis_ids"].update(minItems=1, maxItems=1)
+        if kind != "evidence_gap":
+            props["hypothesis_proposal_indices"]["maxItems"] = 0
+        if kind == "evidence_link":
+            props["info_unit_ids"]["maxItems"] = 1
+        if kind == "evidence_gap":
+            # Either existing IDs or new-proposal indices must be present; both are allowed.
+            with_ids = deepcopy(variant)
+            with_ids["properties"]["hypothesis_ids"]["minItems"] = 1
+            variants.append(with_ids)
+            props["hypothesis_proposal_indices"]["minItems"] = 1
+        variants.append(variant)
+    schema["$defs"]["ReasoningProposal"] = {"anyOf": variants}
+    return schema
+
+
 def _function(name: str, description: str, properties: dict) -> dict:
     return {"type": "function", "function": {
         "name": name, "description": description, "strict": True,
@@ -157,47 +198,71 @@ def _remember(name: str, result: dict, seen: dict) -> None:
 def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_context: dict | None = None) -> InvestigationResult:
     try:
         parsed = _strict_json(raw)
+    except (ValueError, TypeError, RecursionError) as exc:
+        location = {key: getattr(exc, key) for key in ("lineno", "colno", "pos") if hasattr(exc, key)}
+        raise AppError("investigation_result_invalid", "Final result is not strict JSON", details={
+            "category": "json", "errors": [{"loc": [], "code": "invalid_json", **location}]}) from exc
+    try:
         result = InvestigationResult.model_validate(parsed)
-    except (ValueError, TypeError, RecursionError, ValidationError) as exc:
-        raise AppError("investigation_result_invalid", "Final investigation result violates its JSON contract") from exc
+    except ValidationError as exc:
+        errors = []
+        for error in exc.errors(include_input=False, include_context=False, include_url=False):
+            loc = list(error["loc"])
+            if error["type"] == "extra_forbidden":
+                loc[-1] = "<extra>"  # Unknown model-authored keys may themselves contain private data.
+            errors.append({"loc": loc, "code": error["type"], "message": error["msg"],
+                           "category": "proposal_semantics" if loc[:1] == ["proposals"] and error["type"] == "value_error" else "structure"})
+        category = errors[0]["category"] if len({e["category"] for e in errors}) == 1 else "mixed"
+        raise AppError("investigation_result_invalid", "Final result failed contract validation", details={
+            "category": category, "errors": errors}) from exc
     units = {unit.id: unit for unit in case.info_units}
     relations = {relation.id for relation in case.relations}
 
-    def check(ids, available):
-        if len(ids) != len(set(ids)) or not set(ids) <= available:
-            raise AppError("invalid_investigation_reference", "A final reference is duplicate, nonexistent or was not retrieved")
+    def invalid(code, category, loc, message):
+        return AppError(code, message, details={"category": category, "errors": [
+            {"loc": loc, "code": code, "message": message}]})
 
-    check(result.relevant_info_unit_ids, seen["units"] & units.keys())
-    check(result.relevant_relation_ids, seen["relations"] & relations)
+    def check(ids, available, loc):
+        visited = set()
+        for index, value in enumerate(ids):
+            if value in visited or value not in available:
+                raise invalid("invalid_investigation_reference", "reference", [*loc, index],
+                              "Reference is duplicate, nonexistent or was not retrieved")
+            visited.add(value)
+
+    check(result.relevant_info_unit_ids, seen["units"] & units.keys(), ["relevant_info_unit_ids"])
+    check(result.relevant_relation_ids, seen["relations"] & relations, ["relevant_relation_ids"])
     pointers = [(ref.info_unit_id, ref.source_ref_index) for ref in result.evidence_refs]
-    check(pointers, seen["evidence"])
-    for uid, index in pointers:
+    check(pointers, seen["evidence"], ["evidence_refs"])
+    for offset, (uid, index) in enumerate(pointers):
         if uid not in units or index >= len(units[uid].source_refs) or uid not in result.relevant_info_unit_ids:
-            raise AppError("invalid_investigation_reference", "Invalid SourceRef index")
+            raise invalid("invalid_investigation_reference", "reference", ["evidence_refs", offset], "Invalid SourceRef index or InfoUnit")
     if result.goal != goal:
-        raise AppError("investigation_result_invalid", "Final goal must match the requested goal")
+        raise invalid("investigation_result_invalid", "result_semantics", ["goal"], "Final goal must match the requested goal")
     if result.completion_status == "unsupported" and (
             result.findings or result.relevant_info_unit_ids or result.relevant_relation_ids
             or result.evidence_refs or result.proposals or not result.open_questions):
-        raise AppError("investigation_result_invalid", "Unsupported requests require an explanation and no findings")
-    for finding in result.findings:
-        check(finding.info_unit_ids, set(result.relevant_info_unit_ids))
-        check(finding.relation_ids, set(result.relevant_relation_ids))
+        raise invalid("investigation_result_invalid", "result_semantics", ["completion_status"], "Unsupported requests require an explanation and no findings")
+    for offset, finding in enumerate(result.findings):
+        check(finding.info_unit_ids, set(result.relevant_info_unit_ids), ["findings", offset, "info_unit_ids"])
+        check(finding.relation_ids, set(result.relevant_relation_ids), ["findings", offset, "relation_ids"])
         refs = [(ref.info_unit_id, ref.source_ref_index) for ref in finding.evidence_refs]
-        check(refs, set(pointers))
+        check(refs, set(pointers), ["findings", offset, "evidence_refs"])
         if not (finding.info_unit_ids or finding.relation_ids or refs):
-            raise AppError("invalid_investigation_reference", "Each finding requires a retrieved basis")
+            raise invalid("invalid_investigation_reference", "reference", ["findings", offset], "Each finding requires a retrieved basis")
     targets = {obj["id"] for kind in ("hypotheses", "gaps")
                for obj in (work_context or {}).get("reasoning", {}).get(kind, [])}
     hypothesis_ids = {obj["id"] for obj in (work_context or {}).get("reasoning", {}).get("hypotheses", [])}
-    for proposal in result.proposals:
+    from app.reasoning_proposals import validate_proposal_dependencies
+    validate_proposal_dependencies(result.proposals)
+    for offset, proposal in enumerate(result.proposals):
         if not work_context:
-            raise AppError("invalid_reasoning_proposal", "Proposals require a bound Issue")
-        check(proposal.info_unit_ids, set(result.relevant_info_unit_ids))
-        check(proposal.hypothesis_ids, hypothesis_ids & targets)
-        check([(p.info_unit_id, p.source_ref_index) for p in proposal.evidence_refs], set(pointers))
+            raise invalid("invalid_reasoning_proposal", "proposal_semantics", ["proposals", offset], "Proposals require a bound Issue")
+        check(proposal.info_unit_ids, set(result.relevant_info_unit_ids), ["proposals", offset, "info_unit_ids"])
+        check(proposal.hypothesis_ids, hypothesis_ids & targets, ["proposals", offset, "hypothesis_ids"])
+        check([(p.info_unit_id, p.source_ref_index) for p in proposal.evidence_refs], set(pointers), ["proposals", offset, "evidence_refs"])
         if any(p.info_unit_id not in proposal.info_unit_ids for p in proposal.evidence_refs):
-            raise AppError("invalid_reasoning_proposal", "Proposal evidence must refer to its retrieved InfoUnits")
+            raise invalid("invalid_reasoning_proposal", "reference", ["proposals", offset, "evidence_refs"], "Proposal evidence must refer to its retrieved InfoUnits")
     return result
 
 
@@ -248,10 +313,7 @@ async def run_investigation(case: CaseData, goal: str,
         config = llm_client.load_config()
         prompt = load_prompt(PROMPT_PATH, "investigation_agent")
         definitions = tool_definitions()
-        schema = InvestigationResult.model_json_schema()
-        # Keep old mock/API outputs valid while making every property required
-        # in the provider's strict output schema (proposals may be []).
-        schema["required"] = list(schema["properties"])
+        schema = result_schema()
         metadata = prompt.metadata(config.model)
         messages = [{"role": "system", "content": prompt.content},
                     {"role": "user", "content": json.dumps(initial_input, ensure_ascii=False)}]

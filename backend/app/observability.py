@@ -92,6 +92,11 @@ def _summary(value: object) -> dict[str, object]:
                 for error in details["errors"]
                 if isinstance(error, dict) and (error.get("code") or error.get("field"))
             })
+            # Structural diagnostics contain no case text, bad values or raw model output.
+            result["validation_category"] = details.get("category")
+            result["validation_errors"] = [
+                {key: error[key] for key in ("loc", "code", "category", "lineno", "colno", "pos") if key in error}
+                for error in details["errors"] if isinstance(error, dict)]
     elif isinstance(value, list):
         result["item_count"] = len(value)
     elif isinstance(value, str):

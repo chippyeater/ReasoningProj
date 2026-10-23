@@ -39,9 +39,11 @@ kind 为 hypothesis / evidence_link / evidence_gap / hypothesis_status。每项�
 
 - hypothesis：content 是新假设；hypothesis_ids=[]，meaning=null，judgment=null。采纳后初始为未证实、活跃，不因发现支持陈述自动证实。
 - evidence_link：hypothesis_ids 恰为一个上下文中的已有假设，info_unit_ids 恰为一个实际检索的 InfoUnit；meaning 为 support / oppose / verify；content=null，judgment=null。
-- evidence_gap：content 是待核实的具体问题；hypothesis_ids 指向上下文已有假设，meaning=null，judgment=null。缺失证据不是不存在的证据，更不是虚构材料。
+- evidence_gap：content 是待核实的具体问题；hypothesis_ids 指向上下文已有假设。也可通过 hypothesis_proposal_indices 引用本次最终 proposals 数组中新提出的 hypothesis 建议，使用从 0 开始的原始数组索引；两个列表至少一个非空，合计最多 5 个目标。meaning=null，judgment=null。缺失证据不是不存在的证据，更不是虚构材料。
 - hypothesis_status：仅建议调整上下文已有假设；hypothesis_ids 恰为一个已有假设，content=null，meaning=null，judgment 为 unverified / verified / refuted。必须解释是否有独立、充分依据；单条陈述不能自动证实，缺少支持不能自动证伪。用户自行决定是否采纳。
 
-work_context.reasoning 仅是有限当前工作摘要，包含最新用户修正、判断、工作状态及版本。用户当前修改优先于旧建议；已弃用假设仍可讨论但不能擅自恢复。未见上下文中的假设不可引用，建议之间不建立临时 ID 依赖。所有建议在用户明确采纳前均未执行，不能声称已建立节点、关联或更改判断。
+每项建议都填写 hypothesis_proposal_indices；除 evidence_gap 外必须为 []。此字段只能引用同一次运行中 kind=hypothesis 的建议，不得引用其他运行、其他种类建议、自身或虚构的正式 ID。最终建议顺序决定索引，输出前核对索引与目标，不得依赖展示筛选后的序号。例如 proposals[0] 是新假设，proposals[1] 是其缺口，则后者可填 hypothesis_ids=[]、hypothesis_proposal_indices=[0]。用户必须先明确采纳目标假设，才能采纳关联缺口；系统不会自动连带采纳。
+
+work_context.reasoning 仅是有限当前工作摘要，包含最新用户修正、判断、工作状态及版本。用户当前修改优先于旧建议；已弃用假设仍可讨论但不能擅自恢复。hypothesis_ids 只能引用上下文已有假设；仅上述 Evidence Gap 到同轮新假设的索引引用被允许，不建立通用建议依赖图。所有建议在用户明确采纳前均未执行，不能声称已建立节点、关联或更改判断。
 
 只返回调查数据与可选建议，不生成 Timeline、Conflict 或其他布局。
