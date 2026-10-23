@@ -561,6 +561,14 @@ export default function App() {
   const [nodeSizes, setNodeSizes] = useState<Record<string, NodeSize>>({});
 
   const [island, setIsland] = useState({ visible: false, x: 20, y: 20, text: "" });
+  const [selectedIssue, setSelectedIssue] = useState<{ caseId: string; issue: string } | null>(null);
+  const issues = [...new Set([currentCase?.core_issue, ...(currentCase?.issue_set ?? [])]
+    .filter((issue): issue is string => Boolean(issue?.trim())).map((issue) => issue.trim()))];
+  const activeIssue = selectedIssue?.caseId === currentCase?.case_id && issues.includes(selectedIssue?.issue ?? "")
+    ? selectedIssue!.issue : (issues[0] ?? "");
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string | null; relationId: string | null } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const issueSelectorRef = useRef<HTMLDetailsElement | null>(null);
   const [islandHeight, setIslandHeight] = useState(ISLAND_MIN_HEIGHT);
   const [agentResult, setAgentResult] = useState<AgentResult | null>(null);
   const agentRequestRef = useRef(0);
@@ -691,10 +699,12 @@ export default function App() {
         current.y, wrapperRect.height - nextHeight - ISLAND_PADDING));
       return x === current.x && y === current.y ? current : { ...current, x, y };
     });
-  }, [agentError, agentResult, island.text, island.visible]);
+  }, [agentError, agentResult, island.text, island.visible, activeIssue, selectedInfoUnitIds.length, agentBusy]);
 
   useEffect(() => {
     agentRequestRef.current += 1;
+    setContextMenu(null);
+    if (issueSelectorRef.current) issueSelectorRef.current.open = false;
     setAgentBusy(false);
     setAgentResult(null);
     setAgentError("");
@@ -784,6 +794,8 @@ export default function App() {
 
   useEffect(() => {
     const onWindowClick = (event: MouseEvent) => {
+      if (contextMenuRef.current && !event.composedPath().includes(contextMenuRef.current)) setContextMenu(null);
+      if (issueSelectorRef.current && !event.composedPath().includes(issueSelectorRef.current)) issueSelectorRef.current.open = false;
       if (!caseSelectorRef.current) return;
       if (event.composedPath().includes(caseSelectorRef.current)) return;
       setCaseMenuOpen(false);
@@ -1711,6 +1723,7 @@ export default function App() {
 
   function onCanvasMouseDown(event: React.MouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
+    setContextMenu(null);
     if ((event.target as HTMLElement).closest(".canvas-node") || (event.target as HTMLElement).closest(".dynamic-island")) {
       return;
     }
@@ -1729,20 +1742,44 @@ export default function App() {
     };
   }
 
-  function onCanvasContextMenu(event: React.MouseEvent<HTMLDivElement>) {
-    event.preventDefault();
+  function openAgentAt(x: number, y: number) {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
     const rect = wrapper.getBoundingClientRect();
-
-    const rawX = event.clientX - rect.left + ISLAND_PADDING;
-    const rawY = event.clientY - rect.top + ISLAND_PADDING;
-    const clampedX = Math.max(ISLAND_PADDING, Math.min(rawX, rect.width - ISLAND_WIDTH - ISLAND_PADDING));
-    const currentIslandHeight = islandContainerRef.current?.offsetHeight ?? islandHeightRef.current;
-    const clampedY = Math.max(ISLAND_PADDING, Math.min(rawY, rect.height - currentIslandHeight - ISLAND_PADDING));
-
-    setIsland((current) => ({ ...current, visible: true, x: clampedX, y: clampedY }));
+    const height = islandContainerRef.current?.offsetHeight ?? islandHeightRef.current;
+    const width = islandContainerRef.current?.offsetWidth ?? ISLAND_WIDTH;
+    setContextMenu(null);
+    setIsland((current) => ({ ...current, visible: true,
+      x: Math.max(ISLAND_PADDING, Math.min(x, rect.width - width - ISLAND_PADDING)),
+      y: Math.max(ISLAND_PADDING, Math.min(y, rect.height - height - ISLAND_PADDING)) }));
+    requestAnimationFrame(() => islandInputRef.current?.focus());
   }
+
+  function onCanvasContextMenu(event: React.MouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const rect = wrapper.getBoundingClientRect();
+    const target = event.target as Element;
+    const nodeId = target.closest<HTMLElement>(".canvas-node")?.dataset.nodeId ?? null;
+    const relationId = target.closest<SVGElement>("[data-relation-id]")?.getAttribute("data-relation-id") ?? null;
+    if (nodeId) {
+      if (!selectedNodeIds.includes(nodeId)) setSelectedNodeIds([nodeId]);
+      setFocusedNodeId(nodeId);
+    }
+    if (issueSelectorRef.current) issueSelectorRef.current.open = false;
+    setContextMenu({ x: event.clientX - rect.left, y: event.clientY - rect.top, nodeId, relationId });
+  }
+
+  useLayoutEffect(() => {
+    const menu = contextMenuRef.current;
+    const wrapper = wrapperRef.current;
+    if (!menu || !wrapper || !contextMenu) return;
+    menu.style.left = `${Math.max(8, Math.min(contextMenu.x, wrapper.clientWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(contextMenu.y, wrapper.clientHeight - menu.offsetHeight - 8))}px`;
+    (menu.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? menu).focus();
+  }, [contextMenu]);
 
   function onIslandMouseDown(event: React.MouseEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
@@ -1758,6 +1795,7 @@ export default function App() {
   }
 
   function onNodeMouseDown(event: React.MouseEvent<HTMLDivElement>, nodeId: string) {
+    setContextMenu(null);
     event.preventDefault();
     event.stopPropagation();
     const point = nodePositions[nodeId];
@@ -1781,13 +1819,16 @@ export default function App() {
     const goal = island.text.trim();
     if (!goal) { setAgentError("请输入调查问题。"); return; }
     if (selectedInfoUnitIds.length > 5) { setAgentError("每次最多选择 5 个信息节点。"); return; }
+    const investigationGoal = !selectedInfoUnitIds.length && activeIssue
+      ? `当前议题：${activeIssue}\n调查问题：${goal}` : goal;
+    if (investigationGoal.length > 2000) { setAgentError("调查问题与议题信息合计不能超过 2000 字。"); return; }
     const caseId = currentCase.case_id;
     const request = ++agentRequestRef.current;
     setAgentBusy(true);
     setAgentError("");
     setAgentResult(null);
     try {
-      const result = await runAgent(caseId, { goal, selected_info_unit_ids: selectedInfoUnitIds });
+      const result = await runAgent(caseId, { goal: investigationGoal, selected_info_unit_ids: selectedInfoUnitIds });
       if (request === agentRequestRef.current && agentCaseIdRef.current === caseId) setAgentResult(result);
     } catch (err) {
       if (request === agentRequestRef.current && agentCaseIdRef.current === caseId)
@@ -1917,6 +1958,8 @@ export default function App() {
   }
 
   function onCanvasWheel(event: WheelEvent) {
+    if ((event.target as Element).closest(".dynamic-island, .canvas-context-menu, .issue-selector, .canvas-agent-shortcut")) return;
+    setContextMenu(null);
     event.preventDefault();
     if (event.ctrlKey) {
       const wrapper = wrapperRef.current;
@@ -2704,41 +2747,56 @@ export default function App() {
             className="canvas-wrapper"
             onMouseDown={onCanvasMouseDown}
             onContextMenu={onCanvasContextMenu}
+            tabIndex={-1}
+            onKeyDown={(event) => { if (event.key === "Escape") { setContextMenu(null);
+              if (issueSelectorRef.current) issueSelectorRef.current.open = false;
+              wrapperRef.current?.focus(); } }}
             style={{
               backgroundPosition: `${transform.x}px ${transform.y}px`,
               backgroundSize: `${42 * transform.zoom}px ${42 * transform.zoom}px`,
             }}
           >
-            <div className="canvas-edit-toolbar" onMouseDown={(event) => event.stopPropagation()}>
-              <button type="button" disabled={!currentCase} onClick={() => setIsland((current) => ({ ...current, visible: true, x: 20, y: 70 }))}>Agent 调查</button>
-              <button
-                type="button"
-                onClick={fitAllNodes}
-                disabled={canvasData.nodes.length === 0}
-                title="缩放并居中显示当前全部节点"
-              >
-                适应全部节点
-              </button>
-              <button
-                type="button"
-                onClick={() => void onRunExtraction()}
-                disabled={!currentCase || extractionRunning || caseLoading}
-                title="使用当前案件材料运行 Extraction"
-              >
-                {extractionRunning ? "提取中…" : "开始提取"}
-              </button>
-              <button type="button" onClick={() => void openInfoUnitEditor()} disabled={!currentCase}>+ 新建 InfoUnit</button>
-              <button type="button" onClick={() => openRelationEditor()} disabled={!currentCase || currentCase.info_units.length < 2}>+ 新建关系</button>
-              <button
-                type="button"
-                className="editor-secondary"
-                onClick={() => void openInfoUnitEditor(selectedInfoUnit)}
-                disabled={!selectedInfoUnit}
-                title={selectedInfoUnit ? `编辑 ${selectedInfoUnit.title}` : "请先选中一个 InfoUnit 卡片"}
-              >
-                编辑选中节点
-              </button>
-            </div>
+            <details className="issue-selector" ref={issueSelectorRef}
+              onMouseDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}>
+              <summary className="case-selector-trigger" aria-label="切换当前 Issue" title={activeIssue || "暂无 Issue"}>
+                <span>{activeIssue || "暂无 Issue"}</span><img src={chevronsUpIcon} alt="" className="case-selector-chevron" />
+              </summary>
+              <div className="case-selector-list" role="group" aria-label="Issue 列表">
+                <div className="case-selector-list-inner">
+                  {issues.length ? issues.map(issue => <button type="button" key={issue}
+                    className={`case-selector-item${issue === activeIssue ? " selected" : ""}`} aria-pressed={issue === activeIssue}
+                    onClick={() => { if (currentCase) setSelectedIssue({ caseId: currentCase.case_id, issue });
+                      if (issueSelectorRef.current) issueSelectorRef.current.open = false; }}><span>{issue}</span></button>)
+                    : <p className="case-selector-empty">提取材料后可查看议题</p>}
+                </div>
+              </div>
+            </details>
+            <button type="button" className="canvas-agent-shortcut" disabled={!currentCase}
+              onMouseDown={(event) => event.stopPropagation()} onClick={() => openAgentAt(20, 70)}>
+              <img src={writeIcon} alt="" />Agent 调查
+            </button>
+            {contextMenu ? <div ref={contextMenuRef} className="canvas-context-menu" role="menu" tabIndex={-1} aria-label="画布操作"
+              style={{ left: contextMenu.x, top: contextMenu.y }} onMouseDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
+              onClick={() => setContextMenu(null)} onKeyDown={(event) => {
+                if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+                event.preventDefault();
+                const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+                const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+                buttons[(index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+              }}>
+              <button role="menuitem" type="button" disabled={!currentCase} onClick={() => openAgentAt(contextMenu.x + ISLAND_PADDING, contextMenu.y + ISLAND_PADDING)}>向 Agent 提问</button>
+              <button role="menuitem" type="button" disabled={!canvasData.nodes.length} onClick={fitAllNodes}>适应全部节点</button>
+              <button role="menuitem" type="button" disabled={!currentCase?.files.some(file => file.parse_status === "parsed") || extractionRunning || caseLoading} onClick={() => void onRunExtraction()}>{extractionRunning ? "提取中…" : "开始提取"}</button>
+              <button role="menuitem" type="button" disabled={!currentCase} onClick={() => void openInfoUnitEditor()}>新建 InfoUnit</button>
+              <button role="menuitem" type="button" disabled={!currentCase || currentCase.info_units.length < 2} onClick={() => openRelationEditor()}>新建关系</button>
+              {!contextMenu.relationId && selectedInfoUnit ? <button role="menuitem" type="button" onClick={() => void openInfoUnitEditor(selectedInfoUnit)}>编辑选中节点</button> : null}
+              {contextMenu.relationId ? <button role="menuitem" type="button" onClick={() => {
+                const relation = currentCase?.relations.find(relation => relation.id === contextMenu.relationId);
+                if (relation) openRelationEditor(relation);
+              }}>编辑关系</button> : null}
+            </div> : null}
             <div className="canvas-zoom-badge" aria-live="polite">{Math.round(transform.zoom * 100)}%</div>
             <div
               className="canvas-content"
@@ -2764,7 +2822,7 @@ export default function App() {
                   const labelHeight = 26;
 
                   return (
-                    <g key={edge.id} className={edge.businessRelationType ? "business-relation-edge" : "derived-relation-edge"}>
+                    <g key={edge.id} className={edge.businessRelationType ? "business-relation-edge" : "derived-relation-edge"} data-relation-id={edge.businessRelationType ? edge.id : undefined}>
                       <line
                         x1={sx} y1={sy} x2={tx} y2={ty}
                         className={`canvas-link${edge.businessRelationType ? ` relation-${edge.businessRelationType}` : " relation-derived"}`}
@@ -2841,6 +2899,7 @@ export default function App() {
                         event.stopPropagation();
                         return;
                       }
+                      if (event.button !== 0) return;
                       const isMultiSelect = event.metaKey || event.ctrlKey;
                       let nextSelectedNodeIds: string[] = [];
 
@@ -2876,8 +2935,9 @@ export default function App() {
                 className={`dynamic-island${agentResult ? " has-preview" : ""}`}
                 style={{ left: island.x, top: island.y }}
                 onMouseDown={onIslandMouseDown}
-                onContextMenu={(event) => event.preventDefault()}
+                onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
               >
+                <p className="island-context">{selectedInfoUnitIds.length ? `已选 ${selectedInfoUnitIds.length} 个信息节点` : activeIssue ? `当前议题：${activeIssue}` : "当前案件"}</p>
                 <div className="island-compose-row">
                   <img src={writeIcon} alt="write" className="island-icon" />
                   <textarea
@@ -2924,7 +2984,11 @@ export default function App() {
               </div>
             ) : null}
 
-            {!currentCase ? <div className="canvas-empty">Upload files to generate nodes.</div> : null}
+            {!currentCase || !currentCase.info_units.length ? <div className="canvas-empty canvas-initial-action" onMouseDown={(event) => event.stopPropagation()}>
+              <p>{currentCase?.files.length ? "材料已就绪，开始提取案件信息" : "先上传案件材料，再开始提取"}</p>
+              <button type="button" disabled={!currentCase?.files.some(file => file.parse_status === "parsed") || extractionRunning}
+                onClick={() => void onRunExtraction()}>{extractionRunning ? "提取中…" : "开始提取"}</button>
+            </div> : null}
           </div>
           {renderInfoUnitEditor()}
           {renderRelationEditor()}

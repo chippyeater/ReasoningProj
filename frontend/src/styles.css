@@ -467,24 +467,24 @@ button:disabled {
   cursor: grabbing;
 }
 
-.canvas-edit-toolbar {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  z-index: 80;
-  display: flex;
-  gap: 8px;
-  padding: 8px;
-  border: 1px solid rgba(174, 166, 255, 0.45);
-  border-radius: 12px;
-  background: rgba(10, 10, 22, 0.88);
-  backdrop-filter: blur(12px);
-  cursor: default;
-}
-
-.canvas-edit-toolbar button {
-  white-space: nowrap;
-}
+.issue-selector { position: absolute; top: 16px; right: 16px; z-index: 80; max-width: calc(100% - 32px); }
+.issue-selector > summary { width: min(320px, 100%); min-width: 180px; height: 36px; list-style: none; background: rgba(18,16,36,.96); line-height: 1.4; }
+.issue-selector > summary::-webkit-details-marker { display: none; }
+.issue-selector[open] .case-selector-chevron { transform: rotate(0); }
+.issue-selector .case-selector-list { top: 44px; width: min(340px, calc(100vw - 48px)); background: rgba(18,16,36,.98); }
+.issue-selector .case-selector-list-inner { max-height: 50vh; overflow: auto; }
+.issue-selector .case-selector-item { width: 100%; height: auto; min-height: 40px; line-height: 1.5; }
+.canvas-context-menu { position: absolute; z-index: 120; min-width: 210px; max-width: calc(100% - 16px); max-height: calc(100% - 16px); overflow: auto;
+  display: flex; flex-direction: column; padding: 6px; border: 1px solid #8277b5; border-radius: 10px; background: #161326; box-shadow: 0 8px 28px #0008; cursor: default; }
+.canvas-context-menu button { text-align: left; border: 0; border-radius: 6px; background: transparent; color: #ece9fb; padding: 9px 12px; font-size: 13px; }
+.canvas-context-menu button:hover:not(:disabled), .canvas-context-menu button:focus-visible { background: #41365c; outline: 1px solid #aea6ff; }
+.canvas-context-menu button:disabled { opacity: .4; cursor: not-allowed; }
+.canvas-context-menu button:first-child { color: #d5ffaf; border-bottom: 1px solid #403852; }
+.canvas-agent-shortcut { position: absolute; left: 16px; bottom: 16px; z-index: 80; display: flex; align-items: center; gap: 6px; }
+.canvas-agent-shortcut img { width: 18px; height: 18px; }
+.canvas-initial-action { flex-direction: column; gap: 10px; }
+.canvas-initial-action button { pointer-events: auto; }
+.island-context { margin: 0 0 6px; color: #c5bfd7; font-size: 11px; overflow-wrap: anywhere; }
 
 .canvas-content {
   position: relative;

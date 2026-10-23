@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
+    await page.request.post('http://127.0.0.1:8018/api/cases/case-4325561f/select');
     const original = await (await page.request.get('http://127.0.0.1:8018/api/case')).json();
     const fixture = structuredClone(original);
     const unit = fixture.case.info_units.find(unit => unit.id === 'U026');
