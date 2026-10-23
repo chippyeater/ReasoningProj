@@ -24,6 +24,7 @@ MAX_TOOL_CALLS = 8  # Read attempts, reserved independently from artifact submis
 MAX_PROPOSAL_CALLS = 6
 MAX_PRESENTATION_CALLS = 2
 MAX_TOTAL_CALLS = MAX_TOOL_CALLS + MAX_PROPOSAL_CALLS + MAX_PRESENTATION_CALLS
+MAX_SUMMARY_CHARACTERS = 240  # Soft target is 40–80; allow a little more for complex tasks.
 READ_TOOLS = {"search_info_units": tools.search_info_units, "get_relations": tools.get_relations, "get_evidence": tools.get_evidence}
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts/investigation_agent_prompt.md"
 BoundedText = Annotated[str, Field(min_length=1, max_length=600, pattern=r"\S")]
@@ -268,6 +269,47 @@ def _write_audit(case_id: str, path: str, payload: dict) -> None:
         raise AppError("investigation_audit_failed", "Cannot persist the investigation audit", 500) from exc
 
 
+def _summary_context(proposals, tool_calls):
+    """Trusted handoff metadata, derived only from successfully validated artifacts."""
+    return "本轮界面交接状态（后端生成）：" + json.dumps({
+        "successful_proposals": [{"proposal_id": p.proposal_id, "kind": p.kind, "status": "pending_user_confirmation"}
+                                 for p in proposals],
+        "pending_count": len(proposals),
+        "failed_tool_calls": sum(c.get("result", {}).get("status") in {"error", "invalid_request"} for c in tool_calls),
+        "incomplete_tool_calls": sum(c.get("result", {}).get("status") == "truncated" for c in tool_calls),
+    }, ensure_ascii=False)
+
+
+def _validate_summary(text, proposals):
+    """Reject report-sized or verbatim Proposal replies; never truncate or rewrite."""
+    def reject(code, message, **details):
+        raise AppError("investigation_summary_invalid", message, details={
+            "category": "summary", "errors": [{"loc": ["answer"], "code": code, **details}]})
+
+    if not isinstance(text, str) or not text.strip():
+        reject("invalid_summary", "Final reply must be nonblank prose")
+    length = len(re.sub(r"\s", "", text))
+    if length > MAX_SUMMARY_CHARACTERS:
+        reject("summary_too_long", "Final reply exceeds the concise summary limit",
+               length=length, maximum=MAX_SUMMARY_CHARACTERS)
+    try:
+        structured = _strict_json(text)
+    except (ValueError, TypeError, RecursionError):
+        structured = None
+    if isinstance(structured, (dict, list)):
+        reject("structured_final_reply", "Use artifact tools, not a final JSON result")
+    # Ignore punctuation/Markdown/spacing so formatting cannot disguise a full copy.
+    normalized = re.sub(r"[\W_]", "", text).casefold()
+    for index, proposal in enumerate(proposals):
+        for field in ("content", "rationale"):
+            value = re.sub(r"[\W_]", "", getattr(proposal, field) or "").casefold()
+            # Short factual phrases can legitimately coincide with the answer.
+            if len(value) >= 24 and value in normalized:
+                reject("proposal_repeated", "Final reply repeats a complete Proposal field",
+                       proposal_index=index, field=field)
+    return text.strip()
+
+
 async def run_investigation(case: CaseData, goal: str,
                             selected_info_unit_ids: list[str] | None = None, *, work_context: dict | None = None,
                             issue_key: str | None = None) -> dict:
@@ -342,32 +384,26 @@ async def run_investigation(case: CaseData, goal: str,
         while True:
             available = [d for d in definitions if used[bucket(d["function"]["name"])] < limits[bucket(d["function"]["name"])]]
             choice = "none" if stop_reason or not available else "auto"
+            request_messages = [
+                {"role": "system", "content": prompt.content + "\n\n" + _summary_context(proposals, audit["tool_calls"])},
+                *messages[1:],
+            ]
             # No response_format: only tools have structured contracts; the final message is prose.
-            payload = llm_client.tool_request_payload(config, messages, available or definitions, tool_choice=choice)
+            payload = llm_client.tool_request_payload(config, request_messages, available or definitions, tool_choice=choice)
             call_audit = {"step": len(audit["model_calls"]) + 1, **metadata, "request": deepcopy(payload)}
             audit["model_calls"].append(call_audit)
             _write_audit(bound_case.case_id, output_path, audit)
             with trace.observation("Investigation Agent · model call", as_type="generation", input=payload,
                                    model=config.model, version=prompt.version,
                                    model_parameters={"max_completion_tokens": config.max_completion_tokens}, metadata=metadata) as generation:
-                reply = await llm_client.call_tools(config, messages, available or definitions, tool_choice=choice)
+                reply = await llm_client.call_tools(config, request_messages, available or definitions, tool_choice=choice)
                 generation.record_reply(reply)
             call_audit.update(raw_response=reply.response, message=reply.message)
             calls = reply.message.get("tool_calls")
             if not calls:
                 with trace.observation("Investigation Agent · validate summary", as_type="guardrail", input=reply.content) as validation:
-                    text = reply.content
-                    if not isinstance(text, str) or not text.strip() or len(text) > 1200:
-                        raise AppError("investigation_summary_invalid", "Final reply must contain 1 to 1200 characters of concise prose",
-                                       details={"category": "summary", "errors": [{"loc": ["answer"], "code": "invalid_summary"}]})
-                    try:
-                        structured = _strict_json(text)
-                    except (ValueError, TypeError, RecursionError):
-                        structured = None
-                    if isinstance(structured, (dict, list)):
-                        raise AppError("investigation_summary_invalid", "Use artifact tools, not a final JSON result",
-                                       details={"category": "summary", "errors": [{"loc": ["answer"], "code": "structured_final_reply"}]})
-                    output = snapshot(text.strip(), "completed")
+                    text = _validate_summary(reply.content, proposals)
+                    output = snapshot(text, "completed")
                     validation.update(output={"valid": True, "summary_status": "completed"})
                 stop_reason = output["stop_reason"]
                 audit.update(status="success", stop_reason=stop_reason, result=output)
