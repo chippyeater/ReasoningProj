@@ -27,6 +27,8 @@ from app.errors import AppError
 from app.extraction_service import run_extraction
 from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_proposal
 from app.investigation_agent import run_investigation
+from app.reasoning_models import ReasoningEdit
+from app.reasoning_service import edit_reasoning
 from app.issue_workspaces import IssueWorkspacePatch, get_issue_workspaces, update_issue_workspace, investigation_context
 from app.observability import flush as flush_observability
 from app.quote_units import QuoteUnit
@@ -258,6 +260,12 @@ async def update_workspace(case_id: str, payload: WorkspaceState) -> CaseRespons
 @app.get("/api/cases/{case_id}/issue-workspaces")
 async def read_issue_workspaces(case_id: str):
     return get_issue_workspaces(require_case(case_id))
+
+
+@app.patch("/api/cases/{case_id}/issue-reasoning")
+async def update_issue_reasoning(case_id: str, payload: ReasoningEdit):
+    state, object_id = edit_reasoning(require_case(case_id), payload)
+    return {"workspaces": state, "object_id": object_id}
 
 
 @app.patch("/api/cases/{case_id}/issue-workspaces")

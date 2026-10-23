@@ -195,6 +195,8 @@ def delete_info_unit(case: CaseData, info_unit_id: str) -> CaseData:
     if index is None:
         raise AppError("info_unit_not_found", f"InfoUnit not found: {info_unit_id}", 404)
     references = _business_references_to_info_unit(case, info_unit_id)
+    from app.issue_workspaces import reasoning_references
+    references.extend(reasoning_references(case, info_unit_id))
     if references:
         raise AppError(
             "info_unit_in_use", "InfoUnit has business references and cannot be deleted", 409,

@@ -11,6 +11,7 @@ from pydantic import Field, ValidationError, model_validator
 from app.case_store import case_dir, write_json
 from app.errors import AppError
 from app.schemas import CaseData, ContractModel, Text, WorkspaceState
+from app.reasoning_models import ReasoningState
 
 IssueStatus = Literal["pending", "investigating", "closed"]
 
@@ -33,6 +34,7 @@ class IssueCanvas(WorkspaceState):
 class IssueWorkspace(ContractModel):
     status: IssueStatus = "pending"
     canvas: IssueCanvas
+    reasoning: ReasoningState = Field(default_factory=ReasoningState)
 
 
 class IssueWorkspaces(ContractModel):
@@ -71,14 +73,15 @@ def get_issue_workspaces(case: CaseData) -> IssueWorkspaces:
     for key in keys:
         if key in saved.workspaces:
             item = saved.workspaces[key].model_copy(deep=True)
+            local_known = known | {obj.id for obj in [*item.reasoning.hypotheses, *item.reasoning.gaps]}
             canvas = item.canvas
             # Deleting shared nodes must not make unrelated Issue layouts unusable.
-            canvas.visible_node_ids = [uid for uid in canvas.visible_node_ids if uid in known]
-            canvas.selected_node_ids = [uid for uid in canvas.selected_node_ids if uid in known]
-            if canvas.focused_node_id not in known:
+            canvas.visible_node_ids = [uid for uid in canvas.visible_node_ids if uid in local_known]
+            canvas.selected_node_ids = [uid for uid in canvas.selected_node_ids if uid in local_known]
+            if canvas.focused_node_id not in local_known:
                 canvas.focused_node_id = None
-            canvas.node_positions = {uid: p for uid, p in canvas.node_positions.items() if uid in known}
-            canvas.display_levels = {uid: level for uid, level in canvas.display_levels.items() if uid in known}
+            canvas.node_positions = {uid: p for uid, p in canvas.node_positions.items() if uid in local_known}
+            canvas.display_levels = {uid: level for uid, level in canvas.display_levels.items() if uid in local_known}
             if canvas.current_view_id not in {v.id for v in case.reasoning_views}:
                 canvas.current_view_id = None
             projected[key] = item
@@ -109,7 +112,9 @@ def update_issue_workspace(case: CaseData, patch: IssueWorkspacePatch) -> IssueW
     if patch.canvas is not None:
         canvas = patch.canvas
         refs = set(canvas.visible_node_ids) | canvas.node_positions.keys() | canvas.display_levels.keys()
-        if not refs <= _node_ids(case):
+        reasoning = current.workspaces[patch.issue].reasoning
+        known = _node_ids(case) | {obj.id for obj in [*reasoning.hypotheses, *reasoning.gaps]}
+        if not refs <= known:
             raise AppError("unknown_workspace_node", "Workspace node does not belong to the current case")
         if canvas.current_view_id is not None and canvas.current_view_id not in {v.id for v in case.reasoning_views}:
             raise AppError("unknown_workspace_view", "Workspace view does not belong to the current case")
@@ -117,12 +122,28 @@ def update_issue_workspace(case: CaseData, patch: IssueWorkspacePatch) -> IssueW
     if patch.status is not None:
         current.workspaces[patch.issue].status = patch.status
     current.active_issue = patch.issue
+    persist_issue_workspaces(case, current)
+    return current
+
+
+def persist_issue_workspaces(case: CaseData, current: IssueWorkspaces) -> None:
     # Preserve dormant entries if a later extraction changes issue_set.
     saved = _read(case)
     saved.workspaces.update(current.workspaces)
     saved.active_issue = current.active_issue
     write_json(case_dir(case.case_id) / "issue_workspaces.json", saved.model_dump(mode="json"))
-    return current
+
+
+def reasoning_references(case: CaseData, info_unit_id: str) -> list[dict]:
+    refs = []
+    for issue, workspace in _read(case).workspaces.items():
+        for link in workspace.reasoning.links:
+            if link.info_unit_id == info_unit_id:
+                refs.append({"kind": "hypothesis_evidence", "id": link.id, "issue": issue})
+        for gap in workspace.reasoning.gaps:
+            if info_unit_id in gap.info_unit_ids:
+                refs.append({"kind": "evidence_gap", "id": gap.id, "issue": issue})
+    return refs
 
 
 def investigation_context(case: CaseData, current_issue: str) -> dict:
