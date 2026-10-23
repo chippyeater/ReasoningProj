@@ -1066,11 +1066,20 @@ button:disabled {
 }
 
 .investigation-result { max-height: min(60vh, 540px); overflow-y: auto; }
-.investigation-result h3 { margin: 4px 0; font-size: 12px; }
+.investigation-result h3 { margin: 8px 0; font-size: 12px; }
 .investigation-result p { margin: 4px 0; overflow-wrap: anywhere; }
 .investigation-result button { margin: 2px; }
 .investigation-result a { color: #d5ff72; }
 .investigation-result blockquote { margin: 8px 0; white-space: pre-wrap; }
+.investigation-result { font-size: 12px; line-height: 1.65; gap: 12px; }
+.investigation-answer { font-size: 15px; line-height: 1.7; font-weight: 600; }
+.investigation-result summary { cursor: pointer; color: #c5bdf4; padding: 4px 0; }
+.investigation-limit { border-left: 2px solid #aca0ef; padding: 4px 10px; color: #c4bfd6; }
+.investigation-source { background: rgba(255,255,255,.05); border-radius: 8px; padding: 10px; }
+.investigation-source-title { font-weight: 600; }
+.investigation-source-kind { display: inline-block; color: #c4bfd6; margin-left: 8px; }
+.investigation-source blockquote { border-left: 2px solid #747085; padding-left: 10px; }
+.investigation-full { border-top: 1px solid #403a58; padding-top: 6px; }
 
 .agent-proposal header,
 .agent-proposal footer {

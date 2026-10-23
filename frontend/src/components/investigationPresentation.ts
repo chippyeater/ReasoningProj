@@ -1,0 +1,41 @@
+import type { AgentResult, InfoUnit, Relation } from "../api";
+
+type Evidence = AgentResult["evidence"][number];
+
+/** Exact source identity, never similarity, title or InfoUnit identity. */
+export function groupSources(evidence: Evidence[]) {
+  const groups = new Map<string, { source: Evidence; refs: Evidence[] }>();
+  for (const ref of evidence) {
+    const key = JSON.stringify([ref.file_id, ref.start, ref.end, ref.quote]);
+    const group = groups.get(key);
+    if (group) group.refs.push(ref);
+    else groups.set(key, { source: ref, refs: [ref] });
+  }
+  return [...groups.values()];
+}
+
+export const sourceKinds: Record<string, string> = {
+  testimony: "笔录陈述", communication: "沟通记录", document: "文书材料", record: "记录材料", other: "其他材料",
+};
+
+export function displayText(text: string, units: Pick<InfoUnit, "id" | "title">[], evidence: Evidence[], relations: Relation[]) {
+  const labels = new Map(units.map(unit => [unit.id, unit.title]));
+  for (const [key, value] of Object.entries({ search_info_units: "资料检索", get_relations: "关联核查", get_evidence: "原文核查",
+    truncated: "部分材料尚未核查", invalid_request: "查询条件需要调整", error: "查询未能完成" })) labels.set(key, value);
+  for (const ref of evidence) labels.set(ref.file_id, ref.filename);
+  for (const relation of relations) labels.set(relation.id, "相关关系");
+  return text.replace(/[A-Za-z][A-Za-z0-9_-]*/g, token => labels.get(token) ?? (
+    /^(?:info|file|relation|investigation|run)-/.test(token) || /^[UR]\d{3,}$/.test(token) ? "相关材料" : token));
+}
+
+/** Collapse runtime diagnostics without deduplicating distinct factual questions. */
+export function presentQuestion(question: string) {
+  if (/truncated|has_more|部分关系的依据 ID 列表被截断/.test(question)) return { limit: true, text: "部分材料尚未核查，当前判断可能不完整。" };
+  if (/invalid_request/.test(question)) return { limit: true, text: "部分资料未能查询，需要调整调查范围后继续核查。" };
+  if (/\berror\b|parsed_cache|无法读取/.test(question)) return { limit: true, text: "部分材料暂时无法读取，相关判断尚待核实。" };
+  if (/工具预算|调用尝试上限|调查预算耗尽/.test(question)) return { limit: true, text: "本轮核查范围有限，仍可继续查阅材料。" };
+  if (/等价重复查询|duplicate_query/.test(question)) return { limit: true, text: "本轮未再获得新线索，可以换一个角度继续核查。" };
+  if (/未使用可精确回溯|未取得可精确回溯/.test(question)) return { limit: true, text: "本轮缺少可核对的原文依据。" };
+  return { limit: false, text: question.replace(/search_info_units|get_relations|get_evidence/g, "资料查询")
+    .replace(/SourceRefs?/g, "原文引用").replace(/InfoUnits?/g, "相关信息") };
+}

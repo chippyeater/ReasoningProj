@@ -2918,7 +2918,8 @@ export default function App() {
                 {relationStatus ? <p className="relation-run-status" role="status">{relationStatus}</p> : null}
                 {agentError ? <p className="agent-proposal-error" role="alert">{agentError}</p> : null}
                 {agentBusy ? <p role="status">调查中…正在按需检索和核对依据。</p> : null}
-                {agentResult ? <InvestigationResultPanel result={agentResult} onLocate={locateAgentNode}
+                {agentResult ? <InvestigationResultPanel result={agentResult} infoUnits={currentCase?.info_units ?? []}
+                  relations={currentCase?.relations ?? []} onLocate={locateAgentNode}
                   onClose={() => setAgentResult(null)} /> : null}
               </div>
             ) : null}
