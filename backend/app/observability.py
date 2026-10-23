@@ -86,6 +86,8 @@ def _summary(value: object) -> dict[str, object]:
                 for error in errors if isinstance(error, dict) and (error.get("code") or error.get("field"))
             })
         details = value.get("validation_details")
+        if not details and isinstance(value.get("error"), dict):
+            details = value["error"].get("validation_details")
         if isinstance(details, dict) and isinstance(details.get("errors"), list):
             result["validation_error_codes"] = sorted({
                 str(error.get("code") or error.get("field"))

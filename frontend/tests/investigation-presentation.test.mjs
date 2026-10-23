@@ -28,6 +28,17 @@ test('wrong proposal type, missing accepted object and invalid index never enabl
   assert.ok(hypothesisProposalTargets(result, state, 0).every(target => !target.accepted));
 });
 
+test('returned proposal IDs resolve only inside the current run and survive reordering', () => {
+  const parent = { kind: 'hypothesis', content: '计租连续', proposal_id: 'proposal-parent' };
+  const gap = { kind: 'evidence_gap', proposal_id: 'proposal-gap', hypothesis_proposal_ids: ['proposal-parent'] };
+  const state = { hypotheses: [{ id: 'h', proposal_key: 'run-a:proposal-parent' }],
+    accepted_proposals: { 'run-a:proposal-parent': 'h' } };
+  const result = { run_id: 'run-a', proposals: [gap, parent] };
+  assert.deepEqual(hypothesisProposalTargets(result, state, 0), [{ title: '计租连续', accepted: true }]);
+  assert.equal(hypothesisProposalTargets({ ...result, run_id: 'run-b' }, state, 0)[0].accepted, false);
+  assert.equal(hypothesisProposalTargets({ ...result, proposals: [gap] }, state, 0)[0].accepted, false);
+});
+
 test('same exact source groups all pointers without changing originals', () => {
   const second = Object.freeze({ ...ref, info_unit_id: 'info-two', source_ref_index: 3 });
   const original = Object.freeze([ref, second]);

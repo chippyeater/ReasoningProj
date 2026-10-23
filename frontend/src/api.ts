@@ -3,6 +3,9 @@
 export type AgentEvidenceRef = { info_unit_id: string; source_ref_index: number };
 export type AgentResult = {
   goal: string;
+  answer?: string | null;
+  summary_status?: "pending" | "completed" | "failed";
+  limitations?: string[];
   findings: Array<{ statement: string; info_unit_ids: string[]; relation_ids: string[]; evidence_refs: AgentEvidenceRef[] }>;
   relevant_info_unit_ids: string[];
   relevant_relation_ids: string[];
@@ -381,7 +384,8 @@ export type EvidenceLink = { id: string; hypothesis_id: string; info_unit_id: st
 export type ReasoningState = { hypotheses: Hypothesis[]; gaps: EvidenceGap[]; links: EvidenceLink[]; accepted_proposals: Record<string, string> };
 export type ReasoningProposal = { kind: "hypothesis" | "evidence_link" | "evidence_gap" | "hypothesis_status";
   content: string | null; hypothesis_ids: string[]; info_unit_ids: string[]; meaning: LinkMeaning | null;
-  judgment: Judgment | null; rationale: string; evidence_refs: AgentEvidenceRef[]; hypothesis_proposal_indices?: number[] };
+  judgment: Judgment | null; rationale: string; evidence_refs: AgentEvidenceRef[];
+  proposal_id?: string | null; hypothesis_proposal_ids?: string[]; hypothesis_proposal_indices?: number[] };
 export type ReasoningEdit = { issue: string; hypothesis?: { id?: string; content: string; judgment: Judgment; work_status: "active" | "deprecated" };
   gap?: { id?: string; content: string; hypothesis_ids: string[]; info_unit_ids: string[]; status: "open" | "resolved" };
   link?: { id?: string; hypothesis_id: string; info_unit_id: string; meaning: LinkMeaning; rationale: string };
@@ -399,7 +403,7 @@ export async function editIssueReasoning(caseId: string, edit: ReasoningEdit): P
 }
 
 export async function acceptReasoningProposal(caseId: string, input: {
-  issue: string; run_id: string; proposal_index: number; position: CardPosition;
+  issue: string; run_id: string; proposal_id?: string; proposal_index?: number; position: CardPosition;
 }): Promise<{ workspaces: IssueWorkspaces; object_id: string; already_accepted: boolean }> {
   return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/reasoning-proposals/accept`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),

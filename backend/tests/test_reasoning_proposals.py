@@ -19,28 +19,52 @@ def suggestion(kind, hid=None):
             "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}
 
 
+def proposal_call(source, prior_ids, call_id):
+    """Offline scenario -> native call, using only IDs returned by previous tools."""
+    kind = source["kind"]
+    args = {key: source[key] for key in ("rationale", "evidence_refs")}
+    if kind == "evidence_link":
+        args.update(hypothesis_id=source["hypothesis_ids"][0], info_unit_id=source["info_unit_ids"][0], meaning=source["meaning"])
+    else:
+        args["info_unit_ids"] = source["info_unit_ids"]
+        if kind in {"hypothesis", "evidence_gap"}:
+            args["content"] = source["content"]
+        if kind == "hypothesis_status":
+            args.update(hypothesis_id=source["hypothesis_ids"][0], judgment=source["judgment"])
+        if kind == "evidence_gap":
+            args.update(hypothesis_ids=source["hypothesis_ids"], hypothesis_proposal_ids=source.get("hypothesis_proposal_ids", [
+                prior_ids[index] if index < len(prior_ids) else "proposal-" + "f" * 32
+                for index in source.get("hypothesis_proposal_indices", [])]))
+    return replies.tool("propose_" + kind, args, call_id)
+
+
 class TestReasoningProposals(TestReasoningWorkspace):
     # Do not repeat parent tests in this suite.
     test_edit_link_gap_and_restore_without_business_copies = None
     test_invalid_refs_duplicates_and_write_failure_leave_file_unchanged = None
     test_legacy_workspace_and_referenced_evidence_are_protected = None
 
-    def investigate(self, proposals, selected=None):
+    def investigate(self, proposals, selected=None, *, summary_failure=False):
         goal = "检查假设的支持、反对依据及证据缺口"
-        final = replies.final(goal, ["U029"], refs=[("U029", 0)], status="completed")
-        content = json.loads(final.content)
-        if proposals is not None:
-            content["proposals"] = proposals
-        final.message["content"] = final.content = json.dumps(content, ensure_ascii=False)
-        final.response["choices"][0]["message"] = final.message
-        script = [replies.tool("get_evidence", {"info_unit_ids": ["U029"]}), final]
         requests = []
         real_client = httpx.AsyncClient
-
         def model(request):
-            requests.append(json.loads(request.content))
-            return httpx.Response(200, json=script[len(requests)-1].response)
-
+            body = json.loads(request.content)
+            requests.append(body)
+            step = len(requests) - 1
+            if step == 0:
+                reply = replies.tool("get_evidence", {"info_unit_ids": ["U029"]})
+            elif step <= len(proposals or []):
+                returned = [json.loads(m["content"]) for m in body["messages"] if m["role"] == "tool"]
+                ids = [r["proposal_id"] for r in returned if r.get("pending")]
+                reply = proposal_call(proposals[step - 1], ids, f"proposal-{step}")
+            elif step == len(proposals or []) + 1:
+                reply = replies.present(goal, ["U029"], refs=[("U029", 0)], status="completed")
+            elif summary_failure:
+                return httpx.Response(500, text="mock final model failure")
+            else:
+                reply = replies.final("已核对相关陈述，尚需独立材料；建议均待用户确认。")
+            return httpx.Response(200, json=reply.response)
         with patch.object(llm_client.httpx, "AsyncClient", side_effect=lambda **kwargs:
                           real_client(transport=httpx.MockTransport(model), **kwargs)):
             response = self.client.post(f"/api/cases/{self.case.case_id}/agent/run", json={
@@ -48,8 +72,11 @@ class TestReasoningProposals(TestReasoningWorkspace):
         return response, requests
 
     def accept(self, run_id, index=0, issue=None):
+        path = case_dir(self.case.case_id) / f"runs/{run_id}.output.json"
+        proposals = json.loads(path.read_text(encoding="utf-8"))["result"]["proposals"]
+        reference = {"proposal_id": proposals[index]["proposal_id"]} if index < len(proposals) and proposals[index].get("proposal_id") else {"proposal_index": index}
         return self.client.post(f"/api/cases/{self.case.case_id}/reasoning-proposals/accept", json={
-            "issue": issue or self.issue, "run_id": run_id, "proposal_index": index, "position": {"x": 1500, "y": 500}})
+            "issue": issue or self.issue, "run_id": run_id, **reference, "position": {"x": 1500, "y": 500}})
 
     def test_validated_proposals_remain_preview_until_atomic_idempotent_adoption(self):
         hid = self.hypothesis()
@@ -64,7 +91,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertNotIn("source_refs", json.dumps(initial))
         self.assertNotIn("node_positions", json.dumps(initial))
         self.assertNotIn("visible_node_ids", json.dumps(initial))
-        self.assertIn("proposals", requests[0]["response_format"]["json_schema"]["schema"]["required"])
+        self.assertNotIn("response_format", requests[0])
         run_id = response.json()["run_id"]
         self.assertEqual(self.accept(run_id, issue=self.case.core_issue).status_code, 409)
         accepted = self.accept(run_id)
@@ -122,7 +149,8 @@ class TestReasoningProposals(TestReasoningWorkspace):
             else:
                 proposal["evidence_refs"][0]["source_ref_index"] = 9
             response, _ = self.investigate([proposal])
-            self.assertEqual(response.status_code, 422, response.text)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["proposals"], [])
         response, _ = self.investigate(None)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["proposals"], [])
@@ -151,6 +179,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
 
     def dependent_proposals(self):
         first, second = suggestion("evidence_gap"), suggestion("evidence_gap")
+        first["content"], second["content"] = "核对新旧租约的计租起点", "核对实际交房时间及收款记录"
         first["hypothesis_proposal_indices"] = [0]
         second["hypothesis_proposal_indices"] = [0]
         return [suggestion("hypothesis"), first, second]
@@ -194,6 +223,20 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertNotEqual(parent_a, parent_b)
         self.assertEqual(state.gaps[0].hypothesis_ids, [parent_a])
 
+    def test_returned_id_from_another_run_is_rejected_by_tool_and_adoption(self):
+        first, _ = self.investigate([suggestion("hypothesis")])
+        foreign_id = first.json()["proposals"][0]["proposal_id"]
+        gap = suggestion("evidence_gap")
+        gap["hypothesis_proposal_ids"] = [foreign_id]
+        second, _ = self.investigate([gap])
+        self.assertEqual(second.json()["proposals"], [])
+        run = second.json()["run_id"]
+        audit = json.loads((case_dir(self.case.case_id) / f"runs/{run}.output.json").read_text(encoding="utf-8"))
+        self.assertEqual(audit["tool_calls"][1]["result"]["status"], "invalid_request")
+        response = self.client.post(f"/api/cases/{self.case.case_id}/reasoning-proposals/accept", json={
+            "issue": self.issue, "run_id": run, "proposal_id": foreign_id})
+        self.assertEqual(response.status_code, 409)
+
     def test_copied_run_envelopes_and_wrong_target_types_are_rejected_at_adoption(self):
         response, _ = self.investigate(self.dependent_proposals())
         run = response.json()["run_id"]
@@ -207,7 +250,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
             elif part == "result":
                 audit["result"]["run_id"] = "investigation-" + "a" * 32
             else:
-                audit["result"]["proposals"][1]["hypothesis_proposal_indices"] = [2]
+                audit["result"]["proposals"][1]["hypothesis_proposal_ids"] = [audit["result"]["proposals"][2]["proposal_id"]]
             path.write_text(json.dumps(audit), encoding="utf-8")  # Isolated mock audit only.
             with self.subTest(part=part):
                 self.assertEqual(self.accept(run, 1).status_code, 409)
@@ -242,21 +285,19 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"]["code"], "stale_reasoning_proposal")
 
-    def test_invalid_dependency_is_audited_with_location_and_never_partially_saved(self):
-        path = case_dir(self.case.case_id) / "issue_workspaces.json"
-        before = path.read_bytes() if path.exists() else None
+    def test_invalid_dependency_is_audited_without_silently_dropping_candidates(self):
         proposals = self.dependent_proposals()
         proposals[1]["hypothesis_proposal_indices"] = [5]
         response, requests = self.investigate(proposals)
-        self.assertEqual(response.status_code, 422, response.text)
-        self.assertEqual(len(requests), 2)  # No model repair/retry.
-        error = response.json()["detail"]
-        self.assertEqual(error["category"], "proposal_semantics")
-        self.assertEqual(error["errors"][0]["loc"], ["proposals", 1, "hypothesis_proposal_indices", 0])
-        audit = json.loads((case_dir(self.case.case_id) / f"runs/{error['run_id']}.output.json").read_text(encoding="utf-8"))
-        self.assertEqual(audit["status"], "failed")
-        self.assertEqual(audit["error"]["validation_details"]["errors"], error["errors"])
-        self.assertEqual(path.read_bytes() if path.exists() else None, before)
+        self.assertEqual(response.status_code, 200, response.text)
+        run = response.json()["run_id"]
+        audit = json.loads((case_dir(self.case.case_id) / f"runs/{run}.output.json").read_text(encoding="utf-8"))
+        rejected = audit["tool_calls"][2]["result"]
+        self.assertEqual(rejected["status"], "invalid_request")
+        self.assertEqual(rejected["error"]["validation_details"]["category"], "proposal_semantics")
+        self.assertEqual(rejected["error"]["validation_details"]["errors"][0]["loc"], ["proposals", 1, "hypothesis_proposal_ids", 0])
+        self.assertEqual(len(response.json()["proposals"]), 2)  # The failed candidate is explicitly audited, not accepted.
+        self.assertFalse(get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses)
 
     def test_existing_ids_and_new_indices_can_be_combined_and_save_failure_is_atomic(self):
         existing = self.hypothesis()
@@ -276,20 +317,48 @@ class TestReasoningProposals(TestReasoningWorkspace):
         gap = get_issue_workspaces(self.case).workspaces[self.issue].reasoning.gaps[0]
         self.assertEqual(gap.hypothesis_ids, [existing, parent])
 
-    def test_privacy_mode_traces_keep_error_category_and_location_without_case_text(self):
+    def test_summary_failure_does_not_discard_or_auto_accept_valid_proposals(self):
+        response, _ = self.investigate(self.dependent_proposals(), summary_failure=True)
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["summary_status"], "failed")
+        self.assertIsNone(result["answer"])
+        self.assertEqual(len(result["proposals"]), 3)
+        self.assertFalse(get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses)
+        self.assertEqual(self.accept(result["run_id"], 1).status_code, 409)
+        self.assertEqual(self.accept(result["run_id"]).status_code, 200)
+        self.assertEqual(self.accept(result["run_id"], 1).status_code, 200)
+
+    def test_legacy_audit_without_proposal_ids_remains_adoptable(self):
+        from app.reasoning_models import ReasoningProposal
+        from app.reasoning_proposals import proposal_receipt
+        old = self.dependent_proposals()[:2]
+        run = "investigation-" + "a" * 32
+        audit = {"run_id": run, "status": "success", "result": {"run_id": run, "proposals": old},
+                 "proposal_receipt": proposal_receipt(self.case, self.issue, {"reasoning": {"hypotheses": []}},
+                     [ReasoningProposal.model_validate(p) for p in old])}
+        path = case_dir(self.case.case_id) / f"runs/{run}.output.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(audit), encoding="utf-8")
+        before = path.read_bytes()
+        self.assertEqual(self.accept(run, 1).status_code, 409)
+        parent = self.accept(run).json()["object_id"]
+        self.assertEqual(self.accept(run, 1).status_code, 200)
+        state = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        self.assertEqual(state.gaps[0].hypothesis_ids, [parent])
+        self.assertIn(f"{run}:0", state.accepted_proposals)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_tool_rejections_keep_error_locations_in_privacy_traces(self):
         import test_observability as tracing
         from app import observability
         backend = tracing.FakeBackend()
         settings = observability.ObservabilitySettings(True, False, "pk-test", "sk-test", "https://test", "test")
         proposals = self.dependent_proposals()
-        proposals[1]["hypothesis_proposal_indices"] = [5]
-        with patch.object(observability, "load_settings", return_value=settings), patch.object(
-                observability, "_get_backend", return_value=backend):
-            self.assertEqual(self.investigate(proposals)[0].status_code, 422)
-        span = next(s for s in backend.client.spans if s.start["name"] == "Investigation Agent · validate result")
-        error = next(update["output"] for update in span.updates if "output" in update)
-        self.assertEqual(error["validation_category"], "proposal_semantics")
-        self.assertEqual(error["validation_errors"][0]["loc"], ["proposals", 1, "hypothesis_proposal_indices", 0])
-        serialized = json.dumps(span.updates, ensure_ascii=False)
-        self.assertNotIn(proposals[1]["content"], serialized)
-        self.assertNotIn("张某陈述", serialized)
+        proposals[1]["hypothesis_proposal_ids"] = ["proposal-" + "b" * 32]
+        with patch.object(observability, "load_settings", return_value=settings), patch.object(observability, "_get_backend", return_value=backend):
+            self.investigate(proposals)
+        outputs = [update["output"] for span in backend.client.spans for update in span.updates if "output" in update]
+        failed = next(value for value in outputs if value.get("validation_category") == "proposal_semantics")
+        self.assertEqual(failed["validation_errors"][0]["loc"], ["proposals", 1, "hypothesis_proposal_ids", 0])
+        self.assertNotIn(proposals[1]["content"], json.dumps(outputs, ensure_ascii=False))

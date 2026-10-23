@@ -20,7 +20,11 @@ from app.prompt_loader import load_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
 from app.reasoning_models import ReasoningProposal
 
-MAX_TOOL_CALLS = 8
+MAX_TOOL_CALLS = 8  # Read attempts, reserved independently from artifact submissions.
+MAX_PROPOSAL_CALLS = 6
+MAX_PRESENTATION_CALLS = 2
+MAX_TOTAL_CALLS = MAX_TOOL_CALLS + MAX_PROPOSAL_CALLS + MAX_PRESENTATION_CALLS
+READ_TOOLS = {"search_info_units": tools.search_info_units, "get_relations": tools.get_relations, "get_evidence": tools.get_evidence}
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts/investigation_agent_prompt.md"
 BoundedText = Annotated[str, Field(min_length=1, max_length=600, pattern=r"\S")]
 IDs = Annotated[list[BoundedText], Field(max_length=80)]
@@ -57,47 +61,6 @@ class InvestigationResult(InvestigationOutput):
     proposals: Annotated[list[ReasoningProposal], Field(max_length=6)] = Field(default_factory=list)
 
 
-def result_schema() -> dict:
-    """Provider constraints derived from the compatible runtime model.
-
-    Native strict schemas support anyOf, but not conditional if/then rules.
-    Only Gap's combined target count and cross-proposal references stay runtime-only.
-    """
-    schema = InvestigationResult.model_json_schema()
-    schema["required"] = list(schema["properties"])
-    base = schema["$defs"]["ReasoningProposal"]
-    variants = []
-    for kind in ("hypothesis", "evidence_gap", "evidence_link", "hypothesis_status"):
-        variant = deepcopy(base)
-        props = variant["properties"]
-        variant["required"] = list(props)
-        props["kind"] = {"type": "string", "enum": [kind]}
-        # This field defaults to [] only when reading older outputs, not on the wire.
-        props["hypothesis_proposal_indices"].pop("default", None)
-        for name, present in (("content", kind in {"hypothesis", "evidence_gap"}),
-                              ("meaning", kind == "evidence_link"),
-                              ("judgment", kind == "hypothesis_status")):
-            props[name] = next(part for part in props[name]["anyOf"]
-                               if (part.get("type") != "null") == present)
-        if kind == "hypothesis":
-            props["hypothesis_ids"]["maxItems"] = 0
-        elif kind != "evidence_gap":
-            props["hypothesis_ids"].update(minItems=1, maxItems=1)
-        if kind != "evidence_gap":
-            props["hypothesis_proposal_indices"]["maxItems"] = 0
-        if kind == "evidence_link":
-            props["info_unit_ids"]["maxItems"] = 1
-        if kind == "evidence_gap":
-            # Either existing IDs or new-proposal indices must be present; both are allowed.
-            with_ids = deepcopy(variant)
-            with_ids["properties"]["hypothesis_ids"]["minItems"] = 1
-            variants.append(with_ids)
-            props["hypothesis_proposal_indices"]["minItems"] = 1
-        variants.append(variant)
-    schema["$defs"]["ReasoningProposal"] = {"anyOf": variants}
-    return schema
-
-
 def _function(name: str, description: str, properties: dict) -> dict:
     return {"type": "function", "function": {
         "name": name, "description": description, "strict": True,
@@ -109,7 +72,7 @@ def _function(name: str, description: str, properties: dict) -> dict:
 def tool_definitions() -> list[dict]:
     ids = {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": tools.MAX_NODE_IDS}
     limit = {"type": ["integer", "null"], "minimum": 1, "maximum": tools.MAX_LIMIT}
-    return [
+    definitions = [
         _function("search_info_units", "按关键词检索节点摘要；empty 只表示此次未命中，truncated 表示仍有未返回结果。", {
             "query": {"type": "string", "minLength": 1, "maxLength": tools.MAX_QUERY_CHARS},
             "types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in InfoUnitType]}},
@@ -124,6 +87,36 @@ def tool_definitions() -> list[dict]:
             "info_unit_ids": ids,
         }),
     ]
+    from app.investigation_actions import PROPOSAL_TOOLS, present_findings
+    schema = ReasoningProposal.model_json_schema()
+    props = schema["properties"]
+    common = {key: props[key] for key in ("rationale", "info_unit_ids", "evidence_refs")}
+    content = next(part for part in props["content"]["anyOf"] if part.get("type") != "null")
+    text_id = {"type": "string", "minLength": 1, "pattern": r"\S"}
+    specifications = {
+        "propose_hypothesis": {**common, "content": content},
+        "propose_evidence_link": {"hypothesis_id": text_id, "info_unit_id": text_id,
+            "meaning": next(p for p in props["meaning"]["anyOf"] if p.get("type") != "null"),
+            "rationale": props["rationale"], "evidence_refs": props["evidence_refs"]},
+        "propose_evidence_gap": {**common, "content": content, "hypothesis_ids": props["hypothesis_ids"],
+            "hypothesis_proposal_ids": props["hypothesis_proposal_ids"]},
+        "propose_hypothesis_status": {**common, "hypothesis_id": text_id,
+            "judgment": next(p for p in props["judgment"]["anyOf"] if p.get("type") != "null")},
+    }
+    for name, properties in specifications.items():
+        definition = _function(name, PROPOSAL_TOOLS[name].__doc__, deepcopy(properties))
+        definition["function"]["parameters"]["$defs"] = schema["$defs"]
+        definitions.append(definition)
+    finding_schema = Finding.model_json_schema()
+    finding_defs = finding_schema.pop("$defs")
+    definition = _function("present_findings", present_findings.__doc__, {
+        "findings": {"type": "array", "items": finding_schema, "maxItems": 4},
+        "open_questions": InvestigationResult.model_json_schema()["properties"]["open_questions"],
+        "completion_status": InvestigationResult.model_json_schema()["properties"]["completion_status"],
+    })
+    definition["function"]["parameters"]["$defs"] = finding_defs
+    definitions.append(definition)
+    return definitions
 
 
 def _strict_json(raw: str) -> object:
@@ -142,23 +135,22 @@ def _strict_json(raw: str) -> object:
 
 
 def _arguments(name: str, raw: str) -> dict:
-    if len(raw) > 4000:
-        raise AppError("invalid_tool_arguments", "Tool arguments exceed 4000 characters")
+    if len(raw) > (4000 if name in READ_TOOLS else 12000):
+        raise AppError("invalid_tool_arguments", "Tool arguments exceed their bounded size")
     try:
         args = _strict_json(raw)
     except (ValueError, TypeError, RecursionError) as exc:
         raise AppError("invalid_tool_arguments", "Tool arguments must be strict JSON") from exc
-    fields = {
-        "search_info_units": ({"query"}, {"query", "types", "limit"}),
-        "get_relations": ({"info_unit_ids"}, {"info_unit_ids", "relation_types", "limit"}),
-        "get_evidence": ({"info_unit_ids"}, {"info_unit_ids"}),
-    }
+    fields = {d["function"]["name"]: (set(d["function"]["parameters"]["required"]),
+              set(d["function"]["parameters"]["properties"])) for d in tool_definitions()}
+    fields["search_info_units"] = ({"query"}, fields["search_info_units"][1])
+    fields["get_relations"] = ({"info_unit_ids"}, fields["get_relations"][1])
     if name not in fields:
-        raise AppError("unknown_tool", "Only the three read-only investigation tools are allowed")
+        raise AppError("unknown_tool", "Only registered investigation and pending-artifact tools are allowed")
     required, allowed = fields[name]
     if not isinstance(args, dict) or not required <= args.keys() or not args.keys() <= allowed:
         raise AppError("invalid_tool_arguments", "Missing or unsupported tool argument fields")
-    if name != "get_evidence":
+    if name in {"search_info_units", "get_relations"}:
         args["limit"] = tools.DEFAULT_LIMIT if args.get("limit") is None else args["limit"]
         args.setdefault("types" if name == "search_info_units" else "relation_types", None)
     return args
@@ -195,6 +187,18 @@ def _remember(name: str, result: dict, seen: dict) -> None:
             seen["evidence"].add((item["info_unit_id"], item["source_ref_index"]))
 
 
+def _validation_details(exc: ValidationError) -> dict:
+    errors = []
+    for error in exc.errors(include_input=False, include_context=False, include_url=False):
+        loc = list(error["loc"])
+        if error["type"] == "extra_forbidden":
+            loc[-1] = "<extra>"
+        errors.append({"loc": loc, "code": error["type"], "message": error["msg"],
+                       "category": "proposal_semantics" if error["type"] == "value_error" else "structure"})
+    categories = {e["category"] for e in errors}
+    return {"category": next(iter(categories)) if len(categories) == 1 else "mixed", "errors": errors}
+
+
 def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_context: dict | None = None) -> InvestigationResult:
     try:
         parsed = _strict_json(raw)
@@ -205,16 +209,7 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
     try:
         result = InvestigationResult.model_validate(parsed)
     except ValidationError as exc:
-        errors = []
-        for error in exc.errors(include_input=False, include_context=False, include_url=False):
-            loc = list(error["loc"])
-            if error["type"] == "extra_forbidden":
-                loc[-1] = "<extra>"  # Unknown model-authored keys may themselves contain private data.
-            errors.append({"loc": loc, "code": error["type"], "message": error["msg"],
-                           "category": "proposal_semantics" if loc[:1] == ["proposals"] and error["type"] == "value_error" else "structure"})
-        category = errors[0]["category"] if len({e["category"] for e in errors}) == 1 else "mixed"
-        raise AppError("investigation_result_invalid", "Final result failed contract validation", details={
-            "category": category, "errors": errors}) from exc
+        raise AppError("investigation_result_invalid", "Artifact contract validation failed", details=_validation_details(exc)) from exc
     units = {unit.id: unit for unit in case.info_units}
     relations = {relation.id for relation in case.relations}
 
@@ -276,16 +271,17 @@ def _write_audit(case_id: str, path: str, payload: dict) -> None:
 async def run_investigation(case: CaseData, goal: str,
                             selected_info_unit_ids: list[str] | None = None, *, work_context: dict | None = None,
                             issue_key: str | None = None) -> dict:
-    """Investigate without changing CaseData; only separate runs/* audits are written.
+    """Bounded native tool loop; artifact validation is independent of final prose.
 
-    Up to 8 tool attempts and one finalization turn. A duplicate is not executed.
-    Invalid final citations fail explicitly; there is no model repair or retry.
+    Eight read attempts, six Proposal attempts, two presentation attempts and at
+    most one forced final turn. CaseData and Issue workspaces are never written.
     """
+    from app import investigation_actions as actions
+    from app.reasoning_proposals import proposal_receipt
     if not isinstance(goal, str) or not goal.strip() or len(goal) > 2000:
         raise AppError("invalid_investigation_goal", "goal must contain 1 to 2000 nonblank characters")
     bound_case = case.model_copy(deep=True)
-    selected = [] if selected_info_unit_ids is None or selected_info_unit_ids == [] else tools._selected_units(
-        bound_case, selected_info_unit_ids)
+    selected = [] if selected_info_unit_ids is None or selected_info_unit_ids == [] else tools._selected_units(bound_case, selected_info_unit_ids)
     counts = Counter(unit.type.value for unit in bound_case.info_units)
     initial_input = {
         "goal": goal, "core_issue": bound_case.core_issue[:500] if bound_case.core_issue else None,
@@ -303,96 +299,108 @@ async def run_investigation(case: CaseData, goal: str,
              "model_calls": [], "tool_calls": [], "stop_reason": None, "result": None}
     output_path = f"runs/{run_id}.output.json"
     seen = {"units": {unit.id for unit in selected}, "relations": set(), "evidence": set()}
-    fingerprints: set[str] = set()
-    call_ids: set[str] = set()
-    limitations: list[str] = []
+    fingerprints, call_ids = set(), set()
+    proposals, findings, questions, limitations = [], [], [], []
+    completion = "evidence_insufficient"
+    attempts = executed = 0
+    used = {"read": 0, "proposal": 0, "presentation": 0}
+    limits = {"read": MAX_TOOL_CALLS, "proposal": MAX_PROPOSAL_CALLS, "presentation": MAX_PRESENTATION_CALLS}
     stop_reason = None
-    attempts = 0
-    executed = 0
+
+    def bucket(name):
+        return "read" if name in READ_TOOLS else "proposal" if name in actions.PROPOSAL_TOOLS else "presentation" if name == "present_findings" else None
+
+    def snapshot(answer, summary_status):
+        result = actions.artifacts(bound_case, seen, work_context, goal, proposals, findings, questions, completion)
+        if used["read"] >= MAX_TOOL_CALLS:
+            result.completion_status = "budget_exhausted"
+        elif summary_status == "failed" or limitations or not result.findings or not result.evidence_refs:
+            if result.completion_status == "completed":
+                result.completion_status = "evidence_insufficient"
+        return {**result.model_dump(mode="json"), "answer": answer, "summary_status": summary_status,
+                "limitations": list(dict.fromkeys(limitations)), "run_id": run_id,
+                "stop_reason": stop_reason or ("running" if summary_status == "pending" else "model_finished"), "tool_call_count": executed,
+                "tool_attempt_count": attempts, "tool_budget_used": dict(used),
+                "model_call_count": len(audit["model_calls"])}
+
+    def persist_artifacts():
+        audit["result"] = snapshot(None, "pending")
+        if proposals:
+            audit["proposal_receipt"] = proposal_receipt(bound_case, issue_key, work_context, proposals)
+        _write_audit(bound_case.case_id, output_path, audit)
+
     try:
         config = llm_client.load_config()
         prompt = load_prompt(PROMPT_PATH, "investigation_agent")
         definitions = tool_definitions()
-        schema = result_schema()
         metadata = prompt.metadata(config.model)
         messages = [{"role": "system", "content": prompt.content},
                     {"role": "user", "content": json.dumps(initial_input, ensure_ascii=False)}]
         _write_audit(bound_case.case_id, f"runs/{run_id}.input.json", {
             "run_id": run_id, "model_input": initial_input, "system_prompt": prompt.content,
-            "tools": definitions, "schema": schema, "configuration": config.public_metadata(), **metadata})
+            "tools": definitions, "configuration": config.public_metadata(), **metadata})
         while True:
-            finalizing = stop_reason is not None
-            choice = "none" if finalizing else "auto"
-            payload = llm_client.tool_request_payload(config, messages, definitions, schema, tool_choice=choice)
+            available = [d for d in definitions if used[bucket(d["function"]["name"])] < limits[bucket(d["function"]["name"])]]
+            choice = "none" if stop_reason or not available else "auto"
+            # No response_format: only tools have structured contracts; the final message is prose.
+            payload = llm_client.tool_request_payload(config, messages, available or definitions, tool_choice=choice)
             call_audit = {"step": len(audit["model_calls"]) + 1, **metadata, "request": deepcopy(payload)}
             audit["model_calls"].append(call_audit)
             _write_audit(bound_case.case_id, output_path, audit)
-            with trace.observation(
-                "Investigation Agent · model call", as_type="generation", input=payload,
-                model=config.model, version=prompt.version,
-                model_parameters={"max_completion_tokens": config.max_completion_tokens}, metadata=metadata,
-            ) as generation:
-                reply = await llm_client.call_tools(config, messages, definitions, schema, tool_choice=choice)
+            with trace.observation("Investigation Agent · model call", as_type="generation", input=payload,
+                                   model=config.model, version=prompt.version,
+                                   model_parameters={"max_completion_tokens": config.max_completion_tokens}, metadata=metadata) as generation:
+                reply = await llm_client.call_tools(config, messages, available or definitions, tool_choice=choice)
                 generation.record_reply(reply)
             call_audit.update(raw_response=reply.response, message=reply.message)
             calls = reply.message.get("tool_calls")
             if not calls:
-                with trace.observation("Investigation Agent · validate result", as_type="guardrail",
-                                       input=reply.content) as validation:
-                    result = _validate_result(reply.content, goal, bound_case, seen, work_context)
-                    if result.completion_status == "budget_exhausted" and attempts != MAX_TOOL_CALLS:
-                        raise AppError("investigation_result_invalid", "Tool budget has not been exhausted")
-                    if attempts == MAX_TOOL_CALLS:
-                        result.completion_status = "budget_exhausted"
-                    elif stop_reason or limitations or not result.findings or not result.evidence_refs:
-                        if result.completion_status == "completed":
-                            result.completion_status = "evidence_insufficient"
-                    if not result.evidence_refs and result.completion_status != "unsupported":
-                        limitations.append("最终结果未使用可精确回溯的原文证据；摘要和空结果均不能证明事实成立或证据不存在。")
-                    result.open_questions = list(dict.fromkeys([*result.open_questions, *limitations]))
+                with trace.observation("Investigation Agent · validate summary", as_type="guardrail", input=reply.content) as validation:
+                    text = reply.content
+                    if not isinstance(text, str) or not text.strip() or len(text) > 1200:
+                        raise AppError("investigation_summary_invalid", "Final reply must contain 1 to 1200 characters of concise prose",
+                                       details={"category": "summary", "errors": [{"loc": ["answer"], "code": "invalid_summary"}]})
                     try:
-                        result = InvestigationResult.model_validate(result.model_dump())
-                    except ValidationError as exc:
-                        raise AppError("investigation_result_invalid", "Final result including runtime limits exceeds its contract") from exc
-                    validation.update(output={"valid": True, "result": result.model_dump(mode="json")})
-                stop_reason = stop_reason or "model_finished"
-                output = {**result.model_dump(mode="json"), "run_id": run_id, "stop_reason": stop_reason,
-                          "tool_call_count": executed, "tool_attempt_count": attempts,
-                          "model_call_count": len(audit["model_calls"])}
+                        structured = _strict_json(text)
+                    except (ValueError, TypeError, RecursionError):
+                        structured = None
+                    if isinstance(structured, (dict, list)):
+                        raise AppError("investigation_summary_invalid", "Use artifact tools, not a final JSON result",
+                                       details={"category": "summary", "errors": [{"loc": ["answer"], "code": "structured_final_reply"}]})
+                    output = snapshot(text.strip(), "completed")
+                    validation.update(output={"valid": True, "summary_status": "completed"})
+                stop_reason = output["stop_reason"]
                 audit.update(status="success", stop_reason=stop_reason, result=output)
-                if result.proposals:
-                    from app.reasoning_proposals import proposal_receipt
-                    audit["proposal_receipt"] = proposal_receipt(bound_case, issue_key, work_context, result.proposals)
                 _write_audit(bound_case.case_id, output_path, audit)
-                with trace.observation("Investigation Agent · stop", metadata={
-                    "stop_reason": stop_reason, "completion_status": result.completion_status,
-                    "tool_call_count": executed, "tool_attempt_count": attempts,
-                    "model_call_count": len(audit["model_calls"]),
-                }) as stop_span:
-                    stop_span.update(output={"status": result.completion_status})
+                with trace.observation("Investigation Agent · stop", metadata={"stop_reason": stop_reason, **used}) as stop_span:
+                    stop_span.update(output={"status": output["completion_status"]})
                 trace.finish_success(output)
                 return output
-            if finalizing or not isinstance(calls, list) or len(calls) != 1:
-                raise AppError("investigation_protocol_invalid", "Only one tool call is allowed before finalization")
+            if choice == "none" or not isinstance(calls, list) or len(calls) != 1:
+                raise AppError("investigation_protocol_invalid", "Only one permitted tool call is allowed before finalization")
             call = calls[0]
             if call["id"] in call_ids:
                 raise AppError("investigation_protocol_invalid", "Tool call IDs must be unique within a run")
             call_ids.add(call["id"])
             messages.append(deepcopy(reply.message))
             name, raw = call["function"]["name"], call["function"]["arguments"]
+            category = bucket(name)
             attempts += 1
             tool_audit = {"call_id": call["id"], "name": name, "raw_arguments": raw, "executed": False}
             audit["tool_calls"].append(tool_audit)
-            _write_audit(bound_case.case_id, output_path, audit)
-            with trace.observation("Investigation Agent · tool call", as_type="tool",
-                                   input={"name": name, "arguments": raw}, metadata={
-                                       "tool_name": name if name in {"search_info_units", "get_relations", "get_evidence"}
-                                       else "unsupported_tool", "attempt": attempts,
-                                   }) as tool_span:
+            if category is not None and used[category] < limits[category]:
+                used[category] += 1
+                permitted = True
+            else:
+                permitted = False
+            with trace.observation("Investigation Agent · tool call", as_type="tool", input={"name": name, "arguments": raw},
+                                   metadata={"tool_name": name if category else "unsupported_tool", "attempt": attempts}) as tool_span:
                 try:
                     args = _arguments(name, raw)
                     fingerprint = _fingerprint(name, args)
                     tool_audit["arguments"] = args
+                    if not permitted:
+                        raise AppError("tool_budget_exhausted", "This tool budget is exhausted; choose a remaining tool or finish")
                 except AppError as exc:
                     fingerprint = name + ":invalid:" + raw
                     response = tools._failure(exc)
@@ -400,43 +408,68 @@ async def run_investigation(case: CaseData, goal: str,
                     response = None
                 if fingerprint in fingerprints:
                     stop_reason = "duplicate_query"
-                    limitations.append("等价重复查询已被阻止，调查停止继续调用工具。")
-                    response = tools._failure(AppError("duplicate_query", "Equivalent query was already attempted"))
+                    limitations.append("等价重复调用已被阻止，请调整问题后继续调查。")
+                    response = tools._failure(AppError("duplicate_query", "Equivalent call was already attempted"))
                 else:
                     fingerprints.add(fingerprint)
                     if response is None:
                         tool_audit["executed"] = True
                         executed += 1
                         try:
-                            response = {"search_info_units": tools.search_info_units,
-                                        "get_relations": tools.get_relations,
-                                        "get_evidence": tools.get_evidence}[name](bound_case, **args)
-                        except Exception as tool_error:
-                            tool_audit["exception_type"] = type(tool_error).__name__
-                            tool_audit["error_code"] = getattr(tool_error, "code", "investigation_tool_failed")
-                            response = tools._failure(AppError("investigation_tool_failed", "Read-only tool failed"), status="error")
-                _remember(name, response, seen)
+                            if name in READ_TOOLS:
+                                response = getattr(tools, name)(bound_case, **args)
+                                _remember(name, response, seen)
+                            elif name in actions.PROPOSAL_TOOLS:
+                                draft = list(proposals)
+                                response = actions.PROPOSAL_TOOLS[name](bound_case, seen, work_context, draft, **args)
+                                actions.artifacts(bound_case, seen, work_context, goal, draft, findings, questions, completion)
+                                proposals = draft
+                            else:
+                                if args["completion_status"] == "budget_exhausted" and used["read"] < MAX_TOOL_CALLS:
+                                    raise AppError("invalid_findings", "Read budget has not been exhausted")
+                                result = actions.present_findings(bound_case, seen, work_context, goal, proposals, findings, questions, **args)
+                                findings = [f.model_dump(mode="json") for f in result.findings]
+                                questions, completion = result.open_questions, result.completion_status
+                                response = {"status": "ok", "findings": findings, "evidence_refs": result.model_dump(mode="json")["evidence_refs"]}
+                        except (AppError, ValidationError) as exc:
+                            details = exc.details if isinstance(exc, AppError) else _validation_details(exc)
+                            response = tools._failure(exc if isinstance(exc, AppError) else AppError("invalid_tool_arguments", "Artifact fields violate their contract"))
+                            response["error"]["validation_details"] = details
+                        except Exception as exc:
+                            tool_audit.update(exception_type=type(exc).__name__, error_code=getattr(exc, "code", "investigation_tool_failed"))
+                            response = tools._failure(AppError("investigation_tool_failed", "Tool failed; no artifact was accepted"), status="error")
                 if response["status"] in {"truncated", "invalid_request", "error"}:
-                    limitations.append(f"{name} 返回 {response['status']}，该查询未获得完整有效结果。")
+                    limitations.append(f"{name} 返回 {response['status']}，部分信息或建议尚未核查完成。")
                 if name == "get_relations" and any(row["relation"]["evidence_ids_truncated"] for row in response["items"]):
                     limitations.append("部分关系的依据 ID 列表被截断。")
                 tool_audit["result"] = deepcopy(response)
                 tool_span.update(output=response)
-            messages.append({"role": "tool", "tool_call_id": call["id"],
-                             "content": json.dumps(response, ensure_ascii=False)})
-            if attempts == MAX_TOOL_CALLS:
+            messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(response, ensure_ascii=False)})
+            if attempts >= MAX_TOTAL_CALLS:
                 stop_reason = "tool_budget_exhausted"
-                limitations.append("已达到 8 次工具调用尝试上限，未继续检索。")
+            if category and used[category] == limits[category]:
+                if category == "read":
+                    limitations.append("本轮检索预算已用尽，仍可提交已有依据的待确认成果。")
+                messages.append({"role": "system", "content": f"运行预算更新：{category} 已用尽。只能使用仍注册的工具，或直接简短总结。"})
             if stop_reason:
-                audit["stop_reason"] = stop_reason
-                messages.append({"role": "system", "content":
-                                 f"工具阶段已停止：{stop_reason}。仅总结已见数据，保留调查限制，不得再请求工具。"})
-            _write_audit(bound_case.case_id, output_path, audit)
+                messages.append({"role": "system", "content": f"工具阶段已停止：{stop_reason}。仅简短总结已取得成果和限制，不再调用工具。"})
+            persist_artifacts()
     except Exception as exc:
-        audit.update(status="failed", stop_reason=stop_reason or "error", error=trace.error_payload(exc))
+        error = trace.error_payload(exc)
+        # A failed summary cannot invalidate successfully checked tools or adopt them.
+        recoverable = isinstance(exc, llm_client.LLMFailure) or isinstance(exc, AppError) and exc.code in {
+            "investigation_summary_invalid", "investigation_protocol_invalid"}
+        partial = recoverable and bool(proposals or findings)
+        audit.update(status="partial" if partial else "failed", stop_reason=stop_reason or "error", error=error)
         if isinstance(exc, llm_client.LLMFailure):
             audit["provider_response"] = exc.response
         trace.finish_error(exc)
+        if partial:
+            stop_reason = "summary_failed"
+            output = snapshot(None, "failed")
+            audit.update(result=output, stop_reason=stop_reason)
+            _write_audit(bound_case.case_id, output_path, audit)
+            return output
         _write_audit(bound_case.case_id, output_path, audit)
         if isinstance(exc, AppError):
             exc.details = {**exc.details, "run_id": run_id}

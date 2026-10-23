@@ -23,6 +23,8 @@ const assert = require('node:assert/strict');
     }
     await ask('核对损失说法');
     await result.getByText('本轮调查已结束', { exact: true }).waitFor();
+    assert.equal(await result.locator('blockquote:visible').count(), 0);
+    await result.getByText('查看调查依据', { exact: true }).click();
     assert.match(await result.innerText(), /张某笔录.docx/);
     assert.match(await result.innerText(), /笔录陈述/);
     assert.match(await result.innerText(), /这个房子其实也没有空置多久/);
@@ -31,7 +33,8 @@ const assert = require('node:assert/strict');
     await page.screenshot({ path: 'tmp/unified-agent-result.png' });
     await ask('核对入住说法');
     await result.getByText('本轮调查已结束', { exact: true }).waitFor();
-    assert.match(await result.innerText(), /关键原文/);
+    await result.getByText('查看调查依据', { exact: true }).click();
+    assert.match(await result.innerText(), /来源原文/);
     assert.match(await result.innerText(), /他 3 月 8 号就直接搬进去住了/);
     await ask('删除这个节点');
     await result.getByText('当前不支持此操作', { exact: true }).waitFor();

@@ -1,61 +1,50 @@
-# Investigation Agent Loop（阶段 2）
+# Investigation Agent：工具成果与简洁总结
 
-后端入口：`app.investigation_agent.run_investigation(case, goal, selected_info_unit_ids=None)`，异步返回可 JSON 序列化的数据。传入当前有效 `CaseData`；可选选中节点为 0–5 个案件内唯一 ID。goal 为 1–2000 字符。统一入口通过 `POST /api/cases/{case_id}/agent/run` 调用，无新增布局生成或 Agent 框架。
+后端入口仍为 `run_investigation(case, goal, selected_info_unit_ids=None, work_context=None, issue_key=None)`，统一 API 为 `POST /api/cases/{case_id}/agent/run`。传入当前有效 CaseData；goal 为 1–2000 字符，可选 0–5 个案件内唯一节点。案件深拷贝绑定在运行时，不向模型暴露案件选择或写接口。
 
-```python
-from app.investigation_agent import run_investigation
+## 工具与决策
 
-result = await run_investigation(case, "双方关于实际损失的说法有哪些依据？", ["U029"])
-```
+完整注册表只有八个原生函数工具：
 
-## 决策与预算
+- `search_info_units`、`get_relations`、`get_evidence`：原有有限只读检索。
+- `propose_hypothesis`、`propose_evidence_link`、`propose_evidence_gap`、`propose_hypothesis_status`：分别校验并提交待确认建议，不能直接写正式对象。
+- `present_findings`：复用既有发现与来源界面。每次最多四项带引用的发现、待核查问题和完成状态；追加不同发现，不创建画布节点，不按展示形式继续增设工具。
 
-- 绑定案件深拷贝，初始模型上下文仅为 goal、核心争点（最多 500 字符）、五类节点数量和选中节点摘要。没有全案节点、关系、文件目录、来源目录或案件选择参数；统一入口另可提供下述有限 Issue 元数据。
-- 使用现有 Client 的配置、认证、超时和单次 HTTP 传输，增加原生 Chat Completions 函数调用入口。三个查询工具每轮均可选择；模型依据前轮结果决定换词、筛选、扩展一跳、读原文或结束，没有固定工具顺序。
-- 工具定义为 strict，关闭并行调用；最终输出使用严格 JSON Schema。协议依据：[OpenAI 官方函数调用文档](https://developers.openai.com/api/docs/guides/function-calling)。配置模型须同时支持函数调用和结构化输出，失败不换模型、不降级、不自动重试。
-- 最多 8 次工具调用尝试，包括错误参数或未授权工具请求。实际只读函数执行次数不超过尝试次数。每次结果仍受[阶段 1 工具预算](investigation_tools.md)约束。
-- 等价查询不重复执行：搜索忽略归一化大小写、词序和重复关键词，补齐可选参数默认值，类型筛选与关系节点顺序不影响等价性。证据节点顺序保留，因为顺序会影响可返回引用前缀。
-- 预算用尽或重复查询时，关闭后续工具能力，仅允许再进行一次模型总结；最多 9 次模型调用。模型可提前结束。停止后仍请求工具、返回格式错误或引用非法时明确失败，不再模型修复。
-- `empty` 允许换词、换工具，不能作为“证据不存在”的证明；`invalid_request/error` 允许纠正参数或调查别的材料。所有截断、无效请求和工具错误保留为运行限制，保守地阻止本轮报告 completed，即使后来取得了部分材料。
-- 最终没有使用精确原文引用或没有发现时，不能报告 completed；预算状态由运行时决定。空检索之后若改变查询并取得完整相关原文，可报告在目标范围内完成，不能声称全案检索完备。
+使用原有 LLM Client 原生函数调用，strict 工具参数，关闭并行调用。调查请求不再带完整结果 JSON Schema 或 response_format。模型最终直接回复 1–1200 字符自然语言；最终 JSON 不作为写入、引用或建议渠道。
 
-## 结果与引用
+事实问题直接检索并核对来源。分析问题按 Prompt 先考虑通常 2–3 种可区分、可检验的解释，针对支持、反对和区分性材料检索，之后才决定保留哪些建议；没有固定 Search → Relations → Evidence 或 Proposal 流程。临时调查计划不等于正式 Hypothesis。
 
-返回字段：
+8 次只读尝试、6 次建议尝试、2 次发现展示分别计数，错误参数也消耗对应预算；总计最多 16 次工具尝试及一次强制总结，最多 17 次模型调用。某类预算用尽后移除对应工具，其余工具仍可用；等价重复调用立即阻止并停止。预算和限制由后端报告，不让模型虚称完整。
 
-- `goal`：必须与请求相同。
-- `findings`：每项有 `statement/info_unit_ids/relation_ids/evidence_refs`，至少一项实际获得的依据；最多 12 项发现。
-- `relevant_info_unit_ids/relevant_relation_ids/evidence_refs`：最终使用的引用清单；证据指针为 `{info_unit_id, source_ref_index}`，不复制原文或模型生成的偏移。
-- `open_questions`：尚未解决问题及运行时限制。
-- `completion_status`：`completed / evidence_insufficient / budget_exhausted / unsupported`，分别表示目标范围内完成、依据不足、预算耗尽、当前不支持的操作。
-- 运行元数据：`run_id/stop_reason/tool_call_count/tool_attempt_count/model_call_count`。
+`empty` 只表示当前条件未命中。`truncated`、工具错误或未检索到不能证明材料不存在；运行限制保留，完成状态偏保守。不对错误输出自动模型修复或重试。
 
-后端只接受初始选中摘要、本轮搜索/一跳关系实际返回的节点，以及证据工具实际返回的节点与引用索引。关系依据列表中出现某个节点 ID，不等于读到了该节点。所有引用还需属于绑定案件；每项发现的引用必须列在顶层清单，证据指针的节点也必须列入相关节点。非法/重复/未取回的引用拒绝整份结果，原始失败输出保留在审计中，不静默丢弃。
+## 成果、引用和审批
 
-该校验保证引用存在及本轮可见性，不能自动证明陈述被引用充分支持或事实为真。单方陈述、关系推断和已核实事实由 Prompt 明确区分，语义质量仍需真实模型评估或人工复核。
+后端组装兼容的 `goal/findings/relevant_info_unit_ids/relevant_relation_ids/evidence_refs/open_questions/completion_status/proposals`，来源完全是成功工具提交的成果，不从最终总结解析。额外返回 `answer`、`summary_status`（completed/failed）、`limitations` 和运行计数。证据仍由 `info_unit_id + source_ref_index` 定位，API 只为这些已校验指针补全文名、原文和偏移，绝不把补全内容送回初始模型请求。
 
-## 追踪与只读范围
+节点、关系及引用必须属于绑定案件、在本次实际可见；SourceRef 必须由 get_evidence 返回，关系中列出的依据 ID 不等于已读证据。非法候选在工具结果中明确拒绝、记录字段位置与类别，不追加成果，不静默丢弃。校验保证可定位，不能证明陈述真实或充分支持推论。
 
-复用 `RunTrace` 的 generation、tool、guardrail observations，记录请求、响应、usage、Prompt 版本/哈希、停止原因和最终输出。沿用隐私策略：默认云端只发长度、哈希和状态摘要，只有显式启用 capture_content 才发送脱敏内容。
+四个 Proposal 工具复用同一个 ReasoningProposal 存储和审批服务，kind 由工具确定，不是最终模型 JSON 的分发依据。返回的临时 proposal_id 只在本次运行中有效；仅 Gap 可用 hypothesis_proposal_ids 指向已成功提出的新 Hypothesis。其余临时依赖禁止，详见 [Issue 协作推理](issue_reasoning.md)。
 
-本地审计写入 `runs/investigation-<uuid>.input.json` 与 `.output.json`：保存完整脱敏模型请求/响应、工具原始与规范化参数、结果、是否执行、停止原因和最终调查结果；本地审计不可写时明确失败。只写独立审计，不保存 CaseData，不新增/修改节点、关系、StageRun 或工作区状态。现有 StageRun CLI 索引不会列出调查运行；按返回 run_id 定位审计即可。
+工具成功后立即写入独立运行审计及版本凭据。自然语言总结失败且已有合法成果时，返回 summary_status=failed、answer=null，审计标记 partial；界面明确显示总结未完成，保留已验证的待确认建议。只有用户调用采纳接口才能正式写入，失败的总结既不会撤销工具成果，也不会连带采纳。没有成果的模型失败仍返回明确错误。审计写入失败不降级为成功。
 
-目标和工具结果始终作为 user/tool 数据消息，禁止把原文拼成系统消息或执行命令。运行时只有三个固定只读分发入口，没有任意函数、文件读写或案件切换能力。这不等于已经验证真实模型能抵抗所有提示注入。
+## 上下文、安全和观测
 
-## 验收与局限
+初始请求仅为目标、核心争点、类型数量、选中摘要及有限 Issue/推理摘要。不注入全案节点、关系、文件、画布、历史或全部假设。工具仍按需检索全案。
 
-```powershell
-& backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -p 'test_investigation_agent.py' -v
-& backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -p 'test_llm_tool_calls.py' -v
-```
+案件文本、原文及工具结果始终作为 user/tool 数据；不拼成系统指令。运行时没有任意函数、文件操作、案件切换或正式写入能力。只追加 `runs/investigation-*.input/output.json`；CaseData、Issue 状态和画布不由调查过程修改。
 
-使用案件 A 当前 Gold/固定 TXT，在临时目录和 Mock 模型/MockTransport/假 Langfuse 后端下验证。包括直接证据核对、先关系后证据、空检索后换词再核对、预算与重复终止、错误恢复、引用拒绝和案件字节不变。无真实付费模型调用，不改 Gold 或历史记录。
+复用 Langfuse generation/tool/guardrail/stop 及本地审计，保存请求、响应、工具参数、成功/拒绝结果、错误位置、版本、预算、停止原因和独立最终回复。默认云端只发送哈希、大小、状态及不含案件文本的诊断位置。
 
-尚无真实模型效果或各 provider 部署兼容性结论。阶段 1 无分页，单节点引用超出预算仍无法遍历；运行时不判断后续收窄查询是否已经覆盖此前截断内容，因此完成状态偏保守。最终发现的事实真实性、语义支持程度和调查充分性不能仅靠引用 ID 校验保证。
+## 离线验证和局限
+
+运行 `backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -q`。Case A 的真实固定 TXT 与节点通过临时目录、MockTransport、假 Langfuse 验证；不改 Gold、历史审计，也不调用付费模型。
+
+分析策略是 Prompt 指导，不是硬编码 Planner；Mock 证明动态执行和安全边界，不能证明真实模型的调查质量。自然语言总结的语义不由引用存在性自动证明。查询工具仍无分页，不保证遍历被截断的全部材料；成果在现有 HTTP 请求结束时显示，不增加流式协议。
 
 ## 统一前端入口（MVP）
 
-点击画布左下角“Agent 调查”，或右键菜单首项“向 Agent 提问”，打开同一个灵动岛，输入调查目标发送。运行中禁用重复提交；完成后展示发现、相关节点、来源原文、未解决问题与任务状态。证据通过 API 按最终合法指针补全文件名、原文及 Unicode `[start,end)` 偏移；这部分展示适配不进入模型请求。点击依据节点定位画布，原文链接跳转结果中的具体证据。
+点击画布左下角“Agent 调查”，或右键菜单首项“向 Agent 提问”，打开同一个灵动岛，输入调查目标发送。运行中禁用重复提交；完成后默认展示简洁答复和状态，发现与原文依据按需展开，建议默认在画布预览并可从灵动岛展开审核。证据通过 API 按最终合法指针补全文件名、原文及 Unicode `[start,end)` 偏移；这部分展示适配不进入模型请求。点击依据节点定位画布，原文链接跳转结果中的具体证据。
 
 顶部标签栏将 `core_issue` 与 `issue_set` 去重展示，突出核心争点；长标题通过悬停查看全文，标签过多时横向滚动，左右方向键切换。右侧状态由用户选择待调查、调查中或已结束，已结束可重新打开；Agent 不修改状态。
 
@@ -69,7 +58,7 @@ Agent 请求增加可选 `current_issue`，后端验证其属于当前案件，�
 
 右键节点时，若节点未选中则将其作为单选上下文；若已选中则保留多选并聚焦该节点。右键空白处保留现有选择。菜单包含适应全部节点、开始提取、新建 InfoUnit、新建关系及适用的编辑命令；右键持久化关系可进入关系编辑。点击外部、Escape、拖动或缩放会关闭菜单；菜单和标签区的滚轮不驱动画布。空案件中央保留提取入口，无可解析材料时提示先上传并禁用提取。
 
-调查结果只保留在当前前端会话，切换 Issue 或案件会清空结果并丢弃旧请求的迟到响应；不写入 CaseData。直接编辑案件 InfoUnit/Relation、自动操作画布或布局等请求仍返回 unsupported；持续推理目标则可返回候选建议，经用户确认后由独立接口写入 Issue 工作区。详见 [Issue 协作推理](issue_reasoning.md)。该语义判断仍有模型误判风险，尚未做真实模型验收；运行时始终只暴露三个只读工具。
+调查结果只保留在当前前端会话，切换 Issue 或案件会清空结果并丢弃旧请求的迟到响应；不写入 CaseData。直接编辑案件 InfoUnit/Relation、自动操作画布或布局等请求仍返回 unsupported；持续推理目标则可返回候选建议，经用户确认后由独立接口写入 Issue 工作区。详见 [Issue 协作推理](issue_reasoning.md)。该语义判断仍有模型误判风险，尚未做真实模型验收；运行时仅暴露上述八个工具，所有正式写入仍需用户明确采纳。
 
 前端不再调用 InfoUnit Agent 提案/确认接口，但后端函数、接口与提案能力完整保留，手动 InfoUnit/Relation CRUD 与画布交互继续工作。
 
@@ -85,7 +74,7 @@ Agent 请求增加可选 `current_issue`，后端验证其属于当前案件，�
 
 ### 调查结果展示
 
-灵动岛默认展示第一条发现、重要限制、与该发现直接关联的一段原文及一个待核实问题。其他发现、来源、节点关联和问题按需展开；不在界面直接显示运行 ID、文件 ID、节点 ID 或工具诊断。答案沿用 Agent 返回的发现，不由展示层补充日期或事实。
+灵动岛默认只展示最终自然语言答复和重要限制；调查依据、来源、问题和建议分别按需展开，不把全部推理成果重复放在首屏。新运行重置展开状态，总结失败明确显示失败并保留待确认成果。不在界面直接显示运行 ID、临时 Proposal ID、文件 ID、节点 ID 或工具诊断。
 
 来源仅按 `(file_id, start, end, quote)` 完全一致合并展示；同名文件、不同区间、内容不同的原文不会合并。全部证据指针与节点关联保留在原结果中，展示组可定位每个关联节点。原文保持原样；重复引用不计为独立佐证。没有与主要发现直接关联的原文时，不将其他发现的来源默认放在其下作为依据。
 

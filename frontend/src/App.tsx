@@ -42,7 +42,7 @@ import {
 } from "./api";
 import { ReasoningEditor, judgments, meanings, type ReasoningEditorTarget } from "./components/ReasoningEditor";
 import { ReasoningSuggestions, reasoningText } from "./components/ReasoningSuggestions";
-import { hypothesisProposalTargets } from "./components/investigationPresentation";
+import { hypothesisProposalTargets, proposalKey } from "./components/investigationPresentation";
 import { InvestigationResultPanel } from "./components/InvestigationResultPanel";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
@@ -1074,7 +1074,7 @@ export default function App() {
 
   const candidatePositions = useMemo(() => (agentResult?.proposals ?? []).map((_, index) => reasoningPosition(index)), [agentResult?.run_id]);
   const candidateProposals = (agentResult?.proposals ?? []).map((item, index) => ({ item, index }))
-    .filter(({ index }) => !dismissedProposals.includes(index) && !reasoning.accepted_proposals[`${agentResult?.run_id}:${index}`]);
+    .filter(({ index }) => !dismissedProposals.includes(index) && !reasoning.accepted_proposals[proposalKey(agentResult!, index)]);
 
   const canvasData = useMemo(() => {
     if (issues.length && !issueCanvas) return { nodes: [], edges: [] };
@@ -1493,7 +1493,8 @@ export default function App() {
         const previousVisible = new Set(issueStateRef.current?.data.workspaces[issue]?.canvas.visible_node_ids ?? []);
         const response = edit
           ? await editIssueReasoning(caseId, { ...edit, position: edit.position ?? reasoningPosition() })
-          : await acceptReasoningProposal(caseId, { issue, run_id: result!.run_id, proposal_index: proposalIndex!,
+          : await acceptReasoningProposal(caseId, { issue, run_id: result!.run_id,
+              ...(result!.proposals?.[proposalIndex!]?.proposal_id ? { proposal_id: result!.proposals[proposalIndex!].proposal_id! } : { proposal_index: proposalIndex! }),
               position: candidatePositions[proposalIndex!] ?? reasoningPosition() });
         objectId = response.object_id;
         if (agentCaseIdRef.current !== caseId || issueStateRef.current?.data.active_issue !== issue) return;
@@ -3311,10 +3312,10 @@ export default function App() {
                 {relationStatus ? <p className="relation-run-status" role="status">{relationStatus}</p> : null}
                 {agentError ? <p className="agent-proposal-error" role="alert">{agentError}</p> : null}
                 {agentBusy ? <p role="status">调查中…正在按需检索和核对依据。</p> : null}
-                {agentResult ? <InvestigationResultPanel result={agentResult} infoUnits={currentCase?.info_units ?? []}
+                {agentResult ? <InvestigationResultPanel key={`result-${agentResult.run_id}`} result={agentResult} infoUnits={currentCase?.info_units ?? []}
                   relations={currentCase?.relations ?? []} onLocate={locateAgentNode}
                   onClose={() => setAgentResult(null)} /> : null}
-                {agentResult && currentCase ? <ReasoningSuggestions result={agentResult} state={reasoning} caseData={currentCase}
+                {agentResult && currentCase ? <ReasoningSuggestions key={`suggestions-${agentResult.run_id}`} result={agentResult} state={reasoning} caseData={currentCase}
                   dismissed={dismissedProposals} busy={reasoningBusy} error={reasoningError} onAccept={index => void mutateReasoning(undefined, index)}
                   onIgnore={index => setDismissedProposals(ids => [...ids, index])} onLocate={locateAgentNode} /> : null}
               </div>

@@ -137,6 +137,7 @@ const api = 'http://127.0.0.1:8018';
     assert.deepEqual(sent.selected_info_unit_ids, [sharedId]);
     const result = page.getByRole('region', { name: 'Agent 调查结果' });
     await result.waitFor();
+    await result.getByText('查看调查依据', { exact: true }).click();
     await result.getByRole('button', { name: '张某笔录.docx', exact: true }).first().click();
     await page.locator('[data-node-id="U029"].node-selected').waitFor();
     await saved();

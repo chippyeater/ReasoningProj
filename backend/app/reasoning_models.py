@@ -116,10 +116,12 @@ class ProposalEvidenceRef(ContractModel):
 class ReasoningProposal(ContractModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     kind: Literal["hypothesis", "evidence_link", "evidence_gap", "hypothesis_status"]
+    proposal_id: Annotated[str, Field(pattern=r"^proposal-[a-f0-9]{32}$")] | None = None
     content: ReasoningText | None
     hypothesis_ids: Annotated[list[Text], Field(max_length=5)]
     # Relative only to the immutable proposals array in the enclosing run.
     hypothesis_proposal_indices: Annotated[list[Annotated[int, Field(ge=0, lt=6)]], Field(max_length=5)] = Field(default_factory=list)
+    hypothesis_proposal_ids: Annotated[list[Annotated[str, Field(pattern=r"^proposal-[a-f0-9]{32}$")]], Field(max_length=5)] = Field(default_factory=list)
     info_unit_ids: Annotated[list[Text], Field(min_length=1, max_length=5)]
     meaning: LinkMeaning | None
     judgment: Judgment | None
@@ -132,14 +134,18 @@ class ReasoningProposal(ContractModel):
             raise ValueError("Duplicate proposal references")
         if len(self.hypothesis_proposal_indices) != len(set(self.hypothesis_proposal_indices)):
             raise ValueError("Duplicate hypothesis_proposal_indices")
-        if self.kind != "evidence_gap" and self.hypothesis_proposal_indices:
-            raise ValueError("hypothesis_proposal_indices is only allowed for evidence_gap")
+        if len(self.hypothesis_proposal_ids) != len(set(self.hypothesis_proposal_ids)):
+            raise ValueError("Duplicate hypothesis_proposal_ids")
+        if self.hypothesis_proposal_indices and self.hypothesis_proposal_ids:
+            raise ValueError("Do not mix legacy indices with hypothesis_proposal_ids")
+        if self.kind != "evidence_gap" and (self.hypothesis_proposal_indices or self.hypothesis_proposal_ids):
+            raise ValueError("hypothesis_proposal_indices / hypothesis_proposal_ids is only allowed for evidence_gap")
         if self.kind == "hypothesis":
             valid = self.content is not None and not self.hypothesis_ids and self.meaning is None and self.judgment is None
         elif self.kind == "evidence_gap":
-            if not (self.hypothesis_ids or self.hypothesis_proposal_indices):
-                raise ValueError("Proposal fields do not match kind: evidence_gap requires hypothesis_ids or hypothesis_proposal_indices")
-            if len(self.hypothesis_ids) + len(self.hypothesis_proposal_indices) > 5:
+            if not (self.hypothesis_ids or self.hypothesis_proposal_indices or self.hypothesis_proposal_ids):
+                raise ValueError("Proposal fields do not match kind: evidence_gap requires hypothesis_ids, hypothesis_proposal_ids or legacy hypothesis_proposal_indices")
+            if len(self.hypothesis_ids) + len(self.hypothesis_proposal_indices) + len(self.hypothesis_proposal_ids) > 5:
                 raise ValueError("hypothesis_ids and hypothesis_proposal_indices must total at most 5 targets")
             valid = self.content is not None and self.meaning is None and self.judgment is None
         elif self.kind == "evidence_link":
@@ -154,5 +160,12 @@ class ReasoningProposal(ContractModel):
 class AcceptReasoningProposal(ContractModel):
     issue: Text
     run_id: Annotated[str, Field(pattern=r"^investigation-[a-f0-9]{32}$")]
-    proposal_index: Annotated[int, Field(ge=0, lt=6)]
+    proposal_index: Annotated[int, Field(ge=0, lt=6)] | None = None
+    proposal_id: Annotated[str, Field(pattern=r"^proposal-[a-f0-9]{32}$")] | None = None
     position: Point | None = None
+
+    @model_validator(mode="after")
+    def reference(self):
+        if (self.proposal_index is None) == (self.proposal_id is None):
+            raise ValueError("Use exactly one proposal_id or legacy proposal_index")
+        return self

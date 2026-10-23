@@ -2,8 +2,8 @@
 
 Minimized from the observed shape (two new hypotheses, two unattached gaps).
 Private runtime outputs stay in their original local audit files; this fixture
-uses the existing public Case A test IDs. These tests document current behavior,
-not an approved change to proposal semantics.
+uses the existing public Case A test IDs. The original failure remains invalid;
+compatible audit reads and the new tool contracts are checked alongside it.
 """
 from copy import deepcopy
 import json
@@ -14,7 +14,7 @@ from pydantic import TypeAdapter, ValidationError
 
 import test_investigation_tools as fixtures
 from app.errors import AppError
-from app.investigation_agent import InvestigationResult, _strict_json, _validate_result, result_schema
+from app.investigation_agent import InvestigationResult, _strict_json, _validate_result, tool_definitions
 from app.reasoning_models import ReasoningProposal
 
 
@@ -135,28 +135,27 @@ class TestInvestigationResultContract(unittest.TestCase):
             self.validate(payload)
         self.assertEqual(caught.exception.details["errors"][0]["loc"], ["proposals", 2, "hypothesis_proposal_indices", 0])
 
-    def test_provider_schema_frontloads_kind_constraints_without_changing_legacy_reads(self):
-        variants = result_schema()["$defs"]["ReasoningProposal"]["anyOf"]
-        self.assertEqual(len(variants), 5)
-        for variant in variants:
-            props = variant["properties"]
-            self.assertFalse(variant["additionalProperties"])
-            self.assertEqual(set(variant["required"]), set(props))
-            self.assertEqual(props["hypothesis_proposal_indices"]["items"]["minimum"], 0)
-            self.assertEqual(props["hypothesis_proposal_indices"]["items"]["exclusiveMaximum"], 6)
-            if props["kind"]["enum"] == ["evidence_gap"]:
-                self.assertTrue(props["hypothesis_ids"].get("minItems") == 1 or props["hypothesis_proposal_indices"].get("minItems") == 1)
-                self.assertEqual(props["content"]["type"], "string")
-            else:
-                self.assertEqual(props["hypothesis_proposal_indices"]["maxItems"], 0)
+    def test_tool_schemas_frontload_distinct_operations_without_model_authored_kind_or_ids(self):
+        definitions = {d["function"]["name"]: d["function"]["parameters"] for d in tool_definitions()}
+        for name in ("propose_hypothesis", "propose_evidence_link", "propose_evidence_gap", "propose_hypothesis_status"):
+            schema = definitions[name]
+            self.assertFalse(schema["additionalProperties"])
+            self.assertEqual(set(schema["required"]), set(schema["properties"]))
+            self.assertNotIn("kind", schema["properties"])
+            self.assertNotIn("proposal_id", schema["properties"])
+            self.assertNotIn("hypothesis_proposal_indices", schema["properties"])
+        self.assertIn("hypothesis_proposal_ids", definitions["propose_evidence_gap"]["properties"])
+        self.assertNotIn("hypothesis_proposal_ids", definitions["propose_evidence_link"]["properties"])
         old = ReasoningProposal.model_validate(self.result()["proposals"][0])
-        self.assertEqual(old.hypothesis_proposal_indices, [])
+        self.assertIsNone(old.proposal_id)
+        self.assertEqual(old.hypothesis_proposal_ids, [])
 
     def test_unretrieved_source_ref_is_a_reference_error_not_a_structure_error(self):
         payload = self.result()
         payload["proposals"] = [payload["proposals"][0]]
         payload["proposals"][0]["evidence_refs"][0]["source_ref_index"] = 99
-        InvestigationResult.model_validate(payload)  # Structurally and semantically valid kind.
+        InvestigationResult.model_validate(payload)
         with self.assertRaises(AppError) as caught:
             self.validate(payload)
         self.assertEqual(caught.exception.code, "invalid_investigation_reference")
+        self.assertEqual(caught.exception.details["category"], "reference")

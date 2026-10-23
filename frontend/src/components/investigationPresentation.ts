@@ -2,11 +2,18 @@ import type { AgentResult, InfoUnit, Relation, ReasoningState } from "../api";
 
 type Evidence = AgentResult["evidence"][number];
 
-/** Always address the original run array, before accepted/ignored items are filtered. */
+export function proposalKey(result: Pick<AgentResult, "run_id" | "proposals">, index: number) {
+  return `${result.run_id}:${result.proposals?.[index]?.proposal_id ?? index}`;
+}
+
+/** Resolve returned IDs inside this run; indices are only for older audited results. */
 export function hypothesisProposalTargets(result: Pick<AgentResult, "run_id" | "proposals">, state: ReasoningState, index: number) {
-  return (result.proposals?.[index]?.hypothesis_proposal_indices ?? []).map(targetIndex => {
+  const item = result.proposals?.[index];
+  const targets = [...(item?.hypothesis_proposal_indices ?? []), ...(item?.hypothesis_proposal_ids ?? []).map(id =>
+    result.proposals?.findIndex(proposal => proposal.proposal_id === id) ?? -1)];
+  return targets.map(targetIndex => {
     const proposal = result.proposals?.[targetIndex];
-    const key = `${result.run_id}:${targetIndex}`;
+    const key = proposalKey(result, targetIndex);
     const id = state.accepted_proposals[key];
     return { title: proposal?.kind === "hypothesis" ? proposal.content ?? "关联假设" : "关联假设不可用",
       accepted: proposal?.kind === "hypothesis" && state.hypotheses.some(h => h.id === id && h.proposal_key === key) };
@@ -32,11 +39,13 @@ export const sourceKinds: Record<string, string> = {
 export function displayText(text: string, units: Pick<InfoUnit, "id" | "title">[], evidence: Evidence[], relations: Relation[]) {
   const labels = new Map(units.map(unit => [unit.id, unit.title]));
   for (const [key, value] of Object.entries({ search_info_units: "资料检索", get_relations: "关联核查", get_evidence: "原文核查",
+    propose_hypothesis: "假设建议", propose_evidence_link: "证据关联建议", propose_evidence_gap: "缺口建议",
+    propose_hypothesis_status: "判断调整建议", present_findings: "发现展示",
     truncated: "部分材料尚未核查", invalid_request: "查询条件需要调整", error: "查询未能完成" })) labels.set(key, value);
   for (const ref of evidence) labels.set(ref.file_id, ref.filename);
   for (const relation of relations) labels.set(relation.id, "相关关系");
   return text.replace(/[A-Za-z][A-Za-z0-9_-]*/g, token => labels.get(token) ?? (
-    /^(?:info|file|relation|investigation|run)-/.test(token) || /^[UR]\d{3,}$/.test(token) ? "相关材料" : token));
+    /^(?:info|file|relation|investigation|proposal|run)-/.test(token) || /^[UR]\d{3,}$/.test(token) ? "相关材料" : token));
 }
 
 /** Collapse runtime diagnostics without deduplicating distinct factual questions. */

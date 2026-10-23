@@ -10,7 +10,7 @@ export function InvestigationResultPanel({ result, infoUnits, relations, onLocat
   const sources = groupSources(result.evidence);
   const title = (id: string) => infoUnits.find(unit => unit.id === id)?.title ?? "相关信息（已不可定位）";
   const text = (value: string) => displayText(value, infoUnits, result.evidence, relations);
-  const questions = [...new Map(result.open_questions.map(question => {
+  const questions = [...new Map([...result.open_questions, ...(result.limitations ?? [])].map(question => {
     const presented = presentQuestion(question);
     return [text(presented.text), { ...presented, text: text(presented.text) }];
   })).values()];
@@ -56,21 +56,21 @@ export function InvestigationResultPanel({ result, infoUnits, relations, onLocat
     </article>;
   }
   return <section className="agent-proposal investigation-result" aria-label="Agent 调查结果">
-    <header><strong role="status">{statuses[result.completion_status]}</strong><button type="button" onClick={onClose}>关闭结果</button></header>
-    {firstFinding ? finding(firstFinding, 0) : <p>本轮未形成有依据的调查发现。</p>}
+    <header><strong role="status">{result.summary_status === "failed" ? "本轮总结未完成" : statuses[result.completion_status]}</strong><button type="button" onClick={onClose}>关闭结果</button></header>
+    {result.summary_status === "failed" ? <p role="alert">总结未完成，已核查的发现与待确认建议仍可查看。建议尚未采纳。</p>
+      : <p className="investigation-answer">{text(result.answer ?? firstFinding?.statement ?? "本轮未形成有依据的调查发现。")}</p>}
     <aside className="investigation-limit" aria-label="判断范围与限制">
       <p>依据现有材料整理，材料记载或当事人陈述不等于已被独立核实。</p>
       {firstFinding && !primarySource ? <p>主要发现尚未取得对应的原文依据。</p> : null}
+      {!result.evidence_refs.length ? <p>本轮尚未提交可定位的原文依据，请继续核查。</p> : null}
       {limits.map(limit => <p key={limit.text}>{limit.text}</p>)}
       {result.completion_status === "budget_exhausted" && !limits.length ? <p>部分材料尚未核查，可以继续缩小问题范围。</p> : null}
     </aside>
-    {primarySource ? <div><h3>关键原文</h3>{source(primarySource)}</div> : null}
-    {nextQuestions[0] ? <div className="investigation-next"><h3>下一步核实</h3><p>{nextQuestions[0].text}</p></div> : null}
-    <details className="investigation-full"><summary>查看完整调查结果</summary>
+    <details className="investigation-full"><summary>查看调查依据</summary>
       <p>调查问题：{text(result.goal)}</p>
-      {result.findings.length > 1 ? <div><h3>其他发现</h3>{result.findings.slice(1).map((item, i) => finding(item, i + 1))}</div> : null}
-      {sources.length > (primarySource ? 1 : 0) ? <div><h3>其他来源原文</h3>{sources.filter(group => group !== primarySource).map(source)}</div> : null}
-      {nextQuestions.length > 1 ? <div><h3>其他待核实问题</h3><ul>{nextQuestions.slice(1).map(question => <li key={question.text}>{question.text}</li>)}</ul></div> : null}
+      {result.findings.length ? <div><h3>已核查的发现</h3>{result.findings.map(finding)}</div> : null}
+      {sources.length ? <div><h3>来源原文</h3>{sources.map(source)}</div> : null}
+      {nextQuestions.length ? <div><h3>下一步核实</h3><ul>{nextQuestions.map(question => <li key={question.text}>{question.text}</li>)}</ul></div> : null}
       <details><summary>相关信息</summary>{result.relevant_info_unit_ids.map(nodeButton)}</details>
       <p>共整理 {sources.length} 段来源原文；片段数量不代表独立证据数量。</p>
     </details>

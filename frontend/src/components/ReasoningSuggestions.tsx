@@ -1,5 +1,5 @@
 import type { AgentResult, CaseData, ReasoningState } from "../api";
-import { displayText, hypothesisProposalTargets } from "./investigationPresentation";
+import { displayText, hypothesisProposalTargets, proposalKey } from "./investigationPresentation";
 import { judgments, meanings } from "./ReasoningEditor";
 
 export function reasoningText(value: string, caseData: CaseData, state: ReasoningState, evidence: AgentResult["evidence"] = []) {
@@ -18,10 +18,10 @@ export function ReasoningSuggestions({ result, state, caseData, dismissed, busy,
     return reasoningText(value, caseData, state, result.evidence);
   }
   const proposals = (result.proposals ?? []).map((item, index) => ({ item, index }))
-    .filter(({ index }) => !dismissed.includes(index) && !state.accepted_proposals[`${result.run_id}:${index}`]);
+    .filter(({ index }) => !dismissed.includes(index) && !state.accepted_proposals[proposalKey(result, index)]);
   if (!proposals.length && !error) return null;
   return <section className="reasoning-suggestions" aria-label="待确认推理建议">
-    <h3>待确认建议</h3><p>采纳后才保存；建议不是已证实的事实。</p>
+    <details><summary>查看待确认建议（{proposals.length}）</summary><p>采纳后才保存；建议不是已证实的事实。候选也可在画布中查看。</p>
     {proposals.map(({ item, index }) => {
       const targets = hypothesisProposalTargets(result, state, index);
       const pending = targets.some(target => !target.accepted);
@@ -33,6 +33,6 @@ export function ReasoningSuggestions({ result, state, caseData, dismissed, busy,
       <details><summary>查看建议依据</summary><p>{text(item.rationale)}</p>{item.info_unit_ids.map(id => <button type="button" key={id} onClick={() => onLocate(id)}>{caseData.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}</details>
       <button type="button" disabled={busy || pending} onClick={() => onAccept(index)}>采纳建议</button><button type="button" disabled={busy} onClick={() => onIgnore(index)}>忽略建议</button>
     </article>; })}
-    {error ? <p role="alert">{error}</p> : null}
+    </details>{error ? <p role="alert">{error}</p> : null}
   </section>;
 }

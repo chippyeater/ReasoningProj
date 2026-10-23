@@ -24,14 +24,29 @@ def proposal_receipt(case, issue_key, context, proposals):
 
 def validate_proposal_dependencies(proposals):
     """Only Gap -> new Hypothesis, addressed within this exact ordered run."""
+    ids = [p.proposal_id for p in proposals if p.proposal_id is not None]
+    if len(ids) != len(set(ids)):
+        raise AppError("invalid_reasoning_proposal", "Duplicate proposal IDs in run")
     for index, proposal in enumerate(proposals):
-        for offset, target in enumerate(proposal.hypothesis_proposal_indices):
+        targets = [("hypothesis_proposal_indices", offset, target) for offset, target in enumerate(proposal.hypothesis_proposal_indices)]
+        targets.extend(("hypothesis_proposal_ids", offset, next((i for i, p in enumerate(proposals) if p.proposal_id == pid), len(proposals)))
+                       for offset, pid in enumerate(proposal.hypothesis_proposal_ids))
+        for field, offset, target in targets:
             if target >= len(proposals) or proposals[target].kind != "hypothesis":
                 raise AppError("invalid_reasoning_proposal", "Gap target must be a Hypothesis proposal in this run", details={
                     "category": "proposal_semantics", "errors": [{
-                        "loc": ["proposals", index, "hypothesis_proposal_indices", offset],
+                        "loc": ["proposals", index, field, offset],
                         "code": "invalid_hypothesis_proposal_target",
                         "message": "Index must identify a Hypothesis proposal in the same run"}]})
+
+
+def proposal_key(run_id, proposals, index):
+    return f"{run_id}:{proposals[index].proposal_id or index}"
+
+
+def dependency_indices(proposal, proposals):
+    return [*proposal.hypothesis_proposal_indices,
+            *(next(i for i, parent in enumerate(proposals) if parent.proposal_id == pid) for pid in proposal.hypothesis_proposal_ids)]
 
 
 def accept_proposal(case, request):
@@ -41,11 +56,13 @@ def accept_proposal(case, request):
     try:
         audit = json.loads(artifact_path(case.case_id, f"runs/{request.run_id}.output.json").read_text(encoding="utf-8"))
         receipt = audit["proposal_receipt"]
-        if (audit["status"] != "success" or receipt["issue"] != request.issue
+        if (audit["status"] not in {"success", "partial"} or receipt["issue"] != request.issue
                 or audit["run_id"] != request.run_id or audit["result"]["run_id"] != request.run_id):
             raise ValueError("Proposal belongs to a different Issue or run")
         proposals = [ReasoningProposal.model_validate(p) for p in audit["result"]["proposals"]]
-        proposal = proposals[request.proposal_index]
+        index = request.proposal_index if request.proposal_id is None else next(
+            (i for i, p in enumerate(proposals) if p.proposal_id == request.proposal_id), len(proposals))
+        proposal = proposals[index]
     except (OSError, ValueError, KeyError, IndexError, TypeError) as exc:
         raise AppError("invalid_reasoning_proposal", "No validated suggestion exists at this reference", 409) from exc
     try:
@@ -54,18 +71,18 @@ def accept_proposal(case, request):
         exc.status_code = 409
         raise
     state = current.workspaces[request.issue].reasoning
-    key = f"{request.run_id}:{request.proposal_index}"
+    key = proposal_key(request.run_id, proposals, index)
     if key in state.accepted_proposals:
         return {"workspaces": current, "object_id": state.accepted_proposals[key], "already_accepted": True}
-    if evidence_hash(case, proposal.info_unit_ids) != receipt["evidence_hashes"][request.proposal_index]:
+    if evidence_hash(case, proposal.info_unit_ids) != receipt["evidence_hashes"][index]:
         raise AppError("stale_reasoning_proposal", "Evidence changed; investigate again before adopting", 409)
     targets = {h.id: h for h in state.hypotheses}
     for hid in proposal.hypothesis_ids:
         if hid not in targets or targets[hid].revision != receipt["target_revisions"].get(hid):
             raise AppError("stale_reasoning_proposal", "User reasoning changed; investigate again before adopting", 409)
     hypothesis_ids = list(proposal.hypothesis_ids)
-    for index in proposal.hypothesis_proposal_indices:
-        parent_key = f"{request.run_id}:{index}"
+    for index in dependency_indices(proposal, proposals):
+        parent_key = proposal_key(request.run_id, proposals, index)
         hid = state.accepted_proposals.get(parent_key)
         if hid not in targets or targets[hid].proposal_key != parent_key:
             raise AppError("proposal_dependency_not_accepted", "Adopt the referenced Hypothesis in this run first", 409)
@@ -77,9 +94,9 @@ def accept_proposal(case, request):
         adopted_gaps = {g.id: g for g in state.gaps}
         sibling_count = sum(
             1 for sibling_index, sibling in enumerate(proposals)
-            if index in sibling.hypothesis_proposal_indices
-            and (gap := adopted_gaps.get(state.accepted_proposals.get(f"{request.run_id}:{sibling_index}")))
-            and gap.proposal_key == f"{request.run_id}:{sibling_index}" and hid in gap.hypothesis_ids)
+            if index in dependency_indices(sibling, proposals)
+            and (gap := adopted_gaps.get(state.accepted_proposals.get(proposal_key(request.run_id, proposals, sibling_index))))
+            and gap.proposal_key == proposal_key(request.run_id, proposals, sibling_index) and hid in gap.hypothesis_ids)
         target = targets[hid]
         if (target.revision != 1 + sibling_count or target.content != parent.content
                 or target.judgment != "unverified" or target.work_status != "active"):
