@@ -19,16 +19,16 @@ async def model(config, messages, definitions, schema=None, **kwargs):
     await asyncio.sleep(0.15)
     initial = json.loads(messages[1]["content"])
     goal = initial["goal"]
-    names = [m["tool_calls"][0]["function"]["name"] for m in messages if m["role"] == "assistant" and m.get("tool_calls")]
-    returned = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
+    names = [a["tool"] for a in initial["knowledge_state"]["activities"]["items"]]
+    returned = [{**p, "pending": True} for p in initial["knowledge_state"]["proposals"]["items"]]
     # New delivery/recovery scenarios reuse actual initial sources and real tools.
     if any(word in goal for word in ("首轮来源直用", "遗漏来源交付", "恢复参数", "探索无直接证据")):
         from test_reasoning_proposals import suggestion, proposal_call
-        sources = initial["evidence_context"]["items"]
+        sources = initial["knowledge_state"]["source_refs"]["items"]
         uid = sources[0]["info_unit_id"] if sources else "U026"
         index = sources[0]["source_ref_index"] if sources else 0
         proof = {"info_unit_ids": [uid], "evidence_refs": [{"info_unit_id": uid, "source_ref_index": index}]}
-        reviewed = any(m["role"] == "system" and "完成检查（" in m["content"] for m in messages)
+        reviewed = bool(initial.get("recovery") and initial["recovery"]["code"] == "finish_required")
         if "恢复参数" in goal and not any(r.get("pending") for r in returned):
             if not names:
                 return proposal_call({**suggestion("hypothesis"), **proof,
@@ -43,19 +43,15 @@ async def model(config, messages, definitions, schema=None, **kwargs):
             if len(ids) == 1:
                 return proposal_call({**suggestion("evidence_gap"), "info_unit_ids": [], "evidence_refs": [],
                     "hypothesis_proposal_ids": ids}, ids, "exploratory-gap")
-            if "present_findings" not in names:
-                return replies.present(goal, questions=["能否补充新旧租约计租日和收款记录？"])
-            return replies.final("已提出待检验解释与关键缺口，尚无直接证明材料；可逐项采纳或补充计租和收款记录。")
+            return replies.finish(goal, questions=["能否补充新旧租约计租日和收款记录？"], answer="已提出待检验解释与关键缺口，尚无直接证明材料；可逐项采纳或补充计租和收款记录。")
         answer = "据张某陈述，替租人于 2026 年 3 月 8 日搬入，尚未独立核实。"
         if "遗漏来源交付" in goal and not names and not reviewed:
             return replies.final(answer)
-        if "present_findings" not in names:
-            return replies.present(goal, [uid], refs=[(uid, index)], statement=answer, status="completed")
-        return replies.final(answer if "恢复参数" not in goal else "相关陈述尚未独立核实。已提出一条待检验假设，可在画布中查看、采纳或忽略。")
+        return replies.finish(goal, [uid], refs=[(uid, index)], statement=answer, status="completed", answer=answer if "恢复参数" not in goal else "相关陈述尚未独立核实。已提出一条待检验假设，可在画布中查看、采纳或忽略。")
     if "失败" in goal and "总结失败" not in goal:
         raise llm_client.LLMFailure("llm_timeout", "离线模拟调用超时")
     if "删除" in goal:
-        return replies.final("当前仅支持只读调查；请使用手动编辑功能。") if "present_findings" in names else replies.present(
+        return replies.finish(
             goal, status="unsupported", questions=["当前仅支持只读调查；请使用手动编辑功能。"])
     arrival = any(word in goal for word in ("入住", "搬进去"))
     analysis = "房东是否存在实际空置损失" in goal
@@ -95,24 +91,24 @@ async def model(config, messages, definitions, schema=None, **kwargs):
         if attempts < len(proposals):
             ids = [r["proposal_id"] for r in returned if r.get("pending")]
             return proposal_call(proposals[attempts], ids, f"proposal-{attempts}")
-    if "present_findings" not in names:
-        uid = "U026" if arrival else "U029"
-        return replies.present(goal, [uid], refs=[(uid, 0)], status="evidence_insufficient" if analysis else "completed",
-            statement="张某在笔录中提出相关说法，尚未独立核实。")
     if "总结失败" in goal:
-        raise llm_client.LLMFailure("llm_timeout", "离线模拟总结超时")
+        raise llm_client.LLMFailure("llm_timeout", "离线模拟结束前超时")
     if "超长总结" in goal:
-        return replies.final("重复的完整调查报告。" * 40)
+        # Invalid answer rejected inside the finish tool; no Findings have been accepted.
+        return replies.finish(goal, ["U029"], refs=[("U029", 0)], answer="重复的完整调查报告。" * 40, call_id=f"bad-finish-{len(names)}")
     if "安全格式检查" in goal:
-        return replies.final('实际损失**尚未证实**。\n\n<img src=x onerror="window.summaryInjected=true">[查看](javascript:alert(1))')
-    if analysis:
-        return replies.final("实际租金损失**尚未证实**。\n\n已提出两条假设和两项证据缺口，优先核实计租日及收款记录，以判断是否少收租金。可在画布中查看、采纳或忽略建议。")
-    if link_analysis:
-        return replies.final("实际租金损失尚未证实。已提出两条假设和三项证据关联，建议核对计租日和收款记录；可逐项查看、采纳或忽略。")
-    answer = "据张某陈述，替租人于 2026 年 3 月 8 日搬入，尚未独立核实。" if arrival else "现有陈述尚不足以确认实际租金损失。关键是计租起点和收款记录，仍需核实。"
-    if proposals:
-        answer += "已提出待确认建议，可在画布查看。"
-    return replies.final(answer)
+        answer = '实际损失**尚未证实**。\n\n<img src=x onerror="window.summaryInjected=true">[查看](javascript:alert(1))'
+    elif analysis:
+        answer = "实际租金损失**尚未证实**。\n\n已提出两条假设和两项证据缺口，优先核实计租日及收款记录，以判断是否少收租金。可在画布中查看、采纳或忽略建议。"
+    elif link_analysis:
+        answer = "实际租金损失尚未证实。已提出两条假设和三项证据关联，建议核对计租日和收款记录；可逐项查看、采纳或忽略。"
+    else:
+        answer = "据张某陈述，替租人于 2026 年 3 月 8 日搬入，尚未独立核实。" if arrival else "现有陈述尚不足以确认实际租金损失。关键是计租起点和收款记录，仍需核实。"
+        if proposals:
+            answer += "已提出待确认建议，可在画布查看。"
+    uid = "U026" if arrival else "U029"
+    return replies.finish(goal, [uid], refs=[(uid, 0)], status="evidence_insufficient" if analysis else "completed",
+        statement="张某在笔录中提出相关说法，尚未独立核实。", answer=answer)
 
 
 if __name__ == "__main__":

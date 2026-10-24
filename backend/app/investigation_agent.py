@@ -447,7 +447,8 @@ async def run_investigation(case: CaseData, goal: str,
         nonlocal stop_reason, completion
         stop_reason = reason
         completion = "budget_exhausted" if "budget" in reason else "evidence_insufficient"
-        limitations.append("调查未通过结束校验：" + reason + "；未解决任务保留，可调整问题后继续。")
+        limitations.append("连续请求未取得有效进展，本轮已停止；未解决任务保留，可调整问题后继续。"
+                           if reason == "no_progress_limit" else "本轮调查预算已用尽；未解决任务保留，可调整问题后继续。")
         persist()
         output = snapshot(None, "failed")
         audit.update(status="partial", result=output)

@@ -33,6 +33,7 @@ class TestInvestigationRecovery(unittest.TestCase):
             self.assertEqual(result["summary_status"], "failed")
             self.assertEqual(result["question_state"]["questions"][0]["status"], "pending")
             self.assertEqual(len(calls), 3)
+            self.assertNotIn(result["stop_reason"], " ".join(result["limitations"]))
 
     def test_failed_tool_status_survives_compaction_without_answering_question(self):
         with patch.object(tools, "get_evidence", side_effect=OSError("cache unavailable")):

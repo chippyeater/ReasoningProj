@@ -1,48 +1,48 @@
-# Investigation Agent：工具成果与简洁总结
+# Investigation Agent：结构化工作记忆与执行闭环
 
-后端入口仍为 `run_investigation(case, goal, selected_info_unit_ids=None, work_context=None, issue_key=None)`，统一 API 为 `POST /api/cases/{case_id}/agent/run`。传入当前有效 CaseData；goal 为 1–2000 字符，可选 0–5 个案件内唯一节点。案件深拷贝绑定在运行时，不向模型暴露案件选择或写接口。
+入口仍为 `run_investigation(case, goal, selected_info_unit_ids=None, work_context=None, issue_key=None)` 和 `POST /api/cases/{case_id}/agent/run`。本轮绑定当前 CaseData 深拷贝，不提供案件切换或正式对象写入工具。
 
-## 工具与决策
+## 工作状态
 
-完整注册表只有八个原生函数工具：
+`investigation_state.py` 仅定义本轮状态，不修改持久化 Schema。`KnowledgeState` 直接保存已有工具投影：InfoUnit 摘要（内容、类型、speaker）、有向 Relation（类型、依据及截断标记）、已核验 SourceRef（索引、原文/片段及文件位置）、初始上下文的遗漏与来源错误、历次检索条件/状态/返回 ID，以及成功 Findings 和 Proposals。选中节点、画布与初始核验来源直接入库；成功只读响应按 ID/来源索引合并，失败和空结果仅记录其实际状态，不创造知识。完整工具响应始终保存在运行审计。
 
-- `search_info_units`、`get_relations`、`get_evidence`：原有有限只读检索。
-- `propose_hypothesis`、`propose_evidence_link`、`propose_evidence_gap`、`propose_hypothesis_status`：分别校验并提交待确认建议，不能直接写正式对象。
-- `present_findings`：复用既有发现与来源界面。每次最多四项带引用的发现、待核查问题和完成状态；追加不同发现，不创建画布节点，不按展示形式继续增设工具。
+`QuestionState` 以用户目标初始化根任务 Q1，无规划模型调用；最多 20 个 Question。每项包含稳定 `id/question/status/related_info_unit_ids/evidence_refs/finding/block_reason`，以及区分证据缺失、工具故障、不支持和预算限制的 `block_kind`。`update_questions` 可一次新增、拆分或调整多项任务；不会删除已有任务。只读/Proposal 工具的 `question_ids` 可以关联任务，null 自动选择 in_progress 任务或第一个 pending 任务。后端记录活动及取得的材料/来源，**不会因为工具 ok 自动回答问题**。回答/阻塞状态由模型明确更新，并校验材料权限和状态一致性。
 
-使用原有 LLM Client 原生函数调用，strict 工具参数，关闭并行调用。调查请求不再带完整结果 JSON Schema 或 response_format。模型最终直接回复简短自然语言，默认 40–80 字，上限 240 个非空白字符；最终 JSON 不作为写入、引用或建议渠道。
+Question 内的 `planned_actions` 登记已识别的重要候选解释、证据关联和缺口（每项最多六个）。计划必须引用实际成功返回、类型匹配的 Proposal ID，或用 `omission_reason` 说明不提交原因；Hypothesis/Gap 还要求 description 与 Proposal content 相符，一个 Proposal 不能消解两个计划。已登记计划不能通过删除或改名绕过结束检查。Question 受阻不要求创建 Gap，Hypothesis 获得支持不自动 verified；正式依赖和采纳服务不变。
 
-事实问题直接检索并核对来源。分析问题按 Prompt 先考虑通常 2–3 种可区分、可检验的解释，针对支持、反对和区分性材料检索，之后才决定保留哪些建议；没有固定 Search → Relations → Evidence 或 Proposal 流程。临时调查计划不等于正式 Hypothesis。
+## 每轮模型上下文
 
-8 次只读尝试、6 次建议尝试、2 次发现展示分别计数，错误参数也消耗对应预算；总计最多 16 次工具尝试，加一次有界完成检查时最多 18 次模型调用。某类预算用尽后移除对应工具，其余工具仍可用。等价成功调用不会重执行；失败请求在取得新节点/关系/来源后可再尝试。同一信息状态下的等价失败不重执行，但仍可选择其他行动；连续三次失败或重复才停止。预算和限制由后端报告，不让模型虚称完整。
+每轮重新组装以下消息，不累计重放历史：
 
-`empty` 只表示当前条件未命中。`truncated`、工具错误或未检索到不能证明材料不存在。错误提供类别、校验路径、工具参数位置和恢复提示，区分不存在、越界、重复、未获取、依赖错误和参数错误；被拒绝候选不会进入成功成果。不在后台重放失败操作或另开修复模型，Agent 可在剩余预算内主动修正。
+1. 稳定 System Prompt，仅说明角色、证据标准和实际工具契约。
+2. 一条 user JSON：原始目标、核心/当前 Issue、类型统计与有限画布/人工推理上下文，Question 进度与当前任务，KnowledgeState 实际材料及成功成果，剩余分类/总工具/模型预算和恢复错误。
+3. 最近一次完成的 Assistant Tool Call + Tool Result 配对；最多保留一组。只有结果已经入状态并写入审计后才退役；大于 16000 字符的整组消息一并退役，不留下孤立 tool 消息。
 
-## 成果、引用和审批
+状态 JSON 使用 48000 字符预算作为确定性的 Token 规模代理，材料按当前任务优先选择；正文必要时展示 500 字符片段，分区预算控制节点、关系、来源、活动和成果。所有省略通过 `context_truncated/omitted_ids` 表达，完整数据不从审计或内存删除。最近工具结果在 12000 字符内原样展示，超限使用有截断标记的片段；不调用 LLM 总结。成功的重复只读请求返回本轮缓存，支持重新获取被省略来源而不重复执行查询；同状态失败和重复 Proposal 不重执行。
 
-后端组装兼容的 `goal/findings/relevant_info_unit_ids/relevant_relation_ids/evidence_refs/open_questions/completion_status/proposals`，来源完全是成功工具提交的成果，不从最终总结解析。额外返回 `answer`、`summary_status`（completed/failed）、`limitations` 和运行计数。证据仍由 `info_unit_id + source_ref_index` 定位，API 只为这些已校验指针补全文名、原文和偏移，绝不把补全内容送回初始模型请求。
+## 结束工具与恢复
 
-节点、关系及引用必须属于绑定案件、在本次实际可见；SourceRef 可以来自后端核验的初始 evidence_context 或 get_evidence。关系列出的依据 ID 不等于获得来源资格。探索性 Hypothesis/Gap 允许空 info_unit_ids/evidence_refs；Link 和判断调整仍要求材料及引用，填写的所有引用仍逐项校验。非法候选明确拒绝，不静默丢弃；引用可定位不等于充分支持命题。
+注册九个原生工具：三个只读查询、四个原有 `propose_*`、`update_questions` 和 `finish_investigation`。继续使用现有 Chat Completions 客户端，strict 参数、关闭并行调用，无 result response_format。
 
-最终回复前若有已验证来源但缺少来源成果，或尚有可恢复的工具错误，最多提醒一次继续调查：补交 present_findings、修正参数或补读材料；不足时允许空 findings、具体 open_questions 和 evidence_insufficient。不把原文自动拼成模型结论。提醒后仍未交付来源/明确不足时报告 investigation_delivery_incomplete；已有建议保留待确认，不能把无来源结论当作成功。
+`finish_investigation(answer, findings, question_updates, completion_status)` 合并原 present_findings 路径。后端用副本原子校验最终 Question 更新：所有任务 answered 或具体 blocked、回答具备已获取材料、已登记计划已提交或说明放弃、最终成果包含回答所用材料及来源、Proposal/引用/Issue 依赖一致、状态与实际预算一致，并沿用简洁回复校验（默认 40–80 字，上限 240 个非空白字符）。`completed` 需要有依据的 Finding 且无 blocked；证据不足可以空 Findings、blocked + evidence_insufficient 结束。
 
-四个 Proposal 工具复用同一个 ReasoningProposal 存储和审批服务，kind 由工具确定，不是最终模型 JSON 的分发依据。返回的临时 proposal_id 只在本次运行中有效；Gap 和 Link 可用 hypothesis_proposal_ids 指向已成功提出的新 Hypothesis。Link 的 hypothesis_id 与临时目标恰选一个，临时列表最多一项；其余临时依赖禁止，详见 [Issue 协作推理](issue_reasoning.md)。
+不通过时返回带校验路径和待处理项的结构化工具错误，在剩余预算内修正；不采纳失败的 Findings 或最终 Question 更新。通过后直接返回 answer 与完整成果，**没有后续总结模型调用**。已删除旧消息 append、临时 System Completion Check、动态预算 System 消息和普通文本直接结束路径。提前输出文本仅产生 user 状态中的 `finish_required` 恢复信息；下一轮要求原生工具调用，不伪造 Assistant/Tool ID。
 
-工具成功后立即写入独立运行审计及版本凭据。自然语言总结失败且已有合法成果时，返回 summary_status=failed、answer=null，审计标记 partial；界面明确显示总结未完成，保留已验证的待确认建议。只有用户调用采纳接口才能正式写入，失败的总结既不会撤销工具成果，也不会连带采纳。没有成果的模型失败仍返回明确错误。审计写入失败不降级为成功。
+8 次只读、6 次 Proposal、8 次 Question 更新、3 次结束尝试独立计数，最多 25 次工具尝试、28 次模型调用。错误也消耗相应预算；连续三次失败、重复无进展或提前文本会异常停止。预算/异常停止不冒充通过 finish：保留 unresolved 状态，返回 answer=null、summary_status=failed 和明确 stop_reason；已有合法 Proposal 仍可审核。没有成果的模型传输失败仍返回错误。审计写入失败不降级为成功。
 
-## 上下文、安全和观测
+## 成果、审批与审计
 
-初始请求包含目标、核心争点、类型数量、选中摘要及有限 Issue/推理摘要。当前 Issue 画布最多提供 8 个可见 InfoUnit 摘要（内容 120 字）、12 条端点均在摘要内的 Relation，保留 ID、类型和方向。额外按选中节点优先提供最多 8 个来源，每节点最多一个、原文片段最多 160 字，总计 1280 字；复用 get_evidence 的缓存 TXT 精确匹配，不解析原文件。提供来源索引、文件名/ID、位置与截断标识，可直接引用；完整措辞和未提供内容仍按需读取。无效来源记录错误且不授予引用资格。画布布局、坐标、缩放、整份文件、历史和全案数据不注入。
+继续返回 `goal/findings/relevant_info_unit_ids/relevant_relation_ids/evidence_refs/open_questions/completion_status/proposals/answer/summary_status/limitations`，补充 `question_state` 和运行计数；`open_questions` 仅从未回答的 Question 派生。现有前端 Findings、来源和建议组件无需新任务界面。API 按已验证来源指针补全文名、原文和偏移。
 
-案件文本、原文及工具结果始终作为 user/tool 数据；不拼成系统指令。运行时没有任意函数、文件操作、案件切换或正式写入能力。只追加 `runs/investigation-*.input/output.json`；CaseData、Issue 状态和画布不由调查过程修改。
+引用必须属于当前案件、实际提供的节点/关系/来源；关系依据 ID 不授予未读来源权限。可定位与充分支持不同，保留当事人陈述、推论与事实的边界。探索性 Hypothesis/Gap 仍可无直接材料，Link/判断调整仍需要引用。同轮依赖、过期校验和幂等采纳沿用现有服务，所有正式写入仍需用户逐项采纳。
 
-复用 Langfuse generation/tool/guardrail/stop 及本地审计，保存请求、响应、工具参数、成功/拒绝结果、错误位置、版本、预算、停止原因和独立最终回复。默认云端只发送哈希、大小、状态及不含案件文本的诊断位置。
+本轮记忆只写入既有 runs 审计，不写 CaseData、Issue ReasoningState 或画布。审计保留原始模型请求/响应、所有工具参数/结果、最终 KnowledgeState、QuestionState、版本及停止原因；Langfuse 保留 generation/tool 与最终状态观察，继续遵循现有隐私配置。案件材料只进入 user/tool 数据，不变为 System 指令。
 
-## 离线验证和局限
+## 离线验证与局限
 
-运行 `backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -q`。Case A 的真实固定 TXT 与节点通过临时目录、MockTransport、假 Langfuse 验证；不改 Gold、历史审计，也不调用付费模型。
+运行 `backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -q`。Mock 覆盖连续多任务、压缩后材料可用、空/错/截断状态、多候选遗漏、Gap 依赖、正常/非法结束、预算和恢复；原有 HTTP、来源权限、Issue 隔离、Proposal 依赖/过期/幂等采纳继续回归。Case A TXT/Gold 仅作为临时案件输入，不修改固定评测或历史记录，不调用付费模型。
 
-分析策略是 Prompt 指导，不是硬编码 Planner；Mock 证明动态执行和安全边界，不能证明真实模型的调查质量。自然语言总结的语义不由引用存在性自动证明。查询工具仍无分页，不保证遍历被截断的全部材料；成果在现有 HTTP 请求结束时显示，不增加流式协议。
+校验能检查明确登记的任务和计划，不能自动发现模型从未识别的解释，也不能仅凭引用确定结论语义真实或充分。Question 的重要性与是否值得继续调查仍由模型判断；Mock 不代表真实模型质量。字符预算是规模代理，非提供商精确 Token 计数；查询仍无分页，不保证遍历全部截断材料。没有跨会话长期记忆、通用 Agent 框架或额外总结模型。
 
 ## 统一前端入口（MVP）
 
@@ -56,11 +56,11 @@
 
 旧 `workspace_state` 不被改写：核心 Issue 初始化时继承旧坐标、显示层级和视口，但可见节点仍按议题推荐；核心 Issue 菜单“恢复旧画布节点”可重新显示原画布信息，已有 Issue 手动位置优先。没有 Issue 的案件继续使用原画布与首次提取入口。损坏的工作区文件返回明确错误，不覆盖旧数据。保存失败会显示提示及重试按钮；旧画布未成功保存时暂不切换 Issue。
 
-Agent 请求增加可选 `current_issue`，后端验证其属于当前案件，并从存储构造 `work_context`：当前 Issue、Issue 列表与人工状态。问题与选中 ID 沿用原字段。初始模型输入保留核心争点、信息类型数量和最多 5 个选中节点摘要，额外最多 30 条 Issue 元数据（单条标题最多 500 字，包含当前 Issue，显式返回总数与是否省略）；不包含画布节点集合、布局、历史、原始文件或全案正文。工具照常按需检索全案。前端等待排队保存完成后再开展调查，避免把旧状态传给模型。
+Agent 请求增加可选 `current_issue`，后端验证其属于当前案件，并从存储构造 `work_context`：当前 Issue、Issue 列表与人工状态。问题与选中 ID 沿用原字段。初始模型输入保留核心争点、信息类型数量和最多 5 个选中节点摘要，额外最多 30 条 Issue 元数据（单条标题最多 500 字，包含当前 Issue，显式返回总数与是否省略）；包含有限画布语义摘要，不包含布局、历史、原始文件或全案正文。工具照常按需检索全案。前端等待排队保存完成后再开展调查，避免把旧状态传给模型。
 
 右键节点时，若节点未选中则将其作为单选上下文；若已选中则保留多选并聚焦该节点。右键空白处保留现有选择。菜单包含适应全部节点、开始提取、新建 InfoUnit、新建关系及适用的编辑命令；右键持久化关系可进入关系编辑。点击外部、Escape、拖动或缩放会关闭菜单；菜单和标签区的滚轮不驱动画布。空案件中央保留提取入口，无可解析材料时提示先上传并禁用提取。
 
-调查结果只保留在当前前端会话，切换 Issue 或案件会清空结果并丢弃旧请求的迟到响应；不写入 CaseData。直接编辑案件 InfoUnit/Relation、自动操作画布或布局等请求仍返回 unsupported；持续推理目标则可返回候选建议，经用户确认后由独立接口写入 Issue 工作区。详见 [Issue 协作推理](issue_reasoning.md)。该语义判断仍有模型误判风险，尚未做真实模型验收；运行时仅暴露上述八个工具，所有正式写入仍需用户明确采纳。
+调查结果只保留在当前前端会话，切换 Issue 或案件会清空结果并丢弃旧请求的迟到响应；不写入 CaseData。直接编辑案件 InfoUnit/Relation、自动操作画布或布局等请求仍返回 unsupported；持续推理目标则可返回候选建议，经用户确认后由独立接口写入 Issue 工作区。详见 [Issue 协作推理](issue_reasoning.md)。该语义判断仍有模型误判风险，尚未做真实模型验收；运行时仅暴露上述九个工具，所有正式写入仍需用户明确采纳。
 
 前端不再调用 InfoUnit Agent 提案/确认接口，但后端函数、接口与提案能力完整保留，手动 InfoUnit/Relation CRUD 与画布交互继续工作。
 
