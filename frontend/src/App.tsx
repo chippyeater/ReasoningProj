@@ -2129,7 +2129,8 @@ export default function App() {
       await workspaceMutationQueueRef.current;
       if (request !== agentRequestRef.current || agentCaseIdRef.current !== caseId) return;
       if (workspaceErrorRef.current) throw new Error("请先重试保存当前工作区，再开展调查。");
-      const result = await runAgent(caseId, { goal, selected_info_unit_ids: selectedInfoUnitIds, selected_reasoning_ids: selectedReasoningIds, ...(activeIssue ? { current_issue: activeIssue } : {}) });
+      const semanticFocus = focusedNodeId && [...currentCase.info_units, ...reasoning.hypotheses, ...reasoning.gaps].some(obj => obj.id === focusedNodeId) ? focusedNodeId : null;
+      const result = await runAgent(caseId, { goal, selected_info_unit_ids: selectedInfoUnitIds, selected_reasoning_ids: selectedReasoningIds, ...(activeIssue ? { current_issue: activeIssue, focused_object_id: semanticFocus } : {}) });
       if (request === agentRequestRef.current && agentCaseIdRef.current === caseId) setAgentResult(result);
     } catch (err) {
       if (request === agentRequestRef.current && agentCaseIdRef.current === caseId)

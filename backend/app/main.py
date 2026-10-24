@@ -98,9 +98,10 @@ async def get_case(case_id: str) -> CaseResponse:
 @app.post("/api/cases/{case_id}/agent/run")
 async def agent_run(case_id: str, payload: AgentRunInput) -> dict:
     case = require_case(case_id)
-    if payload.selected_reasoning_ids and payload.current_issue is None:
+    if (payload.selected_reasoning_ids or payload.focused_object_id is not None) and payload.current_issue is None:
         raise AppError("unknown_issue", "Selected reasoning objects require a current Issue")
-    context = investigation_context(case, payload.current_issue, payload.goal, payload.selected_reasoning_ids) if payload.current_issue is not None else None
+    context = investigation_context(case, payload.current_issue, payload.goal, payload.selected_reasoning_ids,
+        selected_info_unit_ids=payload.selected_info_unit_ids, focused_object_id=payload.focused_object_id) if payload.current_issue is not None else None
     result = await run_investigation(case, payload.goal, payload.selected_info_unit_ids, work_context=context, issue_key=payload.current_issue)
     units = {unit.id: unit for unit in case.info_units}
     files = {file.file_id: file for file in case.files}

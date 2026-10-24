@@ -341,6 +341,11 @@ async def run_investigation(case: CaseData, goal: str,
              "model_calls": [], "tool_calls": [], "stop_reason": None, "result": None}
     output_path = f"runs/{run_id}.output.json"
     seen = {"units": {unit.id for unit in selected}, "relations": set(), "evidence": set()}
+    # Bounded canvas summaries are retrieved context, never permission to cite unread originals.
+    canvas_context = (work_context or {}).get("canvas", {})
+    seen["units"].update(row["id"] for row in canvas_context.get("info_units", []) if row["id"] in {u.id for u in bound_case.info_units})
+    seen["relations"].update(r.id for r in bound_case.relations
+        if r.id in {row["id"] for row in canvas_context.get("relations", [])} and {r.source_id, r.target_id} <= seen["units"])
     fingerprints, call_ids = set(), set()
     proposals, findings, questions, limitations = [], [], [], []
     completion = "evidence_insufficient"

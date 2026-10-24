@@ -146,26 +146,56 @@ def reasoning_references(case: CaseData, info_unit_id: str) -> list[dict]:
     return refs
 
 
-def investigation_context(case: CaseData, current_issue: str, goal: str = "", selected_reasoning_ids: list[str] | None = None) -> dict:
+def investigation_context(case: CaseData, current_issue: str, goal: str = "", selected_reasoning_ids: list[str] | None = None,
+                          *, selected_info_unit_ids: list[str] | None = None, focused_object_id: str | None = None) -> dict:
+    from app.investigation_tools import _selected_units, _summary, _normalized
     state = get_issue_workspaces(case)
     if current_issue not in state.workspaces:
         raise AppError("unknown_issue", "Issue does not belong to the current case")
-    # Metadata only. Never serialize canvas state, nodes, relations or operations.
+    workspace = state.workspaces[current_issue]
+    canvas, reasoning = workspace.canvas, workspace.reasoning
+    units = {u.id: u for u in case.info_units}
+    visible = set(canvas.visible_node_ids)
+    selected_units = selected_info_unit_ids or []
+    if selected_units:
+        _selected_units(case, selected_units)
+    objects = [*reasoning.hypotheses, *reasoning.gaps]
+    selected = selected_reasoning_ids or []
+    if len(selected) > 3 or len(set(selected)) != len(selected) or not set(selected) <= {obj.id for obj in objects}:
+        raise AppError("unknown_reasoning_object", "Selected reasoning object is outside the current Issue")
+    focus = focused_object_id if focused_object_id is not None else canvas.focused_node_id
+    if focus is not None and focus not in visible:
+        raise AppError("unknown_workspace_node", "Focused object is outside the current Issue canvas")
+    selected_ids = set(selected_units + selected)
+    priority_ids = selected_ids | ({focus} if focus else set())
+    terms = set(_normalized(goal)[i:i+2] for i in range(max(0, len(goal) - 1)))
+    def overlap(text):
+        return sum(term in _normalized(text) for term in terms)
+    chosen_units = sorted((u for u in case.info_units if u.id in visible),
+        key=lambda u: (u.id in selected_ids, u.id == focus, overlap(u.title + u.content)), reverse=True)[:8]
+    uids = {u.id for u in chosen_units}
+    visible_relations = [r for r in case.relations if {r.source_id, r.target_id} <= visible]
+    relations = sorted((r for r in visible_relations if {r.source_id, r.target_id} <= uids),
+        key=lambda r: (bool({r.source_id, r.target_id} & priority_ids), r.relation_type.value == "contradict"), reverse=True)[:12]
     keys = list(dict.fromkeys([current_issue, *issue_keys(case)]))
     result = {"current_issue": current_issue[:500],
             "issues": [{"issue": key[:500], "status": state.workspaces[key].status} for key in keys[:30]],
             "issue_count": len(keys), "has_more_issues": len(keys) > 30}
-    reasoning = state.workspaces[current_issue].reasoning
-    objects = [*reasoning.hypotheses, *reasoning.gaps]
-    selected = selected_reasoning_ids or []
-    if not set(selected) <= {obj.id for obj in objects}:
-        raise AppError("unknown_reasoning_object", "Selected reasoning object is outside the current Issue")
+    result["canvas"] = {
+        "info_units": [_summary(u) for u in chosen_units],
+        "relations": [{"id": r.id, "source_id": r.source_id, "target_id": r.target_id,
+                       "relation_type": r.relation_type.value} for r in relations],
+        "selected_info_unit_ids": selected_units, "selected_reasoning_ids": selected,
+        "focused_object_id": focus,
+        "has_more_info_units": len(chosen_units) < sum(uid in units for uid in visible),
+        "has_more_relations": len(relations) < len(visible_relations),
+    }
     # Explicit selection first, then goal overlap, then latest edits. Bounded
     # summaries carry current user decisions, never a history or full canvas.
     def rank(obj):
-        overlap = sum(goal[i:i+2] in obj.content for i in range(max(0, len(goal) - 1)))
-        related = bool(set(getattr(obj, "hypothesis_ids", [])) & set(selected))
-        return (obj.id in selected, related, overlap, obj.updated_at)
+        related = bool(set(getattr(obj, "hypothesis_ids", [])) & priority_ids) or any(
+            link.hypothesis_id == obj.id and link.info_unit_id in priority_ids for link in reasoning.links)
+        return (obj.id in selected_ids, obj.id == focus, related, overlap(obj.content), obj.updated_at)
     chosen = sorted(objects, key=rank, reverse=True)[:3]
     hids = {obj.id for obj in chosen if hasattr(obj, "judgment")}
     for obj in chosen:
@@ -174,11 +204,16 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
     hypotheses = sorted((obj for obj in reasoning.hypotheses if obj.id in hids), key=rank, reverse=True)[:3]
     hids = {obj.id for obj in hypotheses}
     result["reasoning"] = {
-        "hypotheses": [{**h.model_dump(), "content": h.content[:300]} for h in hypotheses],
+        "hypotheses": [{**h.model_dump(), "content": h.content[:300], "content_truncated": len(h.content) > 300} for h in hypotheses],
         "gaps": [{**g.model_dump(), "content": g.content[:300], "info_unit_ids": g.info_unit_ids[:5],
-                  "hypothesis_ids": [hid for hid in g.hypothesis_ids if hid in hids]}
+                  "hypothesis_ids": [hid for hid in g.hypothesis_ids if hid in hids],
+                  "content_truncated": len(g.content) > 300,
+                  "references_truncated": len(g.info_unit_ids) > 5 or not set(g.hypothesis_ids) <= hids}
                  for g in chosen if hasattr(g, "hypothesis_ids")][:3],
-        "links": [{**link.model_dump(), "rationale": link.rationale[:160]} for link in reasoning.links if link.hypothesis_id in hids][:5],
-        "has_more": len(objects) > len(chosen) or len(reasoning.links) > 5,
+        "links": [{**link.model_dump(), "rationale": link.rationale[:160], "rationale_truncated": len(link.rationale) > 160}
+                  for link in sorted(reasoning.links, key=lambda link: (link.info_unit_id in priority_ids, link.info_unit_id in uids), reverse=True)
+                  if link.hypothesis_id in hids][:5],
     }
+    result["reasoning"]["has_more"] = (len(hypotheses) < len(reasoning.hypotheses)
+        or len(result["reasoning"]["gaps"]) < len(reasoning.gaps) or len(result["reasoning"]["links"]) < len(reasoning.links))
     return result

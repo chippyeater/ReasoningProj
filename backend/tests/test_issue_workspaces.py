@@ -68,7 +68,7 @@ class TestIssueWorkspaces(unittest.TestCase):
             self.assertEqual(client.patch(url, json={"issue": a}).status_code, 409)
             self.assertEqual(path.read_text(), "broken")
 
-    def test_wire_context_has_status_but_no_canvas_or_unread_case_data(self):
+    def test_wire_context_has_status_and_bounded_semantics_without_display_state_or_sources(self):
         issue = self.case.issue_set[1]
         requests = []
         replies = [fixtures.tool("get_evidence", {"info_unit_ids": ["U029"]}),
@@ -93,8 +93,9 @@ class TestIssueWorkspaces(unittest.TestCase):
         self.assertEqual(initial["work_context"]["current_issue"], issue)
         self.assertEqual(initial["work_context"]["issues"][0]["status"], "investigating")
         self.assertEqual([u["id"] for u in initial["selected_info_units"]], ["U001"])
-        for forbidden in ("source_refs", "relations", "visible_node_ids", "node_positions", "quote_units", "files"):
+        for forbidden in ("source_refs", "visible_node_ids", "node_positions", "viewport", "quote_units", "files"):
             self.assertNotIn(forbidden, json.dumps(initial))
-        self.assertNotIn(next(u.content for u in self.case.info_units if u.id == "U029"), json.dumps(initial, ensure_ascii=False))
+        self.assertLessEqual(len(initial["work_context"]["canvas"]["info_units"]), 8)
+        self.assertLessEqual(len(initial["work_context"]["canvas"]["relations"]), 12)
         self.assertEqual(get_issue_workspaces(self.case).workspaces[issue].status, "investigating")
         self.assertEqual(self.case.model_dump_json(), before)
