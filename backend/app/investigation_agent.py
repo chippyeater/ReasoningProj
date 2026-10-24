@@ -113,7 +113,7 @@ def tool_definitions() -> list[dict]:
     question_schema = Question.model_json_schema()
     question_defs = question_schema.pop("$defs")
     update_schema = {"type": "array", "items": question_schema, "maxItems": 20}
-    definition = _function("update_questions", "Batch create/adjust run-local Questions. Q1 retains the full original goal. Track independently requested answers/conditions as distinct Questions, not just an aggregate 'done'. Only mark answered when its requested aspect is resolved; otherwise block with specific missing condition/kind. Review useful investigation_opportunities before evidence insufficiency; skipped_leads records each declined lead_id and concrete reason. Preserve IDs and registered plans. No canvas writes.", {"questions": update_schema})
+    definition = _function("update_questions", "Batch create/adjust run-local Questions. Q1 retains the full original goal. Track independently requested answers/conditions as distinct Questions. Only mark answered when resolved; otherwise block with specific missing condition/kind. Review useful investigation_opportunities before insufficiency; skipped_leads records each declined lead_id/reason. Preserve plan IDs/kinds and validated Proposal bindings; descriptions may be rephrased. Link only actual same-run proposal_id of matching kind, submitted under this Question's question_ids with related materials/dependencies. No canvas writes.", {"questions": update_schema})
     definition["function"]["parameters"]["$defs"] = question_defs
     definitions.append(definition)
     finding_schema = Finding.model_json_schema()
@@ -172,9 +172,13 @@ def _arguments(name: str, raw: str) -> dict:
     required, allowed = fields[name]
     if not isinstance(args, dict) or not required <= args.keys() or not args.keys() <= allowed:
         missing = sorted(required - args.keys()) if isinstance(args, dict) else []
+        errors = [{"loc": [field], "code": "missing", "message": "Required tool argument is missing",
+                   "fix": "Supply the field; question_updates=[] reuses validated Questions"} for field in missing]
+        if not isinstance(args, dict) or args.keys() - allowed:
+            errors.append({"loc": ["<extra>"] if isinstance(args, dict) else [], "code": "invalid_arguments",
+                           "message": "Unsupported fields or non-object arguments", "fix": "Submit only fields in the tool schema"})
         raise AppError("invalid_tool_arguments", "Missing or unsupported tool argument fields", details={
-            "category": "structure", "errors": [{"loc": [missing[0]] if missing else ["<extra>"] if isinstance(args, dict) else [],
-                "code": "missing" if missing else "invalid_arguments"}]})
+            "category": "structure", "errors": errors})
     if name in {"search_info_units", "get_relations"}:
         args["limit"] = tools.DEFAULT_LIMIT if args.get("limit") is None else args["limit"]
         args.setdefault("types" if name == "search_info_units" else "relation_types", None)
@@ -247,10 +251,12 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
         raise AppError("investigation_result_invalid", "Artifact contract validation failed", details=_validation_details(exc)) from exc
     units = {unit.id: unit for unit in case.info_units}
     relations = {relation.id for relation in case.relations}
+    issues = []
 
     def invalid(code, category, loc, message, detail_code=None):
-        return AppError(code, message, details={"category": category, "errors": [
-            {"loc": loc, "code": detail_code or code, "message": message}]})
+        issues.append({"loc": loc, "code": detail_code or code, "message": message,
+                       "category": category, "error_code": code,
+                       "fix": "Use obtained current-case IDs/SourceRefs and valid same-run Proposal dependencies"})
 
     def check(ids, available, loc, known=None):
         visited = set()
@@ -258,7 +264,7 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
             detail = ("duplicate_reference" if value in visited else "reference_not_found" if known is not None and value not in known
                       else "reference_not_obtained" if value not in available else None)
             if detail:
-                raise invalid("invalid_investigation_reference", "reference", [*loc, index],
+                invalid("invalid_investigation_reference", "reference", [*loc, index],
                               "Use a unique, current-case reference supplied in context or tool results", detail)
             visited.add(value)
 
@@ -267,35 +273,43 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
     pointers = [(ref.info_unit_id, ref.source_ref_index) for ref in result.evidence_refs]
     for offset, (uid, index) in enumerate(pointers):
         if uid not in units or index >= len(units[uid].source_refs) or uid not in result.relevant_info_unit_ids:
-            raise invalid("invalid_investigation_reference", "reference", ["evidence_refs", offset], "Invalid SourceRef index or InfoUnit",
+            invalid("invalid_investigation_reference", "reference", ["evidence_refs", offset], "Invalid SourceRef index or InfoUnit",
                           "reference_not_found" if uid not in units else "reference_out_of_range" if index >= len(units[uid].source_refs) else "reference_not_obtained")
     check(pointers, seen["evidence"], ["evidence_refs"])
     if result.goal != goal:
-        raise invalid("investigation_result_invalid", "result_semantics", ["goal"], "Final goal must match the requested goal")
+        invalid("investigation_result_invalid", "result_semantics", ["goal"], "Final goal must match the requested goal")
     if result.completion_status == "unsupported" and (
             result.findings or result.relevant_info_unit_ids or result.relevant_relation_ids
             or result.evidence_refs or result.proposals or not result.open_questions):
-        raise invalid("investigation_result_invalid", "result_semantics", ["completion_status"], "Unsupported requests require an explanation and no findings")
+        invalid("investigation_result_invalid", "result_semantics", ["completion_status"], "Unsupported requests require an explanation and no findings")
     for offset, finding in enumerate(result.findings):
         check(finding.info_unit_ids, set(result.relevant_info_unit_ids), ["findings", offset, "info_unit_ids"])
         check(finding.relation_ids, set(result.relevant_relation_ids), ["findings", offset, "relation_ids"])
         refs = [(ref.info_unit_id, ref.source_ref_index) for ref in finding.evidence_refs]
         check(refs, set(pointers), ["findings", offset, "evidence_refs"])
         if not (finding.info_unit_ids or finding.relation_ids or refs):
-            raise invalid("invalid_investigation_reference", "reference", ["findings", offset], "Each finding requires a retrieved basis")
+            invalid("invalid_investigation_reference", "reference", ["findings", offset], "Each finding requires a retrieved basis")
     targets = {obj["id"] for kind in ("hypotheses", "gaps")
                for obj in (work_context or {}).get("reasoning", {}).get(kind, [])}
     hypothesis_ids = {obj["id"] for obj in (work_context or {}).get("reasoning", {}).get("hypotheses", [])}
     from app.reasoning_proposals import validate_proposal_dependencies
-    validate_proposal_dependencies(result.proposals)
+    try:
+        validate_proposal_dependencies(result.proposals)
+    except AppError as exc:
+        from app.investigation_state import validation_issues
+        issues.extend(validation_issues(exc))
     for offset, proposal in enumerate(result.proposals):
         if not work_context:
-            raise invalid("invalid_reasoning_proposal", "proposal_semantics", ["proposals", offset], "Proposals require a bound Issue")
+            invalid("invalid_reasoning_proposal", "proposal_semantics", ["proposals", offset], "Proposals require a bound Issue")
         check(proposal.info_unit_ids, set(result.relevant_info_unit_ids), ["proposals", offset, "info_unit_ids"])
         check(proposal.hypothesis_ids, hypothesis_ids & targets, ["proposals", offset, "hypothesis_ids"])
         check([(p.info_unit_id, p.source_ref_index) for p in proposal.evidence_refs], set(pointers), ["proposals", offset, "evidence_refs"])
         if any(p.info_unit_id not in proposal.info_unit_ids for p in proposal.evidence_refs):
-            raise invalid("invalid_reasoning_proposal", "reference", ["proposals", offset, "evidence_refs"], "Proposal evidence must refer to its retrieved InfoUnits")
+            invalid("invalid_reasoning_proposal", "reference", ["proposals", offset, "evidence_refs"], "Proposal evidence must refer to its retrieved InfoUnits")
+    if issues:
+        first = issues[0]
+        raise AppError(first.get("error_code", "invalid_reasoning_proposal"), "Artifact validation failed; fix all listed fields",
+                       details={"category": first.get("category", "reference"), "errors": issues})
     return result
 
 
@@ -325,7 +339,7 @@ def _tool_recovery(response, name):
             argument_loc = ["info_unit_id" if argument_loc[0] == "info_unit_ids" else "hypothesis_id"]
         if name == "finish_investigation" and argument_loc[:1] in (["info_unit_ids"], ["relevant_relation_ids"], ["evidence_refs"]):
             argument_loc = ["findings"]
-        item["argument_loc"] = argument_loc
+        item.setdefault("argument_loc", argument_loc)
         if item["code"] == "reference_not_obtained" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_id"]):
             item["code"] = "invalid_hypothesis_target"
     codes = {item["code"] for item in details["errors"]}
@@ -345,18 +359,26 @@ def _tool_recovery(response, name):
         hint = "该等价调用未执行；使用已有成功结果或调整参数。失败请求可在获取新节点/来源后修正重试。"
     else:
         hint = "对照工具 Schema 和错误字段修正参数；来源不可用时可换用其他材料或明确报告限制，不要反复原样重试。"
+    if name == "finish_investigation":
+        hint = "逐项处理 validation_details.errors 的 argument_loc、message 和 fix（材料问题见 opportunity）；" + hint
+        if details.get("question_updates_applied"):
+            hint += " 合法 Question 更新已保存为工作记忆；question_updates=[] 可复用，只提交需修改的问题。最终答复和 Findings 尚未接受。"
+        else:
+            hint += " 本次 Question 更新未接受；保留已登记计划 ID 并一次修正所有字段。"
     error["recovery_hint"] = hint
     error["recoverable"] = True
 
 
 def _validate_summary(text, proposals):
     """Reject report-sized or verbatim Proposal replies; never truncate or rewrite."""
+    issues = []
+
     def reject(code, message, **details):
-        raise AppError("investigation_summary_invalid", message, details={
-            "category": "summary", "errors": [{"loc": ["answer"], "code": code, **details}]})
+        issues.append({"loc": ["answer"], "code": code, "message": message, **details})
 
     if not isinstance(text, str) or not text.strip():
         reject("invalid_summary", "Final reply must be nonblank prose")
+        raise AppError("investigation_summary_invalid", "Invalid final reply", details={"category": "summary", "errors": issues})
     length = len(re.sub(r"\s", "", text))
     if length > MAX_SUMMARY_CHARACTERS:
         reject("summary_too_long", "Final reply exceeds the concise summary limit",
@@ -376,6 +398,8 @@ def _validate_summary(text, proposals):
             if len(value) >= 24 and value in normalized:
                 reject("proposal_repeated", "Final reply repeats a complete Proposal field",
                        proposal_index=index, field=field)
+    if issues:
+        raise AppError("investigation_summary_invalid", "Fix all listed reply issues", details={"category": "summary", "errors": issues})
     return text.strip()
 
 
@@ -559,7 +583,7 @@ async def run_investigation(case: CaseData, goal: str,
                             actions.artifacts(bound_case, seen, work_context, goal, draft, findings, questions.open_questions(), completion)
                             proposals = draft
                         elif name == "update_questions":
-                            response = questions.update(args["questions"], bound_case, seen, work_context, proposals)
+                            response = questions.update(args["questions"], bound_case, seen, work_context, proposals, knowledge)
                         else:
                             finished = actions.finish_investigation(bound_case, seen, work_context, goal, proposals, questions,
                                 **args, knowledge=knowledge, read_budget_exhausted=used["read"] >= limits["read"],

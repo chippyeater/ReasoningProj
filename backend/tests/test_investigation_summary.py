@@ -38,7 +38,8 @@ class TestSummaryValidation(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(AppError) as raised:
                 agent._validate_summary("调查尚待核实。\n\n" + copied, [proposal])
             self.assertEqual(raised.exception.details["errors"][0], {
-                "loc": ["answer"], "code": "proposal_repeated", "proposal_index": 0, "field": field})
+                "loc": ["answer"], "code": "proposal_repeated", "proposal_index": 0, "field": field,
+                "message": "Final reply repeats a complete Proposal field"})
 
     def test_shared_short_phrase_is_not_confused_with_copying_a_report(self):
         answer = "实际租金损失尚未证实。已提出假设，建议优先核实计租日，可查看后采纳或忽略。"

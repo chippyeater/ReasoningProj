@@ -96,7 +96,7 @@ class TestInvestigationState(unittest.TestCase):
         case.info_units, case.relations = [], []
         result, _ = self.run_script("核对", [f.tool("update_questions", {"questions": [f.question("核对", plans=[plan])]}, "plan"),
             f.tool("update_questions", {"questions": [f.question("核对")]}, "delete"),
-            f.tool("update_questions", {"questions": [f.question("核对", plans=[{**plan, "description": "替换候选"}])]}, "replace"),
+            f.tool("update_questions", {"questions": [f.question("核对", plans=[{**plan, "kind": "evidence_gap"}])]}, "replace"),
             f.finish("核对", updates=[f.question("核对", status="blocked", reason="缺少收款证据", block_kind="evidence_missing",
                 plans=[{**plan, "omission_reason": "缺少检验路径，暂不提出"}])])], case=case)
         self.assertEqual([c["result"]["error"]["code"] for c in self.audits()[0]["tool_calls"][1:3]], ["unresolved_plan"]*2)

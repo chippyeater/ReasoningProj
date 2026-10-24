@@ -28,11 +28,13 @@ Question 内的 `planned_actions` 登记已识别的重要候选解释、证据�
 
 注册九个原生工具：三个只读查询、四个原有 `propose_*`、`update_questions` 和 `finish_investigation`。继续使用现有 Chat Completions 客户端，strict 参数、关闭并行调用，无 result response_format。
 
-`finish_investigation(answer, findings, question_updates, completion_status)` 合并原 present_findings 路径。后端用副本原子校验最终 Question 更新：所有任务 answered 或具体 blocked、回答具备已获取材料、已登记计划已提交或说明放弃、最终成果包含回答所用材料及来源、Proposal/引用/Issue 依赖一致、状态与实际预算一致，并沿用简洁回复校验（默认 40–80 字，上限 240 个非空白字符）。`completed` 需要有依据的 Finding 且无 blocked；证据不足可以空 Findings、blocked + evidence_insufficient 结束。
+`finish_investigation(answer, findings, question_updates, completion_status)` 合并原 present_findings 路径。后端先在副本中汇总 Question 更新的结构、引用、计划错误，再检查独立的结束条件：所有任务 answered 或具体 blocked、回答具备已获取材料、已登记计划已提交或说明放弃、最终成果包含回答所用材料及来源、Proposal/引用/Issue 依赖一致、状态与实际预算一致，并沿用简洁回复校验（默认 40–80 字，上限 240 个非空白字符）。`completed` 需要有依据的 Finding 且无 blocked；证据不足可以空 Findings、blocked + evidence_insufficient 结束。
 
 对 blocked 的实质调查，重新派生可用线索；尚未读取或逐项说明不继续理由的线索会产生 `uninvestigated_lead`，返回对应工具动作并允许在既有预算内恢复。检索已耗尽时可明确标记预算阻塞，不能悄悄等同于案件缺证；只耗尽 Proposal 预算不能绕过仍可读取的线索。没有最低读取次数、固定假设数量或固定案件关键词要求，也不要求扫描全案或读取每条来源；合理的范围限制与无助于当前条件的候选可明确说明后结束。
 
-不通过时返回带校验路径和待处理项的结构化工具错误，在剩余预算内修正；不采纳失败的 Findings 或最终 Question 更新。通过后直接返回 answer 与完整成果，**没有后续总结模型调用**。已删除旧消息 append、临时 System Completion Check、动态预算 System 消息和普通文本直接结束路径。提前输出文本仅产生 user 状态中的 `finish_required` 恢复信息；下一轮要求原生工具调用，不伪造 Assistant/Tool ID。
+计划以稳定 action ID 和本轮实际 Proposal ID 关联，不比较 description/content 的自然语言措辞；检查类型、创建时记录的 question_ids、非空材料集合的交集、既有 Proposal 依赖有效性及一对一绑定。已验证的 Proposal 绑定不可换成另一建议或移除，计划类型不可变，描述可以调整。建议所属 Question 由创建时的 question_ids 记录，不能在结束时挪用其他 Question 的建议；合法 Hypothesis 依赖仍允许不同子问题共享。已有正式 Hypothesis 仍由当前 Issue 及依赖校验约束。
+
+不通过时，一次返回可独立发现的 Question、计划、状态、覆盖、成果引用和简洁答复问题，每项带 loc、argument_loc、message、fix，材料项附 opportunity。非法结构字段无法支撑的派生判断不会被当作已验证事实。Question 更新整批合法且不与总体目标/实际预算矛盾时，作为工作记忆保留，即便另有交付错误；validation_details 明确标记 question_updates_applied/updated_question_ids。下一次可用 question_updates=[] 复用，仅提交需要改变的问题。Question 更新批次有错则整批不接受；诊断草稿仍用于暴露独立问题。失败的 Findings、answer、completion_status 始终不交付。通过后直接返回 answer 与完整成果，**没有后续总结模型调用**。已删除旧消息 append、临时 System Completion Check、动态预算 System 消息和普通文本直接结束路径。提前输出文本仅产生 user 状态中的 `finish_required` 恢复信息；下一轮要求原生工具调用，不伪造 Assistant/Tool ID。
 
 8 次只读、6 次 Proposal、8 次 Question 更新、3 次结束尝试独立计数，最多 25 次工具尝试、28 次模型调用。错误也消耗相应预算；连续三次失败、重复无进展或提前文本会异常停止。预算/异常停止不冒充通过 finish：保留 unresolved 状态，返回 answer=null、summary_status=failed 和明确 stop_reason；已有合法 Proposal 仍可审核。没有成果的模型传输失败仍返回错误。审计写入失败不降级为成功。
 
@@ -47,6 +49,8 @@ Question 内的 `planned_actions` 登记已识别的重要候选解释、证据�
 ## 离线验证与局限
 
 运行 `backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -q`。Mock 覆盖连续多任务、压缩后材料可用、空/错/截断状态、多候选遗漏、Gap 依赖、正常/非法结束、预算和恢复；原有 HTTP、来源权限、Issue 隔离、Proposal 依赖/过期/幂等采纳继续回归。Case A TXT/Gold 仅作为临时案件输入，不修改固定评测或历史记录，不调用付费模型。
+
+结构关联检查可以排除错误类型、跨任务、无共同材料、错误依赖及重复/替换绑定；同一任务、共享材料的建议是否真正实现计划意图，仍是模型的语义判断，不能用 ID 或材料交集保证。
 
 校验能检查明确登记的任务和计划，不能自动发现模型从未识别的解释，也不能仅凭引用确定结论语义真实或充分。Question 的重要性与是否值得继续调查仍由模型判断；Mock 不代表真实模型质量。字符预算是规模代理，非提供商精确 Token 计数；查询仍无分页，不保证遍历全部截断材料。没有跨会话长期记忆、通用 Agent 框架或额外总结模型。
 

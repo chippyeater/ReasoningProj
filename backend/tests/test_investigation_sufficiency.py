@@ -88,7 +88,9 @@ class TestInvestigationSufficiency(unittest.TestCase):
             actions.finish_investigation(case, seen, None, "核对", [], questions, knowledge=knowledge,
                 **self.finish_args(updates=[answered]))
         self.assertEqual(caught.exception.details["errors"][0]["code"], "insufficiency_without_unresolved_question")
-        self.assertEqual(questions.items["Q1"].status, "pending")
+        # The Question basis is valid working memory; the inconsistent final
+        # completion_status still prevents any delivery.
+        self.assertEqual(questions.items["Q1"].status, "answered")
 
     def test_multi_goal_rollup_requires_each_requested_aspect_to_be_resolved(self):
         goal = "有无损失，以及损失金额是多少"

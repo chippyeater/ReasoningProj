@@ -75,74 +75,155 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
 
 def finish_investigation(case, seen, context, goal, proposals, questions, *, answer, findings,
                          question_updates, completion_status, knowledge, budget_exhausted=False, read_budget_exhausted=False):
-    """Finish with answer, cited findings and final Question updates; no extra summary call. Q1 retains the full goal; track independent requested aspects as Questions. Unanswered aspects must be specifically blocked, never answered merely because evidence conflicts. Before claiming insufficiency inspect useful investigation_opportunities or record each skipped_leads {lead_id, reason} explaining why it cannot resolve the missing condition. This is a model relevance judgment, not proof. Resolve planned actions; Runtime derives open_questions/Proposals. No read quota or required Proposal count."""
-    from copy import deepcopy
-    from app.investigation_agent import _validate_summary
-    if not isinstance(question_updates, list) or len(question_updates) > 20:
-        raise AppError("invalid_questions", "question_updates must be a list of at most twenty Questions")
-    draft = deepcopy(questions)
-    if question_updates:
-        draft.update(question_updates, case, seen, context, proposals)
-    pending = []
+    """Finish with answer, cited findings and changed Questions; question_updates=[] reuses validated working state. Failures list independent field errors with fix hints and report whether Question updates were retained; failed answer/findings are never accepted. Plans use actual same-run proposal_id, matching kind, recorded Question scope and material/dependency links, not identical prose; preserve validated bindings. Q1 retains the full goal; unresolved aspects must be specifically blocked. Before insufficiency inspect useful investigation_opportunities or record skipped_leads {lead_id, reason} explaining why each cannot help. Relevance is a model judgment, not proof. Resolve planned actions; Runtime derives open_questions/Proposals. No read quota, Proposal count or extra summary call."""
+    from pydantic import ValidationError
+    from app.investigation_agent import Finding, _validate_summary
+    from app.investigation_state import validation_issues
+
+    draft, errors = questions.review_updates(question_updates, case, seen, context, proposals, knowledge)
+    question_errors = bool(errors)
+    # A diagnostic draft can contain invalid bindings. Never accept that batch.
+    for issue in errors:
+        issue.setdefault("error_code", issue["code"] if issue["code"] in {
+            "invalid_plan_reference", "unresolved_plan", "goal_scope_changed", "invalid_questions",
+            "question_limit", "invalid_investigation_reference"} else "invalid_tool_arguments")
+
+    def error(loc, code, message, fix, *, error_code="investigation_incomplete", **extra):
+        errors.append({"loc": loc, "code": code, "message": message, "fix": fix,
+                       "error_code": error_code, **extra})
+
     for q in draft.items.values():
         if q.status in {"pending", "in_progress"}:
-            pending.append({"loc": ["questions", q.id], "code": "question_unresolved", "message": q.question})
+            error(["questions", q.id], "question_unresolved", q.question,
+                  "Answer this Question with an obtained basis, or block it with the specific missing condition/kind")
         for plan in q.planned_actions:
             if not plan.proposal_id and not plan.omission_reason:
-                pending.append({"loc": ["questions", q.id, "planned_actions", plan.id],
-                    "code": "unresolved_plan", "message": plan.description})
-    if pending:
-        raise AppError("investigation_incomplete", "Resolve the listed Questions/planned actions before finishing",
-                       details={"category": "completion", "errors": pending})
+                error(["questions", q.id, "planned_actions", plan.id], "unresolved_plan", plan.description,
+                      "Use its actual same-run Proposal ID or record omission_reason; retain registered action IDs")
     blocked = [q for q in draft.items.values() if q.status == "blocked"]
-    if draft.items["Q1"].status == "answered" and blocked:
-        raise AppError("investigation_incomplete", "Q1 covers the whole goal and cannot be answered while a requested aspect remains blocked",
-            details={"category": "completion", "errors": [{"loc": ["questions", "Q1", "status"], "code": "goal_scope_incomplete"}]})
+    if draft.items["Q1"].status == "answered" and any(q.id != "Q1" and q.status != "answered" for q in draft.items.values()):
+        question_errors = True
+        error(["questions", "Q1", "status"], "goal_scope_incomplete", "Q1 cannot be answered while a requested aspect is unresolved",
+              "Keep Q1 blocked and report the unresolved aspect")
     if completion_status == "evidence_insufficient" and not blocked:
-        raise AppError("investigation_incomplete", "Evidence insufficiency requires an explicitly unresolved Question and missing condition; all-answered is inconsistent",
-            details={"category": "completion", "errors": [{"loc": ["completion_status"], "code": "insufficiency_without_unresolved_question"}]})
+        error(["completion_status"], "insufficiency_without_unresolved_question", "All-answered is inconsistent with evidence insufficiency",
+              "Use completed for resolved work; otherwise identify and block the missing condition")
     if completion_status == "completed" and blocked:
-        raise AppError("investigation_incomplete", "Blocked Questions require an incomplete completion_status")
+        error(["completion_status"], "blocked_questions", "Blocked Questions require an incomplete completion_status",
+              "Use evidence_insufficient, unsupported or budget_exhausted as justified by the actual state")
     if completion_status == "budget_exhausted" and not budget_exhausted:
-        raise AppError("investigation_incomplete", "Execution budget is still available")
-    if any(q.block_kind == "budget_exhausted" for q in blocked) and not budget_exhausted:
-        raise AppError("investigation_incomplete", "Cannot claim budget blocking while budget is available")
-    if completion_status == "unsupported" and any(q.block_kind != "unsupported" for q in blocked):
-        raise AppError("investigation_incomplete", "Unsupported completion requires unsupported Questions")
+        error(["completion_status"], "budget_available", "Execution budget is still available", "Continue useful work or choose an accurate completion_status")
+    for q in blocked:
+        if q.block_kind == "budget_exhausted" and not budget_exhausted:
+            question_errors = True
+            error(["questions", q.id, "block_kind"], "budget_available", "Cannot claim budget blocking while budget is available",
+                  "Continue useful work or describe the actual missing evidence/tool failure")
+        if completion_status == "unsupported" and q.block_kind != "unsupported":
+            error(["questions", q.id, "block_kind"], "unsupported_mismatch", "Unsupported completion requires unsupported Questions",
+                  "Choose the status describing the actual restriction")
     if completion_status == "completed" and not findings:
-        raise AppError("invalid_findings", "Completed investigation requires a grounded finding")
+        error(["findings"], "invalid_findings", "Completed investigation requires a grounded finding",
+              "Include a finding with its obtained material and source pointers", error_code="invalid_findings")
     opportunities = knowledge.available_work(case, draft)
-    known_leads = {prefix + u.id for u in case.info_units for prefix in ("unit:", "source:")}
-    known_leads.update(f"query:{i}" for i, a in enumerate(knowledge.activities) if a["has_more"])
-    review_errors = []
     for q in draft.items.values():
         assessed = {assessment.lead_id for assessment in q.skipped_leads}
-        if not assessed <= known_leads:
-            raise AppError("invalid_investigation_reference", "Skipped leads must reference current-case material or actual truncated queries")
         if q.status != "blocked" or q.block_kind == "unsupported":
             continue
         for lead in opportunities[q.id]["items"]:
-            if lead["lead_id"] in assessed:
+            if lead["lead_id"] in assessed or (read_budget_exhausted and q.block_kind == "budget_exhausted"):
                 continue
-            if read_budget_exhausted and q.block_kind == "budget_exhausted":
-                continue
-            review_errors.append({"loc": ["questions", q.id, "skipped_leads"],
-                "code": "uninvestigated_lead", "opportunity": lead,
-                "message": "Investigate this lead or explain why it cannot resolve the missing condition; if reads are exhausted report budget blocking, not missing evidence"})
-    if review_errors:
-        raise AppError("investigation_incomplete", "Relevant material may still be available; inspect or explicitly assess remaining work",
-                       details={"category": "completion", "errors": review_errors})
-    result = artifacts(case, seen, context, goal, proposals, findings, draft.open_questions(), completion_status)
-    delivered_refs = {(r.info_unit_id, r.source_ref_index) for r in result.evidence_refs}
+            error(["questions", q.id, "skipped_leads"], "uninvestigated_lead",
+                  "Relevant material may still resolve the missing condition",
+                  "Use the opportunity's read tool, or record lead_id/reason explaining why it cannot help; exhausted reads require budget blocking",
+                  opportunity=lead)
+
+    # Validate independent finding rows even when a different row is malformed.
+    parsed_findings = []
+    if not isinstance(findings, list) or len(findings) > 12:
+        error(["findings"], "invalid_findings", "findings must be a list of at most twelve findings",
+              "Use [] or a bounded list of grounded findings", error_code="invalid_findings")
+    if isinstance(findings, list):
+        for index, row in enumerate(findings):
+            try:
+                parsed_findings.append((index, Finding.model_validate(row, strict=True)))
+            except ValidationError as exc:
+                errors.extend(validation_issues(exc, ["findings", index]))
+    result = None
+    try:
+        result = artifacts(case, seen, context, goal, proposals,
+            [f.model_dump(mode="json") for _, f in parsed_findings], draft.open_questions(), completion_status)
+    except (AppError, ValidationError) as exc:
+        rows = validation_issues(exc, fix="Use obtained current-case IDs and verified source pointers")
+        for issue in rows:
+            path = issue["loc"]
+            if path[:1] == ["findings"] and len(path) > 1 and isinstance(path[1], int):
+                path[1] = parsed_findings[path[1]][0]
+            issue.setdefault("error_code", exc.code if isinstance(exc, AppError) else "invalid_tool_arguments")
+        errors.extend(rows)
+    delivered_units = {uid for _, f in parsed_findings for uid in f.info_unit_ids}
+    delivered_units.update(uid for p in proposals for uid in p.info_unit_ids)
+    delivered_refs = {(r.info_unit_id, r.source_ref_index) for item in [*(f for _, f in parsed_findings), *proposals] for r in item.evidence_refs}
     for q in draft.items.values():
-        if q.status == "answered" and (not set(q.related_info_unit_ids) & set(result.relevant_info_unit_ids)
+        if q.status == "answered" and (not set(q.related_info_unit_ids) & delivered_units
                 or not {(r.info_unit_id, r.source_ref_index) for r in q.evidence_refs} <= delivered_refs):
-            raise AppError("investigation_incomplete", "Answered Question basis must appear in final findings or Proposals",
-                details={"category": "completion", "errors": [{"loc": ["questions", q.id], "code": "question_basis_not_delivered"}]})
-    if any(f.info_unit_ids and not f.evidence_refs and any(uid == ref[0] for uid in f.info_unit_ids for ref in seen["evidence"])
-           for f in result.findings):
-        raise AppError("investigation_incomplete", "Include obtained source pointers with factual findings")
-    text = _validate_summary(answer, proposals)
+            error(["questions", q.id], "question_basis_not_delivered", "Answered Question basis must appear in final findings or Proposals",
+                  "Include the Question's obtained materials and every cited SourceRef in final findings")
+    for index, finding in parsed_findings:
+        if finding.info_unit_ids and not finding.evidence_refs and any(uid == ref[0] for uid in finding.info_unit_ids for ref in seen["evidence"]):
+            error(["findings", index, "evidence_refs"], "finding_sources_missing", "Include obtained source pointers with factual findings",
+                  "Copy the verified SourceRef pointers for these materials from knowledge_state")
+    text = None
+    try:
+        text = _validate_summary(answer, proposals)
+    except AppError as exc:
+        for issue in validation_issues(exc, fix="Write concise prose within 240 nonblank characters without repeating Proposal fields"):
+            issue["error_code"] = exc.code
+            errors.append(issue)
+
+    # Reuse a completely validated Question batch as working memory even if
+    # delivery fails elsewhere. Findings/answer/completion are never accepted.
+    if not question_errors and question_updates:
+        questions.items, questions.activities = draft.items, draft.activities
+    if errors:
+        indices = {q["id"]: i for i, q in enumerate(question_updates) if isinstance(q, dict) and isinstance(q.get("id"), str)} if isinstance(question_updates, list) else {}
+
+        def references(item, field):
+            values = getattr(item, field, [])
+            return [(r.info_unit_id, r.source_ref_index) for r in values] if field == "evidence_refs" else values
+
+        for issue in errors:
+            path = issue["loc"]
+            field = {"relevant_info_unit_ids": "info_unit_ids", "relevant_relation_ids": "relation_ids",
+                     "evidence_refs": "evidence_refs"}.get(path[0] if path else None)
+            if field and len(path) > 1 and isinstance(path[1], int):
+                # artifacts() derives unions; translate their indices back to
+                # the actual tool arguments, including every repeated use.
+                union = []
+                for item in [*(f for _, f in parsed_findings), *proposals]:
+                    for value in references(item, field):
+                        if value not in union:
+                            union.append(value)
+                if path[1] < len(union):
+                    locations = [["findings", index, field, offset] for index, f in parsed_findings
+                                 for offset, value in enumerate(references(f, field)) if value == union[path[1]]]
+                    if locations:
+                        issue["argument_loc"] = locations[0]
+                        if len(locations) > 1:
+                            issue["argument_locs"] = locations
+            if path[:1] == ["questions"]:
+                qid = path[1] if len(path) > 1 else None
+                mapped = (["question_updates", *path[1:]] if isinstance(qid, int) else
+                          ["question_updates", indices[qid], *path[2:]] if qid in indices else ["question_updates"])
+                if len(mapped) > 3 and mapped[2] == "planned_actions" and isinstance(mapped[3], str):
+                    plans = question_updates[mapped[1]].get("planned_actions", [])
+                    mapped[3] = next((i for i, p in enumerate(plans) if isinstance(p, dict) and p.get("id") == mapped[3]), mapped[3])
+                issue["argument_loc"] = mapped
+        raise AppError(errors[0].get("error_code", "investigation_incomplete"), "Finish rejected; address all listed issues before retrying",
+            details={"category": errors[0].get("category", "completion"), "errors": errors,
+                     "question_updates_applied": not question_errors,
+                     "updated_question_ids": list(indices) if not question_errors else [],
+                     "question_recovery": "Validated Question updates are working memory only. Use question_updates=[] to reuse them; send only changed Questions."
+                        if not question_errors else "Question update batch was not accepted. Restore registered IDs and fix all Question errors; other diagnostics use the tentative draft."})
     return result, draft, text
 
 

@@ -6,7 +6,7 @@ import json
 import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.errors import AppError
 
@@ -14,6 +14,18 @@ Text = Annotated[str, Field(min_length=1, max_length=600, pattern=r"\S")]
 Identifier = Annotated[str, Field(min_length=1, max_length=80, pattern=r"\S")]
 MAX_QUESTIONS = 20
 MAX_CONTEXT_CHARS = 48000  # Deterministic character proxy, independent of provider tokenizer.
+
+
+def validation_issues(exc, prefix=(), fix="Correct the indicated field using the tool schema"):
+    """Keep independent diagnostics in the existing error envelope."""
+    if isinstance(exc, ValidationError):
+        rows = [{"loc": list(e["loc"]), "code": e["type"], "message": e["msg"], "category": "structure"}
+                for e in exc.errors(include_input=False, include_context=False, include_url=False)]
+    else:
+        rows = exc.details.get("errors") or [{"loc": [], "code": exc.code, "message": str(exc)}]
+    category = "structure" if isinstance(exc, ValidationError) else exc.details.get("category", "reference")
+    return [{**row, "loc": [*prefix, *row.get("loc", [])], "category": row.get("category", category),
+             "message": row.get("message", str(exc)), "fix": row.get("fix", fix)} for row in rows]
 
 
 class StateModel(BaseModel):
@@ -92,43 +104,102 @@ class QuestionState:
             raise AppError("invalid_question_reference", "Question IDs must be unique and already registered")
         return list(ids)
 
-    def update(self, updates, case, seen, context, proposals):
+    def review_updates(self, updates, case, seen, context, proposals, knowledge=None):
+        """Build a diagnostic draft without accepting any invalid update batch."""
         from app.investigation_actions import artifacts
-        parsed = TypeAdapter(list[Question]).validate_python(updates, strict=True)
-        if not 1 <= len(parsed) <= MAX_QUESTIONS or len({q.id for q in parsed}) != len(parsed):
-            raise AppError("invalid_questions", "Submit one to twenty unique Questions per batch")
-        draft = deepcopy(self.items)
+        draft, errors, parsed = deepcopy(self), [], []
+        if not isinstance(updates, list) or len(updates) > MAX_QUESTIONS:
+            return draft, [{"loc": ["questions"], "code": "invalid_questions",
+                "message": "Submit a list of at most twenty Questions", "fix": "Use [] to reuse current validated Questions"}]
+        for index, row in enumerate(updates):
+            try:
+                parsed.append(Question.model_validate(row, strict=True))
+            except ValidationError as exc:
+                errors.extend(validation_issues(exc, ["questions", index]))
+        if len({q.id for q in parsed}) != len(parsed):
+            errors.append({"loc": ["questions"], "code": "invalid_questions",
+                "message": "Duplicate Question IDs", "fix": "Submit each Question ID once"})
         lookup = {p.proposal_id: p for p in proposals}
+        owners = {a["proposal_id"]: set(a["question_ids"]) for a in knowledge.activities
+                  if a.get("proposal_id") and a["status"] == "ok"} if knowledge else {}
+        known_leads = {prefix + u.id for u in case.info_units for prefix in ("unit:", "source:")}
+        if knowledge:
+            known_leads.update(f"query:{i}" for i, a in enumerate(knowledge.activities) if a["has_more"])
+
+        def error(loc, code, message, fix):
+            errors.append({"loc": loc, "code": code, "message": message, "fix": fix})
+
         for q in parsed:
-            # Preserve registered commitments when adjusting/splitting a task.
-            previous = draft.get(q.id)
+            previous = self.items.get(q.id)
+            loc = ["questions", q.id]
             if q.id == "Q1" and q.question != self.items["Q1"].question:
-                raise AppError("goal_scope_changed", "Q1 must retain the complete original goal; add Questions to track its aspects")
+                error([*loc, "question"], "goal_scope_changed", "Q1 must retain the complete original goal",
+                      "Restore Q1.question from question_state; add Questions for separate aspects")
             if previous and not {p.id for p in previous.planned_actions} <= {p.id for p in q.planned_actions}:
-                raise AppError("unresolved_plan", "Do not delete planned actions; submit them or record omission_reason")
+                error([*loc, "planned_actions"], "unresolved_plan", "Do not delete registered planned actions",
+                      "Keep their IDs; link their actual Proposals or record omission_reason")
+            for index, assessment in enumerate(q.skipped_leads):
+                if assessment.lead_id not in known_leads:
+                    error([*loc, "skipped_leads", index, "lead_id"], "invalid_investigation_reference",
+                          "Skipped lead is not current-case material or an actual truncated query",
+                          "Use lead_id from investigation_opportunities")
             for plan in q.planned_actions:
+                ploc = [*loc, "planned_actions", plan.id]
                 old = next((p for p in previous.planned_actions if p.id == plan.id), None) if previous else None
-                if old and (old.kind, old.description) != (plan.kind, plan.description):
-                    raise AppError("unresolved_plan", "Keep registered action identity; explain omission before adding a replacement")
+                # Descriptions are prose, never an identity or semantic equivalence test.
+                if old and old.kind != plan.kind:
+                    error([*ploc, "kind"], "unresolved_plan", "Registered action kind cannot change",
+                          "Keep its kind; explain omission before adding a different action")
+                if old and old.proposal_id and old.proposal_id != plan.proposal_id:
+                    error([*ploc, "proposal_id"], "invalid_plan_reference", "A validated Proposal binding cannot be replaced or removed",
+                          f"Keep proposal_id={old.proposal_id}")
                 if plan.proposal_id:
                     proposal = lookup.get(plan.proposal_id)
-                    if not proposal or proposal.kind != plan.kind or (
-                            plan.kind in {"hypothesis", "evidence_gap"} and proposal.content != plan.description):
-                        raise AppError("invalid_plan_reference", "Plan must reference its actual same-run Proposal of the matching kind/content")
+                    if not proposal or proposal.kind != plan.kind:
+                        error([*ploc, "proposal_id"], "invalid_plan_reference", "Use an actual same-run Proposal of the matching kind",
+                              "Select the returned proposal_id with this action's kind, or explain omission")
+                    elif q.id not in owners.get(plan.proposal_id, set()):
+                        error([*ploc, "proposal_id"], "invalid_plan_reference", "Proposal was not submitted for this Question",
+                              "Use the Proposal under its recorded question_ids; do not assign another Question's work")
+                    elif q.related_info_unit_ids and proposal.info_unit_ids and not set(q.related_info_unit_ids) & set(proposal.info_unit_ids):
+                        error([*ploc, "proposal_id"], "invalid_plan_reference", "Proposal and Question have disjoint material bases",
+                              "Use the relevant Proposal and retain its obtained material in this Question")
             if q.related_info_unit_ids or q.evidence_refs:
-                artifacts(case, seen, context, "Question basis", [], [{"statement": q.finding or q.question[:600],
-                    "info_unit_ids": q.related_info_unit_ids, "relation_ids": [],
-                    "evidence_refs": [r.model_dump() for r in q.evidence_refs]}], [], "evidence_insufficient")
-            draft[q.id] = q
-        if len(draft) > MAX_QUESTIONS:
-            raise AppError("question_limit", "At most twenty run-local Questions")
-        submitted = [p.proposal_id for q in draft.values() for p in q.planned_actions if p.proposal_id]
-        if len(submitted) != len(set(submitted)):
-            raise AppError("invalid_plan_reference", "One Proposal cannot discharge multiple planned actions")
-        self.items = draft
+                try:
+                    artifacts(case, seen, context, "Question basis", [], [{"statement": q.finding or q.question[:600],
+                        "info_unit_ids": q.related_info_unit_ids, "relation_ids": [],
+                        "evidence_refs": [r.model_dump() for r in q.evidence_refs]}], [], "evidence_insufficient")
+                except (AppError, ValidationError) as exc:
+                    for issue in validation_issues(exc, fix="Use obtained current-case material and verified SourceRef indices"):
+                        path = issue["loc"]
+                        issue["loc"] = [*loc, *(path[2:] if path[:1] == ["findings"] else path)]
+                        if issue["loc"][2:3] == ["relevant_info_unit_ids"]:
+                            issue["loc"][2] = "related_info_unit_ids"
+                        errors.append(issue)
+            draft.items[q.id] = q
+        if len(draft.items) > MAX_QUESTIONS:
+            error(["questions"], "question_limit", "At most twenty run-local Questions", "Keep the current Question limit")
+        submitted = {}
+        for q in draft.items.values():
+            for plan in q.planned_actions:
+                if plan.proposal_id in submitted:
+                    error(["questions", q.id, "planned_actions", plan.id, "proposal_id"], "invalid_plan_reference",
+                          "One Proposal cannot discharge multiple planned actions", "Keep a single binding; explain redundant action omission")
+                if plan.proposal_id:
+                    submitted[plan.proposal_id] = (q.id, plan.id)
         for q in parsed:
-            self.activities.setdefault(q.id, [])
-        return {"status": "ok", "updated_question_ids": [q.id for q in parsed]}
+            draft.activities.setdefault(q.id, [])
+        return draft, errors
+
+    def update(self, updates, case, seen, context, proposals, knowledge=None):
+        if not updates:
+            raise AppError("invalid_questions", "Submit one to twenty unique Questions per batch")
+        draft, errors = self.review_updates(updates, case, seen, context, proposals, knowledge)
+        if errors:
+            raise AppError(errors[0]["code"], "Question updates were not accepted; fix all listed fields",
+                           details={"category": "questions", "errors": errors})
+        self.items, self.activities = draft.items, draft.activities
+        return {"status": "ok", "updated_question_ids": [q["id"] for q in updates]}
 
     def open_questions(self):
         return [(q.question + ("：" + q.block_reason if q.block_reason else ""))[:600]
