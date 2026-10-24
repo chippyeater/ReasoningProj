@@ -1,5 +1,5 @@
 import type { AgentResult, CaseData, ReasoningState } from "../api";
-import { displayText, hypothesisProposalTargets, proposalKey } from "./investigationPresentation";
+import { displayText, evidenceLinkPreview, hypothesisProposalTargets, proposalKey } from "./investigationPresentation";
 import { judgments, meanings } from "./ReasoningEditor";
 
 export function reasoningText(value: string, caseData: CaseData, state: ReasoningState, evidence: AgentResult["evidence"] = []) {
@@ -24,11 +24,13 @@ export function ReasoningSuggestions({ result, state, caseData, dismissed, busy,
     <details><summary>查看待确认建议（{proposals.length}）</summary><p>采纳后才保存；建议不是已证实的事实。候选也可在画布中查看。</p>
     {proposals.map(({ item, index }) => {
       const targets = hypothesisProposalTargets(result, state, index);
+      const link = evidenceLinkPreview(result, state, index);
       const pending = targets.some(target => !target.accepted);
-      return <article key={index} className="reasoning-suggestion">
+      return <article key={index} className="reasoning-suggestion" data-proposal-index={index}>
       <strong>{kinds[item.kind]}{item.meaning ? ` · ${meanings[item.meaning]}` : item.judgment ? ` · ${judgments[item.judgment]}` : ""}</strong>
-      <p>{text(item.content ?? state.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "检查现有推理")}</p>
-      {pending ? <p>请先采纳关联假设，再采纳此缺口。若已忽略该假设，请重新调查。</p> : null}
+      <p>{link ? `「${caseData.info_units.find(u => u.id === link.sourceId)?.title ?? "相关材料"}」→「${text(link.title)}」`
+        : text(item.content ?? state.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "检查现有推理")}</p>
+      {pending ? <p>请先采纳关联假设，再采纳此{item.kind === "evidence_link" ? "证据关联" : "缺口"}。若已忽略该假设，请重新调查。</p> : null}
       {targets.length ? <details><summary>关联假设</summary>{targets.map((target, offset) => <p key={offset}>{target.accepted ? "已采纳" : "待采纳"} · {text(target.title)}</p>)}</details> : null}
       <details><summary>查看建议依据</summary><p>{text(item.rationale)}</p>{item.info_unit_ids.map(id => <button type="button" key={id} onClick={() => onLocate(id)}>{caseData.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}</details>
       <button type="button" disabled={busy || pending} onClick={() => onAccept(index)}>采纳建议</button><button type="button" disabled={busy} onClick={() => onIgnore(index)}>忽略建议</button>

@@ -50,9 +50,11 @@ def propose_hypothesis(case, seen, context, proposals, *, content, rationale, in
                     info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
 
 
-def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info_unit_id, meaning, rationale, evidence_refs):
-    """Propose support/oppose/verify between a retrieved InfoUnit and an existing context Hypothesis."""
-    return _propose(case, seen, context, proposals, "evidence_link", hypothesis_ids=[hypothesis_id],
+def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info_unit_id, meaning, rationale, evidence_refs,
+                          hypothesis_proposal_ids=None):
+    """Propose support/oppose/verify from a retrieved InfoUnit to exactly one Hypothesis. Use hypothesis_id for an existing context Hypothesis, or null plus one actually returned same-run hypothesis_proposal_ids entry for a new pending Hypothesis. Never both. User must adopt that Hypothesis first, then separately adopt this Link; nothing is automatically accepted."""
+    return _propose(case, seen, context, proposals, "evidence_link", hypothesis_ids=[] if hypothesis_id is None else [hypothesis_id],
+                    hypothesis_proposal_ids=[] if hypothesis_proposal_ids is None else hypothesis_proposal_ids,
                     info_unit_ids=[info_unit_id], meaning=meaning, rationale=rationale, evidence_refs=evidence_refs)
 
 

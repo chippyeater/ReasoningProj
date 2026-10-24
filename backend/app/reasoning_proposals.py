@@ -23,7 +23,7 @@ def proposal_receipt(case, issue_key, context, proposals):
 
 
 def validate_proposal_dependencies(proposals):
-    """Only Gap -> new Hypothesis, addressed within this exact ordered run."""
+    """Only Gap/Link -> new Hypothesis, addressed within this exact ordered run."""
     ids = [p.proposal_id for p in proposals if p.proposal_id is not None]
     if len(ids) != len(set(ids)):
         raise AppError("invalid_reasoning_proposal", "Duplicate proposal IDs in run")
@@ -33,7 +33,7 @@ def validate_proposal_dependencies(proposals):
                        for offset, pid in enumerate(proposal.hypothesis_proposal_ids))
         for field, offset, target in targets:
             if target >= len(proposals) or proposals[target].kind != "hypothesis":
-                raise AppError("invalid_reasoning_proposal", "Gap target must be a Hypothesis proposal in this run", details={
+                raise AppError("invalid_reasoning_proposal", "Target must be a Hypothesis proposal in this run", details={
                     "category": "proposal_semantics", "errors": [{
                         "loc": ["proposals", index, field, offset],
                         "code": "invalid_hypothesis_proposal_target",
@@ -89,14 +89,15 @@ def accept_proposal(case, request):
         parent = proposals[index]  # Type and same-run bounds checked above, including at adoption.
         if evidence_hash(case, parent.info_unit_ids) != receipt["evidence_hashes"][index]:
             raise AppError("stale_reasoning_proposal", "Hypothesis evidence changed; investigate again before adopting", 409)
-        # Each already-adopted sibling Gap advances the parent's revision once.
-        # All other edits (including later user edits to a Gap) still invalidate it.
-        adopted_gaps = {g.id: g for g in state.gaps}
+        # Each independently adopted sibling Gap/Link advances the parent once.
+        # Later user edits still advance it again and invalidate stale suggestions.
+        adopted_dependents = {obj.id: obj for obj in [*state.gaps, *state.links]}
         sibling_count = sum(
             1 for sibling_index, sibling in enumerate(proposals)
             if index in dependency_indices(sibling, proposals)
-            and (gap := adopted_gaps.get(state.accepted_proposals.get(proposal_key(request.run_id, proposals, sibling_index))))
-            and gap.proposal_key == proposal_key(request.run_id, proposals, sibling_index) and hid in gap.hypothesis_ids)
+            and (child := adopted_dependents.get(state.accepted_proposals.get(proposal_key(request.run_id, proposals, sibling_index))))
+            and child.proposal_key == proposal_key(request.run_id, proposals, sibling_index)
+            and (hid in child.hypothesis_ids if hasattr(child, "hypothesis_ids") else hid == child.hypothesis_id))
         target = targets[hid]
         if (target.revision != 1 + sibling_count or target.content != parent.content
                 or target.judgment != "unverified" or target.work_status != "active"):
@@ -108,7 +109,7 @@ def accept_proposal(case, request):
     elif proposal.kind == "evidence_gap":
         edit.gap = GapEdit(content=proposal.content, hypothesis_ids=hypothesis_ids, info_unit_ids=proposal.info_unit_ids)
     elif proposal.kind == "evidence_link":
-        edit.link = LinkEdit(hypothesis_id=proposal.hypothesis_ids[0], info_unit_id=proposal.info_unit_ids[0],
+        edit.link = LinkEdit(hypothesis_id=hypothesis_ids[0], info_unit_id=proposal.info_unit_ids[0],
                              meaning=proposal.meaning, rationale=proposal.rationale)
     else:
         target = targets[proposal.hypothesis_ids[0]]

@@ -96,7 +96,8 @@ def tool_definitions() -> list[dict]:
     text_id = {"type": "string", "minLength": 1, "pattern": r"\S"}
     specifications = {
         "propose_hypothesis": {**common, "content": content},
-        "propose_evidence_link": {"hypothesis_id": text_id, "info_unit_id": text_id,
+        "propose_evidence_link": {"hypothesis_id": {"anyOf": [text_id, {"type": "null"}]}, "info_unit_id": text_id,
+            "hypothesis_proposal_ids": {**props["hypothesis_proposal_ids"], "maxItems": 1},
             "meaning": next(p for p in props["meaning"]["anyOf"] if p.get("type") != "null"),
             "rationale": props["rationale"], "evidence_refs": props["evidence_refs"]},
         "propose_evidence_gap": {**common, "content": content, "hypothesis_ids": props["hypothesis_ids"],
@@ -146,6 +147,8 @@ def _arguments(name: str, raw: str) -> dict:
               set(d["function"]["parameters"]["properties"])) for d in tool_definitions()}
     fields["search_info_units"] = ({"query"}, fields["search_info_units"][1])
     fields["get_relations"] = ({"info_unit_ids"}, fields["get_relations"][1])
+    # Existing formal-Hypothesis calls remain valid; native schemas ask for an explicit empty list.
+    fields["propose_evidence_link"] = (fields["propose_evidence_link"][0] - {"hypothesis_proposal_ids"}, fields["propose_evidence_link"][1])
     if name not in fields:
         raise AppError("unknown_tool", "Only registered investigation and pending-artifact tools are allowed")
     required, allowed = fields[name]
@@ -154,6 +157,8 @@ def _arguments(name: str, raw: str) -> dict:
     if name in {"search_info_units", "get_relations"}:
         args["limit"] = tools.DEFAULT_LIMIT if args.get("limit") is None else args["limit"]
         args.setdefault("types" if name == "search_info_units" else "relation_types", None)
+    if name == "propose_evidence_link":
+        args.setdefault("hypothesis_proposal_ids", [])
     return args
 
 

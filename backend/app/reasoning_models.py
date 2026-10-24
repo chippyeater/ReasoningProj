@@ -138,8 +138,10 @@ class ReasoningProposal(ContractModel):
             raise ValueError("Duplicate hypothesis_proposal_ids")
         if self.hypothesis_proposal_indices and self.hypothesis_proposal_ids:
             raise ValueError("Do not mix legacy indices with hypothesis_proposal_ids")
-        if self.kind != "evidence_gap" and (self.hypothesis_proposal_indices or self.hypothesis_proposal_ids):
-            raise ValueError("hypothesis_proposal_indices / hypothesis_proposal_ids is only allowed for evidence_gap")
+        if self.hypothesis_proposal_indices and self.kind != "evidence_gap":
+            raise ValueError("Legacy hypothesis_proposal_indices is only allowed for evidence_gap")
+        if self.hypothesis_proposal_ids and self.kind not in {"evidence_gap", "evidence_link"}:
+            raise ValueError("hypothesis_proposal_ids is only allowed for evidence_gap and evidence_link")
         if self.kind == "hypothesis":
             valid = self.content is not None and not self.hypothesis_ids and self.meaning is None and self.judgment is None
         elif self.kind == "evidence_gap":
@@ -149,7 +151,8 @@ class ReasoningProposal(ContractModel):
                 raise ValueError("hypothesis_ids and hypothesis_proposal_indices must total at most 5 targets")
             valid = self.content is not None and self.meaning is None and self.judgment is None
         elif self.kind == "evidence_link":
-            valid = self.content is None and len(self.hypothesis_ids) == 1 and len(self.info_unit_ids) == 1 and self.meaning is not None and self.judgment is None
+            valid = (self.content is None and len(self.hypothesis_ids) + len(self.hypothesis_proposal_ids) == 1
+                     and len(self.info_unit_ids) == 1 and self.meaning is not None and self.judgment is None)
         else:
             valid = self.content is None and len(self.hypothesis_ids) == 1 and self.meaning is None and self.judgment is not None
         if not valid:

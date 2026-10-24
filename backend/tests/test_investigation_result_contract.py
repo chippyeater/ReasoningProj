@@ -145,7 +145,7 @@ class TestInvestigationResultContract(unittest.TestCase):
             self.assertNotIn("proposal_id", schema["properties"])
             self.assertNotIn("hypothesis_proposal_indices", schema["properties"])
         self.assertIn("hypothesis_proposal_ids", definitions["propose_evidence_gap"]["properties"])
-        self.assertNotIn("hypothesis_proposal_ids", definitions["propose_evidence_link"]["properties"])
+        self.assertEqual(definitions["propose_evidence_link"]["properties"]["hypothesis_proposal_ids"]["maxItems"], 1)
         old = ReasoningProposal.model_validate(self.result()["proposals"][0])
         self.assertIsNone(old.proposal_id)
         self.assertEqual(old.hypothesis_proposal_ids, [])

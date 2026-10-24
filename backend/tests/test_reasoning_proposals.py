@@ -24,7 +24,11 @@ def proposal_call(source, prior_ids, call_id):
     kind = source["kind"]
     args = {key: source[key] for key in ("rationale", "evidence_refs")}
     if kind == "evidence_link":
-        args.update(hypothesis_id=source["hypothesis_ids"][0], info_unit_id=source["info_unit_ids"][0], meaning=source["meaning"])
+        args.update(hypothesis_id=source["hypothesis_ids"][0] if source["hypothesis_ids"] else None,
+                    info_unit_id=source["info_unit_ids"][0], meaning=source["meaning"],
+                    hypothesis_proposal_ids=source.get("hypothesis_proposal_ids", [
+                        prior_ids[index] if index < len(prior_ids) else "proposal-" + "f" * 32
+                        for index in source.get("hypothesis_proposal_indices", [])]))
     else:
         args["info_unit_ids"] = source["info_unit_ids"]
         if kind in {"hypothesis", "evidence_gap"}:
@@ -44,7 +48,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
     test_invalid_refs_duplicates_and_write_failure_leave_file_unchanged = None
     test_legacy_workspace_and_referenced_evidence_are_protected = None
 
-    def investigate(self, proposals, selected=None, *, summary_failure=False):
+    def investigate(self, proposals, selected=None, *, summary_failure=False, read_ids=None):
         goal = "检查假设的支持、反对依据及证据缺口"
         requests = []
         real_client = httpx.AsyncClient
@@ -53,7 +57,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
             requests.append(body)
             step = len(requests) - 1
             if step == 0:
-                reply = replies.tool("get_evidence", {"info_unit_ids": ["U029"]})
+                reply = replies.tool("get_evidence", {"info_unit_ids": read_ids or ["U029"]})
             elif step <= len(proposals or []):
                 returned = [json.loads(m["content"]) for m in body["messages"] if m["role"] == "tool"]
                 ids = [r["proposal_id"] for r in returned if r.get("pending")]

@@ -10,7 +10,7 @@
 - `propose_hypothesis`、`propose_evidence_link`、`propose_evidence_gap`、`propose_hypothesis_status`：分别校验并提交待确认建议，不能直接写正式对象。
 - `present_findings`：复用既有发现与来源界面。每次最多四项带引用的发现、待核查问题和完成状态；追加不同发现，不创建画布节点，不按展示形式继续增设工具。
 
-使用原有 LLM Client 原生函数调用，strict 工具参数，关闭并行调用。调查请求不再带完整结果 JSON Schema 或 response_format。模型最终直接回复 1–1200 字符自然语言；最终 JSON 不作为写入、引用或建议渠道。
+使用原有 LLM Client 原生函数调用，strict 工具参数，关闭并行调用。调查请求不再带完整结果 JSON Schema 或 response_format。模型最终直接回复简短自然语言，默认 40–80 字，上限 240 个非空白字符；最终 JSON 不作为写入、引用或建议渠道。
 
 事实问题直接检索并核对来源。分析问题按 Prompt 先考虑通常 2–3 种可区分、可检验的解释，针对支持、反对和区分性材料检索，之后才决定保留哪些建议；没有固定 Search → Relations → Evidence 或 Proposal 流程。临时调查计划不等于正式 Hypothesis。
 
@@ -24,13 +24,13 @@
 
 节点、关系及引用必须属于绑定案件、在本次实际可见；SourceRef 必须由 get_evidence 返回，关系中列出的依据 ID 不等于已读证据。非法候选在工具结果中明确拒绝、记录字段位置与类别，不追加成果，不静默丢弃。校验保证可定位，不能证明陈述真实或充分支持推论。
 
-四个 Proposal 工具复用同一个 ReasoningProposal 存储和审批服务，kind 由工具确定，不是最终模型 JSON 的分发依据。返回的临时 proposal_id 只在本次运行中有效；仅 Gap 可用 hypothesis_proposal_ids 指向已成功提出的新 Hypothesis。其余临时依赖禁止，详见 [Issue 协作推理](issue_reasoning.md)。
+四个 Proposal 工具复用同一个 ReasoningProposal 存储和审批服务，kind 由工具确定，不是最终模型 JSON 的分发依据。返回的临时 proposal_id 只在本次运行中有效；Gap 和 Link 可用 hypothesis_proposal_ids 指向已成功提出的新 Hypothesis。Link 的 hypothesis_id 与临时目标恰选一个，临时列表最多一项；其余临时依赖禁止，详见 [Issue 协作推理](issue_reasoning.md)。
 
 工具成功后立即写入独立运行审计及版本凭据。自然语言总结失败且已有合法成果时，返回 summary_status=failed、answer=null，审计标记 partial；界面明确显示总结未完成，保留已验证的待确认建议。只有用户调用采纳接口才能正式写入，失败的总结既不会撤销工具成果，也不会连带采纳。没有成果的模型失败仍返回明确错误。审计写入失败不降级为成功。
 
 ## 上下文、安全和观测
 
-初始请求仅为目标、核心争点、类型数量、选中摘要及有限 Issue/推理摘要。不注入全案节点、关系、文件、画布、历史或全部假设。工具仍按需检索全案。
+初始请求包含目标、核心争点、类型数量、选中摘要及有限 Issue/推理摘要。当前 Issue 画布最多提供 8 个可见 InfoUnit 摘要（内容 120 字）、12 条端点均在摘要内的 Relation（保留 ID、类型、方向），优先显式选择、聚焦、目标关键词；节点/关系省略和文本截断均有提示。API 接受 focused_object_id，后端绑定并检查当前 Issue 归属。画布布局、坐标、缩放、文件、原文、历史和全案数据不注入；工具仍可按需检索全案。摘要可作节点/关系依据，但不授权引用尚未读取的 SourceRef。
 
 案件文本、原文及工具结果始终作为 user/tool 数据；不拼成系统指令。运行时没有任意函数、文件操作、案件切换或正式写入能力。只追加 `runs/investigation-*.input/output.json`；CaseData、Issue 状态和画布不由调查过程修改。
 

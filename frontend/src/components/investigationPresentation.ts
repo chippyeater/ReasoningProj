@@ -6,6 +6,28 @@ export function proposalKey(result: Pick<AgentResult, "run_id" | "proposals">, i
   return `${result.run_id}:${result.proposals?.[index]?.proposal_id ?? index}`;
 }
 
+export function candidateNodeId(result: Pick<AgentResult, "run_id" | "proposals">, index: number) {
+  return `candidate:${proposalKey(result, index)}`;
+}
+
+/** Resolve a Link's one endpoint without guessing or crossing run boundaries. */
+export function evidenceLinkPreview(result: Pick<AgentResult, "run_id" | "proposals">, state: ReasoningState, index: number) {
+  const item = result.proposals?.[index];
+  if (item?.kind !== "evidence_link" || item.info_unit_ids.length !== 1) return null;
+  const formal = item.hypothesis_ids.length === 1 ? state.hypotheses.find(h => h.id === item.hypothesis_ids[0]) : null;
+  if (formal && !item.hypothesis_proposal_ids?.length) return {
+    sourceId: item.info_unit_ids[0], targetId: formal.id, title: formal.content, parentIndex: null, pending: false,
+  };
+  if (item.hypothesis_ids.length || item.hypothesis_proposal_ids?.length !== 1) return null;
+  const parentIndex = result.proposals?.findIndex(p => p.proposal_id === item.hypothesis_proposal_ids![0]) ?? -1;
+  const parent = result.proposals?.[parentIndex];
+  if (parent?.kind !== "hypothesis") return null;
+  const key = proposalKey(result, parentIndex);
+  const adopted = state.hypotheses.find(h => h.id === state.accepted_proposals[key] && h.proposal_key === key);
+  return { sourceId: item.info_unit_ids[0], targetId: adopted?.id ?? candidateNodeId(result, parentIndex),
+    title: adopted?.content ?? parent.content ?? "关联假设", parentIndex, pending: !adopted };
+}
+
 /** Resolve returned IDs inside this run; indices are only for older audited results. */
 export function hypothesisProposalTargets(result: Pick<AgentResult, "run_id" | "proposals">, state: ReasoningState, index: number) {
   const item = result.proposals?.[index];

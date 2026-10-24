@@ -2492,6 +2492,10 @@ button,
 .canvas-link.reasoning-support { stroke: #a8d981; stroke-dasharray: none; }
 .canvas-link.reasoning-oppose { stroke: #f39b9b; stroke-dasharray: 8 5; }
 .canvas-link.reasoning-verify, .canvas-link.reasoning-gap { stroke: #a9a5b7; stroke-dasharray: 4 5; }
+.canvas-link.reasoning-pending { stroke-dasharray: 3 7; opacity: .65; }
+.pending-reasoning-edge .edge-label-box { fill: #514466; stroke: #ad98cc; stroke-dasharray: 3 3; }
+.pending-reasoning-edge .edge-label-text { fill: #eee5ff; }
+.reasoning-candidate summary { cursor: pointer; font-size: 12px; }
 .reasoning-candidate { position: absolute; width: 310px; padding: 14px; border: 1px dashed #bbaaec; border-radius: 12px; color: #e6ddff; background: rgba(76,62,107,.6); opacity: .68; backdrop-filter: blur(5px); z-index: 15; cursor: default; }
 .reasoning-candidate p { margin: 10px 0; line-height: 1.6; overflow-wrap: anywhere; }
 .reasoning-candidate span { font-size: 12px; margin-right: 8px; }

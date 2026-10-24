@@ -31,9 +31,9 @@
 
 新建议只由四个独立 Proposal 工具产生，工具名决定种类；最终回复不携带建议 JSON。成功工具返回随机临时 proposal_id，并立即持久化至本次运行审计。kind 继续用于既有存储和 UI。新假设采纳后仍为未证实、活跃；引用仍须来自本轮实际读取的 InfoUnits/SourceRefs。
 
-hypothesis_ids 保留引用有限上下文中已有假设的方式。仅 Evidence Gap 可额外填写 hypothesis_proposal_ids，引用同一运行里已经成功返回的 Hypothesis proposal_id；两个列表合计 1–5 个目标。模型不能自造 ID、引用未来建议、其他运行或其他建议类型。临时调查计划不需要调用 Proposal，不写工作区。
+hypothesis_ids 保留引用有限上下文中已有假设的方式。Evidence Gap 可填写 hypothesis_proposal_ids，引用同一运行里已经成功返回的 Hypothesis proposal_id；两个列表合计 1–5 个目标。Evidence Link 同样复用该字段，但必须恰有一个正式或临时假设目标、一个 InfoUnit；工具以 hypothesis_id=null 加单项 hypothesis_proposal_ids 指向新假设，已有假设则传正式 ID 和空列表。模型不能自造 ID、引用未来建议、其他运行或其他建议类型。临时调查计划不需要调用 Proposal，不写工作区。
 
-新幂等键为 `run_id:proposal_id`，从已采纳映射找到真实假设 ID。缺口必须等用户先采纳父假设，不连带采纳、不猜测关联；父假设和材料须未过期。同轮其他已采纳缺口引起的已知修订递增允许继续采纳。用户的其他修改仍会使旧建议失效。
+新幂等键为 `run_id:proposal_id`，从已采纳映射找到真实假设 ID。依赖新假设的缺口或证据关联都必须等用户先采纳父假设，再独立采纳；不连带采纳、不猜测关联。父假设和材料须未过期；同轮其他已采纳缺口/关联引起的已知修订递增允许继续采纳。用户的其他修改仍会使旧建议失效。
 
 旧运行缺少 proposal_id 时仍按原顺序、hypothesis_proposal_indices 和 `run_id:index` 采纳，无迁移或历史改写；新工具不接收数组索引。正式工作区结构没有新增字段。
 
@@ -45,6 +45,8 @@ hypothesis_ids 保留引用有限上下文中已有假设的方式。仅 Evidenc
 
 ## 离线验收
 
-沿用 `docs/investigation_agent.md` 中的隔离后端和 Vite 启动方法。后端：`test_reasoning_workspace.py`、`test_reasoning_proposals.py`。可见浏览器：`frontend/tests/reasoning-workspace-smoke.cjs`，只模拟模型边界，真实运行 API、循环、审计与持久化；其他四组浏览器脚本验证已有功能。
+沿用 `docs/investigation_agent.md` 中的隔离后端和 Vite 启动方法。后端：`test_reasoning_workspace.py`、`test_reasoning_proposals.py`、`test_investigation_context.py`、`test_evidence_link_proposals.py`。可见浏览器：`frontend/tests/reasoning-workspace-smoke.cjs`、`frontend/tests/evidence-link-proposals-smoke.cjs`，只模拟模型边界，真实运行 API、循环、审计与持久化。两组均需从新启动的隔离后端开始，避免彼此已采纳的数据污染数量断言；其他浏览器脚本验证已有功能。
 
-尚未验证付费真实模型的建议质量。引用可定位不能证明其充分支持判断；采纳是用户决定，不代表独立核实。不提供多人冲突合并、通用审批/撤销历史、自动收集外部证据、生成布局或通用建议依赖图；仅允许上述同轮 Gap 到新 Hypothesis 的引用。新的证据关系需要进一步检验，不能由片段或引用次数推导独立证据数量。
+画布仅为实际 Evidence Link 建议绘制 InfoUnit 到新候选/已采纳 Hypothesis 的待确认虚线，附关系含义与待确认标识。可独立预览依据、定位材料、采纳或忽略；父假设采纳后仅重连端点，关联仍待确认。隐藏或忽略的端点不虚构连线；未在当前画布的材料可由用户点击定位加入。候选关系不写入工作区；正式关系继续复用手动 CRUD 与持久化。
+
+尚未验证付费真实模型的建议质量。引用可定位不能证明其充分支持判断；采纳是用户决定，不代表独立核实。不提供多人冲突合并、通用审批/撤销历史、自动收集外部证据、生成布局或通用建议依赖图；仅允许上述同轮 Gap/Link 到新 Hypothesis 的引用。新的证据关系需要进一步检验，不能由片段或引用次数推导独立证据数量。

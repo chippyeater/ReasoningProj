@@ -28,7 +28,10 @@ async def model(config, messages, definitions, schema=None, **kwargs):
             goal, status="unsupported", questions=["当前仅支持只读调查；请使用手动编辑功能。"])
     arrival = any(word in goal for word in ("入住", "搬进去"))
     analysis = "房东是否存在实际空置损失" in goal
+    link_analysis = "同轮证据关联" in goal
     if not names:
+        if link_analysis:
+            return replies.tool("get_evidence", {"info_unit_ids": ["U029", "U036"]})
         return replies.tool("search_info_units", {"query": "空置" if analysis else "入住"}) if arrival or analysis else replies.tool("get_evidence", {"info_unit_ids": ["U029"]})
     if analysis and "get_evidence" not in names:
         return replies.tool("get_evidence", {"info_unit_ids": ["U029", "U036"]}, "both-sides")
@@ -37,7 +40,7 @@ async def model(config, messages, definitions, schema=None, **kwargs):
     if arrival and "get_evidence" not in names:
         return replies.tool("get_evidence", {"info_unit_ids": ["U026"]}, "verify")
     proposals = []
-    if any(word in goal for word in ("假设", "缺口", "建议")) or analysis:
+    if any(word in goal for word in ("假设", "缺口", "建议")) or analysis or link_analysis:
         from test_reasoning_proposals import suggestion, proposal_call
         hypotheses = initial.get("work_context", {}).get("reasoning", {}).get("hypotheses", [])
         if "同轮" in goal or analysis:
@@ -48,6 +51,11 @@ async def model(config, messages, definitions, schema=None, **kwargs):
             first_gap.update(content="核对同轮假设的租金流水。", hypothesis_proposal_indices=[1])
             second_gap.update(content="核对同轮假设的交房记录。", hypothesis_proposal_indices=[1])
             proposals = [first, target, first_gap, second_gap]
+            if link_analysis:
+                def link(index, meaning, uid="U029"):
+                    return {**suggestion("evidence_link"), "meaning": meaning, "hypothesis_proposal_indices": [index],
+                            "info_unit_ids": [uid], "evidence_refs": [{"info_unit_id": uid, "source_ref_index": 0}]}
+                proposals = [first, target, link(0, "oppose"), link(1, "support"), link(0, "verify", "U036")]
         else:
             proposals = [suggestion("hypothesis")]
             if hypotheses:
@@ -68,6 +76,8 @@ async def model(config, messages, definitions, schema=None, **kwargs):
         return replies.final('实际损失**尚未证实**。\n\n<img src=x onerror="window.summaryInjected=true">[查看](javascript:alert(1))')
     if analysis:
         return replies.final("实际租金损失**尚未证实**。\n\n已提出两条假设和两项证据缺口，优先核实计租日及收款记录，以判断是否少收租金。可在画布中查看、采纳或忽略建议。")
+    if link_analysis:
+        return replies.final("实际租金损失尚未证实。已提出两条假设和三项证据关联，建议核对计租日和收款记录；可逐项查看、采纳或忽略。")
     answer = "据张某陈述，替租人于 2026 年 3 月 8 日搬入，尚未独立核实。" if arrival else "现有陈述尚不足以确认实际租金损失。关键是计租起点和收款记录，仍需核实。"
     if proposals:
         answer += "已提出待确认建议，可在画布查看。"

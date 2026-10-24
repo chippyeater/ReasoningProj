@@ -42,7 +42,7 @@ import {
 } from "./api";
 import { ReasoningEditor, judgments, meanings, type ReasoningEditorTarget } from "./components/ReasoningEditor";
 import { ReasoningSuggestions, reasoningText } from "./components/ReasoningSuggestions";
-import { hypothesisProposalTargets, proposalKey } from "./components/investigationPresentation";
+import { candidateNodeId, evidenceLinkPreview, hypothesisProposalTargets, proposalKey } from "./components/investigationPresentation";
 import { InvestigationResultPanel } from "./components/InvestigationResultPanel";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
@@ -127,6 +127,7 @@ type CanvasEdge = {
   businessRelationType: Relation["relation_type"] | null;
   reasoningMeaning?: LinkMeaning | "gap";
   reasoningLinkId?: string;
+  proposalIndex?: number;
 };
 
 type Point = { x: number; y: number };
@@ -601,7 +602,7 @@ export default function App() {
   const [agentError, setAgentError] = useState("");
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const nodeElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const nodeElementRefs = useRef<Record<string, HTMLElement | null>>({});
   const caseSelectorRef = useRef<HTMLDivElement | null>(null);
   const caseNameInputRef = useRef<HTMLInputElement | null>(null);
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1072,7 +1073,7 @@ export default function App() {
     return { nodes, edges };
   }, [currentCase, evidences, reasoning]);
 
-  const candidatePositions = useMemo(() => (agentResult?.proposals ?? []).map((_, index) => reasoningPosition(index)), [agentResult?.run_id]);
+  const candidatePositions = useMemo(() => (agentResult?.proposals ?? []).map((_, index) => reasoningPosition(index, 300)), [agentResult?.run_id]);
   const candidateProposals = (agentResult?.proposals ?? []).map((item, index) => ({ item, index }))
     .filter(({ index }) => !dismissedProposals.includes(index) && !reasoning.accepted_proposals[proposalKey(agentResult!, index)]);
 
@@ -1088,7 +1089,24 @@ export default function App() {
     return { nodes, edges: allCanvasData.edges.filter(edge => ids.has(edge.sourceId) && ids.has(edge.targetId)) };
   }, [allCanvasData, issueCanvas, issues.length]);
 
+  // Temporary edges share the existing renderer, but never enter saved canvas/business data.
+  const candidatePoints: Record<string, Point> = {};
+  if (agentResult) for (const { item, index } of candidateProposals) {
+    if (item.kind === "hypothesis") candidatePoints[candidateNodeId(agentResult, index)] = candidatePositions[index];
+  }
+  const pendingLinkEdges: CanvasEdge[] = [];
+  const edgeLabelBoxes: { x: number; y: number; width: number }[] = [];
+  if (agentResult) for (const { item, index } of candidateProposals) {
+    const preview = evidenceLinkPreview(agentResult, reasoning, index);
+    if (!preview || !canvasData.nodes.some(n => n.id === preview.sourceId)
+        || !(candidatePoints[preview.targetId] || canvasData.nodes.some(n => n.id === preview.targetId))) continue;
+    pendingLinkEdges.push({ id: `pending:${proposalKey(agentResult, index)}`, sourceId: preview.sourceId, targetId: preview.targetId,
+      relationType: `待确认 · ${meanings[item.meaning!]}`, strength: 2, businessRelationType: null,
+      reasoningMeaning: item.meaning!, proposalIndex: index });
+  }
+
   const canvasNodeIdsKey = canvasData.nodes.map((node) => node.id).join("\u0000");
+  const candidateIdsKey = agentResult ? candidateProposals.map(({ index }) => candidateNodeId(agentResult, index)).join("\u0000") : "";
   const canvasNodeLayoutKey = canvasData.nodes.map((node) => `${node.id}:${node.level}`).join("\u0000");
 
   useEffect(() => {
@@ -1450,19 +1468,19 @@ export default function App() {
     return queued;
   }
 
-  function reasoningPosition(index = 0): Point {
+  function reasoningPosition(index = 0, rowHeight = 180): Point {
     const origin = { x: Math.max(20, -transformRef.current.x / transformRef.current.zoom + 20),
       y: Math.max(80, -transformRef.current.y / transformRef.current.zoom + 80) };
     const columns = Math.max(1, Math.floor((wrapperRef.current?.clientWidth ?? 1000) / transformRef.current.zoom / 360));
     let free = 0;
     const visible = new Set(issueCanvas?.visible_node_ids ?? []);
     for (let slot = 0; slot < 60; slot++) {
-      const point = { x: origin.x + (slot % columns) * 360, y: origin.y + Math.floor(slot / columns) * 180 };
+      const point = { x: origin.x + (slot % columns) * 360, y: origin.y + Math.floor(slot / columns) * rowHeight };
       const occupied = allCanvasData.nodes.some(node => {
         if (!visible.has(node.id)) return false;
         const p = nodePositions[node.id] ?? issueCanvas?.node_positions[node.id] ?? node;
         const size = getNodeSize(node.id);
-        return point.x < p.x + size.width + 20 && point.x + 350 > p.x && point.y < p.y + size.height + 20 && point.y + 160 > p.y;
+        return point.x < p.x + size.width + 20 && point.x + 350 > p.x && point.y < p.y + size.height + 20 && point.y + rowHeight - 20 > p.y;
       });
       if (!occupied && free++ === index) return point;
     }
@@ -1476,7 +1494,7 @@ export default function App() {
   function reasoningFailure(err: unknown) {
     const text = err instanceof Error ? err.message : "";
     return text.includes("stale_reasoning_proposal") ? "推理或材料已被修改，请重新调查后再采纳。"
-      : text.includes("proposal_dependency_not_accepted") ? "请先采纳本次调查中的关联假设，再采纳此缺口。"
+      : text.includes("proposal_dependency_not_accepted") ? "请先采纳本次调查中的关联假设，再单独采纳关联建议。"
       : text.includes("duplicate_evidence_link") ? "该信息已与此假设关联，请编辑已有连线。"
       : "保存推理失败，内容尚未保存，请重试。";
   }
@@ -2350,7 +2368,7 @@ export default function App() {
         const next = { ...current };
 
         entries.forEach((entry) => {
-          const element = entry.target as HTMLDivElement;
+          const element = entry.target as HTMLElement;
           const nodeId = element.dataset.nodeId;
           if (!nodeId) return;
 
@@ -2368,12 +2386,12 @@ export default function App() {
     });
 
     const initialSizes: Record<string, NodeSize> = {};
-    canvasData.nodes.forEach((node) => {
-      const element = nodeElementRefs.current[node.id];
+    [...canvasData.nodes.map(node => node.id), ...candidateIdsKey.split("\u0000").filter(Boolean)].forEach((id) => {
+      const element = nodeElementRefs.current[id];
       if (!element) return;
 
       observer.observe(element);
-      initialSizes[node.id] = { width: element.offsetWidth, height: element.offsetHeight };
+      initialSizes[id] = { width: element.offsetWidth, height: element.offsetHeight };
     });
     setNodeSizes((current) => {
       let changed = false;
@@ -2388,7 +2406,7 @@ export default function App() {
     });
 
     return () => observer.disconnect();
-  }, [canvasNodeIdsKey]);
+  }, [canvasNodeIdsKey, candidateIdsKey]);
 
   function getNodeSize(nodeId: string): NodeSize {
     return nodeSizes[nodeId] ?? DEFAULT_NODE_SIZE;
@@ -3128,9 +3146,9 @@ export default function App() {
               style={canvasContentStyle}
             >
               <svg className="canvas-links" width={CANVAS_WIDTH} height={CANVAS_HEIGHT}>
-                {canvasData.edges.map((edge) => {
+                {[...canvasData.edges, ...pendingLinkEdges].map((edge) => {
                   const source = nodePositions[edge.sourceId];
-                  const target = nodePositions[edge.targetId];
+                  const target = nodePositions[edge.targetId] ?? candidatePoints[edge.targetId];
                   if (!source || !target) return null;
 
                   const sourceSize = getNodeSize(edge.sourceId);
@@ -3145,15 +3163,21 @@ export default function App() {
                   const relationType = edge.relationType;
                   const labelWidth = Math.max(64, relationType.length * 9 + 20);
                   const labelHeight = 26;
+                  let labelY = my;
+                  if (edge.proposalIndex !== undefined) {
+                    while (edgeLabelBoxes.some(box => Math.abs(box.x - mx) < (box.width + labelWidth) / 2 + 4
+                        && Math.abs(box.y - labelY) < labelHeight + 4)) labelY += labelHeight + 6;
+                  }
+                  edgeLabelBoxes.push({ x: mx, y: labelY, width: labelWidth });
 
                   return (
-                    <g key={edge.id} className={edge.businessRelationType ? "business-relation-edge" : "derived-relation-edge"} data-reasoning-link-id={edge.reasoningLinkId} data-relation-id={edge.businessRelationType ? edge.id : undefined}>
+                    <g key={edge.id} className={edge.proposalIndex !== undefined ? "pending-reasoning-edge" : edge.businessRelationType ? "business-relation-edge" : "derived-relation-edge"} data-proposal-index={edge.proposalIndex} data-reasoning-link-id={edge.reasoningLinkId} data-relation-id={edge.businessRelationType ? edge.id : undefined}>
                       <line
                         x1={sx} y1={sy} x2={tx} y2={ty}
-                        className={`canvas-link${edge.businessRelationType ? ` relation-${edge.businessRelationType}` : edge.reasoningMeaning ? ` reasoning-${edge.reasoningMeaning}` : " relation-derived"}`}
+                        className={`canvas-link${edge.businessRelationType ? ` relation-${edge.businessRelationType}` : edge.reasoningMeaning ? ` reasoning-${edge.reasoningMeaning}` : " relation-derived"}${edge.proposalIndex !== undefined ? " reasoning-pending" : ""}`}
                         strokeWidth={edge.strength}
                       />
-                      {edge.businessRelationType || edge.reasoningLinkId ? (
+                      {edge.businessRelationType || edge.reasoningLinkId || edge.proposalIndex !== undefined ? (
                         <line
                           x1={sx} y1={sy} x2={tx} y2={ty}
                           className="relation-edge-hit"
@@ -3161,6 +3185,11 @@ export default function App() {
                           onMouseDown={(event) => event.stopPropagation()}
                           onClick={(event) => {
                             event.stopPropagation();
+                            if (edge.proposalIndex !== undefined) {
+                              const card = document.getElementById(`candidate-preview-${edge.proposalIndex}`);
+                              if (card instanceof HTMLDetailsElement) card.open = true;
+                              return;
+                            }
                             if (edge.reasoningLinkId) { openReasoningEditor({ kind: "link", id: edge.reasoningLinkId }); return; }
                             const relation = currentCase?.relations.find((item) => item.id === edge.id);
                             if (relation) openRelationEditor(relation);
@@ -3169,14 +3198,14 @@ export default function App() {
                       ) : null}
                       <rect
                         x={mx - labelWidth / 2}
-                        y={my - labelHeight / 2}
+                        y={labelY - labelHeight / 2}
                         width={labelWidth}
                         height={labelHeight}
                         rx={8}
                         ry={8}
                         className="edge-label-box"
                       />
-                      <text x={mx} y={my} textAnchor="middle" dominantBaseline="central" className="edge-label-text">
+                      <text x={mx} y={labelY} textAnchor="middle" dominantBaseline="central" className="edge-label-text">
                         {relationType}
                       </text>
                       <title>{relationType}</title>
@@ -3253,11 +3282,20 @@ export default function App() {
               })}
               {candidateProposals.map(({ item, index }) => {
                 const pending = agentResult ? hypothesisProposalTargets(agentResult, reasoning, index).some(target => !target.accepted) : false;
+                const link = agentResult ? evidenceLinkPreview(agentResult, reasoning, index) : null;
                 return <article key={`candidate-${index}`} className="reasoning-candidate"
+                data-proposal-index={index}
+                data-node-id={agentResult ? candidateNodeId(agentResult, index) : undefined}
+                ref={element => { if (agentResult) nodeElementRefs.current[candidateNodeId(agentResult, index)] = element; }}
                 aria-label="候选推理建议" style={{ left: candidatePositions[index]?.x, top: candidatePositions[index]?.y }}
                 onMouseDown={event => event.stopPropagation()} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
                 <strong>Agent 候选 · {item.kind === "hypothesis" ? "假设" : item.kind === "evidence_gap" ? "证据缺口" : item.kind === "evidence_link" ? meanings[item.meaning!] : "判断建议"}</strong>
-                <p>{currentCase ? reasoningText(item.content ?? reasoning.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "待确认的推理建议", currentCase, reasoning, agentResult?.evidence) : "待确认建议"}</p>
+                <p>{link ? `「${currentCase?.info_units.find(u => u.id === link.sourceId)?.title ?? "相关材料"}」→「${currentCase ? reasoningText(link.title, currentCase, reasoning) : link.title}」`
+                  : currentCase ? reasoningText(item.content ?? reasoning.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "待确认的推理建议", currentCase, reasoning, agentResult?.evidence) : "待确认建议"}</p>
+                <details id={`candidate-preview-${index}`}><summary>预览建议依据</summary>
+                  <p>{currentCase ? reasoningText(item.rationale, currentCase, reasoning, agentResult?.evidence) : item.rationale}</p>
+                  {item.info_unit_ids.map(id => <button type="button" key={id} onClick={() => locateAgentNode(id)}>定位{currentCase?.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}
+                </details>
                 {pending ? <p>请先采纳关联假设；可在灵动岛查看关联。</p> : null}
                 <span>尚未保存</span><button type="button" disabled={reasoningBusy || pending} onClick={() => void mutateReasoning(undefined, index)}>采纳</button>
                 <button type="button" disabled={reasoningBusy} onClick={() => setDismissedProposals(ids => [...ids, index])}>忽略</button>

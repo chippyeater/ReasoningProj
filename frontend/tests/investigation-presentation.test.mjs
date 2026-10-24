@@ -1,6 +1,36 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupSources, displayText, presentQuestion, hypothesisProposalTargets } from '../src/components/investigationPresentation.ts';
+import { groupSources, displayText, presentQuestion, hypothesisProposalTargets, evidenceLinkPreview, candidateNodeId } from '../src/components/investigationPresentation.ts';
+
+test('Link previews use the exact pending or adopted Hypothesis endpoint in this run', () => {
+  const result = { run_id: 'run-a', proposals: [
+    { kind: 'hypothesis', proposal_id: 'proposal-parent', content: '可能少收租金' },
+    { kind: 'evidence_link', info_unit_ids: ['U029'], hypothesis_ids: [], hypothesis_proposal_ids: ['proposal-parent'] },
+  ] };
+  const state = { hypotheses: [], accepted_proposals: {} };
+  assert.deepEqual(evidenceLinkPreview(result, state, 1), {
+    sourceId: 'U029', targetId: candidateNodeId(result, 0), title: '可能少收租金', parentIndex: 0, pending: true,
+  });
+  state.accepted_proposals['run-b:proposal-parent'] = 'hyp-b';
+  state.hypotheses.push({ id: 'hyp-b', content: '另一轮假设', proposal_key: 'run-b:proposal-parent' });
+  assert.equal(evidenceLinkPreview(result, state, 1).pending, true);
+  state.accepted_proposals['run-a:proposal-parent'] = 'hyp-a';
+  state.hypotheses.push({ id: 'hyp-a', content: '已采纳的假设', proposal_key: 'run-a:proposal-parent' });
+  assert.equal(evidenceLinkPreview(result, state, 1).targetId, 'hyp-a');
+  assert.equal(evidenceLinkPreview(result, state, 1).pending, false);
+  const reordered = { ...result, proposals: [...result.proposals].reverse() };
+  assert.equal(evidenceLinkPreview(reordered, state, 0).targetId, 'hyp-a');
+});
+
+test('Link preview rejects missing/wrong parents and retains existing formal-Hypothesis links', () => {
+  const state = { hypotheses: [{ id: 'hyp-existing', content: '已有判断' }], accepted_proposals: {} };
+  const formal = { kind: 'evidence_link', info_unit_ids: ['U029'], hypothesis_ids: ['hyp-existing'] };
+  assert.equal(evidenceLinkPreview({ run_id: 'run-a', proposals: [formal] }, state, 0).targetId, 'hyp-existing');
+  for (const parent of [null, { kind: 'evidence_gap', proposal_id: 'wrong' }]) {
+    assert.equal(evidenceLinkPreview({ run_id: 'run-a', proposals: [
+      { ...formal, hypothesis_ids: [], hypothesis_proposal_ids: ['wrong'] }, ...(parent ? [parent] : [])] }, state, 0), null);
+  }
+});
 
 const ref = Object.freeze({ info_unit_id: 'info-one', source_ref_index: 0,
   file_id: 'file-one', filename: '张某笔录.docx', quote: '他 3 月 8 号就直接搬进去住了',
