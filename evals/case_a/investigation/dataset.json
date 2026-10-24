@@ -1,0 +1,86 @@
+{
+  "name": "logicweaver/investigation/case-a-v1",
+  "version": "case-a-v1",
+  "description": "Case A 调查质量评测；访问指标不代表理解正确，completed 不代表语义完成。无固定工具顺序、Proposal 数量或总分阈值。",
+  "initial_state": {
+    "case_id": "case-4325561f",
+    "core_issue": "提前退租后押金是否应退还",
+    "selected_info_unit_ids": [],
+    "reasoning": {"hypotheses": [], "gaps": [], "links": [], "has_more": false}
+  },
+  "human_scores": {
+    "task_coverage": ["主要调查目标未覆盖", "部分覆盖，遗漏关键问题", "关键目标均有合理处理"],
+    "evidence_support": ["重要结论缺少支持或误用证据", "部分结论得到支持，仍有明显不足", "关键结论与来源的关系合理"],
+    "gap_handling": ["遗漏重要缺口，或把缺口当成已证实事实", "识别了缺口，但调查或处理不充分", "合理调查或记录关键缺口"],
+    "completion_calibration": ["明显提前结束或错误声称完成", "结束状态基本合理，但存在局部不一致", "结束状态准确反映实际完成程度"]
+  },
+  "items": [
+    {
+      "task_id": "A1",
+      "title": "房东实际损失及量化",
+      "goal": "房东是否实际产生损失？如果有，如何量化？",
+      "historical_trace_id": "7a661b732c21ac28903cff5155755943",
+      "historical_observation_id": "a7938ff395f644e1",
+      "expected_output": {
+        "objectives": ["分别处理实际损失是否成立与量化条件，不能仅给出计算方法便称两者均已解决", "比较承租人无损失推断与出租人空置损失主张，保留陈述归属", "核对搬离、接续入住、计租及收款条件；检查材料是否已含租金参数"],
+        "necessary_evidence": ["双方关于有无损失的相反陈述", "搬离及替租入住的时间来源及其可信边界", "合同中已有的月租条件；实际新租约、计租及收款凭证是否提供"],
+        "optional_leads": ["押金转账可帮助区分押金与租金，但不能单独证明租金损失", "协商退款材料可能说明交涉背景，不必为访问配额穷尽所有候选"],
+        "acceptable_boundaries": ["合同记载月租3000元；不能笼统声称全案没有租金材料", "搬离3月5日、入住3月8日来自承租人陈述；不能据此认定确定空置期或确定租金损失", "可以给条件式量化路径，但须区分计算方法、已知参数与未核实的实际收款/计租条件", "现有材料不足以确定实际损失为零、确定存在损失或给出确定金额时，应明确未解决方面及继续调查/限制；无须虚构金额", "清洁、中介等费用只能作为待核实条件，不得虚构实际支出"],
+        "critical_errors": ["以相差三天直接判定三天租金损失", "把押金2000元当作实际损失或租金支付", "只返回公式并把有无实际损失标为已确认", "无视合同租金条件而称完全缺少租金信息", "引用存在即把一方说法写成已证实事实"],
+        "evidence_groups": [
+          {"id": "opposed_loss_claims", "unit_ids": ["U029", "U036"], "mode": "all", "necessary": true},
+          {"id": "departure_basis", "unit_ids": ["U022"], "mode": "all", "necessary": true},
+          {"id": "replacement_basis", "unit_ids": ["U026", "U027"], "mode": "all", "necessary": true},
+          {"id": "contract_rent", "unit_ids": ["U004"], "mode": "all", "necessary": true},
+          {"id": "deposit_background", "unit_ids": ["U006", "U010"], "mode": "any", "necessary": false}
+        ],
+        "scoring_basis": "人工按四个统一维度评分，重点审查存在性与量化两方面及来源语义；自动 evidence_access_* 仅证明来源被提供。"
+      }
+    },
+    {
+      "task_id": "A2",
+      "title": "提前退租与押金争议",
+      "goal": "房东主张不退押金有哪些依据？现有证据能够支持到什么程度？",
+      "historical_trace_id": null,
+      "historical_observation_id": null,
+      "expected_output": {
+        "objectives": ["识别出租人援引的合同押金条款和提前搬离事实基础", "核对双方关于退押金、接续租住和空置损失的不同说法", "说明各依据支持的是合同记载、事实陈述、立场还是待核实条件"],
+        "necessary_evidence": ["合同租期及提前退租押金条款", "聊天及笔录中的拒退理由与承租人搬离陈述", "有条件协商部分退押金的聊天背景与后续交涉"],
+        "optional_leads": ["押金数额及转账文字记录可确认争议标的背景", "替租与空置材料可评价损失理由，不能据此直接宣告法律效力或裁判结果"],
+        "acceptable_boundaries": ["合同确有提前退租不退押金的约定，但条款存在不等于已认定有效且足以全额扣除", "搬离时间的精确日期仍须保留陈述属性", "可协商部分退还属于条件式协商，现有材料没有确定退款比例、金额或最终达成协议", "转账文字记录是押金支付记录，不能冒充已核验银行原件", "不提供未经验证的法律裁判、法条引用或确定应退金额"],
+        "critical_errors": ["以条款存在直接宣告房东依法可以全额扣押金", "把可协商退一部分写成无条件退款承诺或已达成变更", "忽略对方主张及关键聊天上下文", "把房东声称损失当作已证实损失"],
+        "evidence_groups": [
+          {"id": "contract_basis", "unit_ids": ["U004", "U008"], "mode": "all", "necessary": true},
+          {"id": "landlord_position", "unit_ids": ["U019"], "mode": "all", "necessary": true},
+          {"id": "early_departure", "unit_ids": ["U012", "U022"], "mode": "all", "necessary": true},
+          {"id": "conditional_negotiation", "unit_ids": ["U015", "U016"], "mode": "all", "necessary": true},
+          {"id": "deposit_payment", "unit_ids": ["U006", "U010"], "mode": "any", "necessary": false}
+        ],
+        "scoring_basis": "人工区分条款、主张、事实及未确认条件，评价依据支持程度；没有唯一措辞或固定建议数量。"
+      }
+    },
+    {
+      "task_id": "A3",
+      "title": "退租及替租过程还原",
+      "goal": "根据现有材料，还原承租人搬离、替租人入住及后续处理的过程，指出关键事实冲突和需要核实的问题。",
+      "historical_trace_id": null,
+      "historical_observation_id": null,
+      "expected_output": {
+        "objectives": ["跨聊天、笔录与合同组织退租、找接续者、搬离、入住和押金交涉过程", "保留事件日期的来源及精确性，不把聊天日期自动当作事件发生日期", "指出空置与损失判断冲突、协商结果及新租约关键缺口"],
+        "necessary_evidence": ["2月25日提前搬离意向与有条件协商", "3月1日找到接续者的聊天与3月5日退款交涉", "承租人笔录中的3月5日搬离、3月8日入住与后来另签租约说法", "出租人关于当时空置、空置数日和损失的陈述"],
+        "optional_leads": ["1月5日原合同及押金支付可以作为时间线背景", "无需按固定工具顺序读取，或把所有节点无差别拼入时间线"],
+        "acceptable_boundaries": ["聊天3月5日仅说明本周搬走；精确搬离日3月5日来自随后笔录的自述", "3月8日入住尚缺独立记录，新租约具体签署日未提供，不能把后来签约固定为3月8日", "出租人与承租人的空置和损失说法需要区分，不能仅凭时间相邻推定租金是否连续", "材料没有明确最终退款结果，不能补写已退款、已和解或最终违约认定"],
+        "critical_errors": ["给未注明日期的新合同编造签署日期", "把双方冲突陈述合并为单一已证实过程", "遗漏条件式协商及后续拒退押金的变化", "将三天日期差认定为已证实空置或损失", "虚构后续付款、退款、入住确认材料"],
+        "evidence_groups": [
+          {"id": "notice_and_negotiation", "unit_ids": ["U012", "U015"], "mode": "all", "necessary": true},
+          {"id": "replacement_search", "unit_ids": ["U016"], "mode": "all", "necessary": true},
+          {"id": "departure_and_arrival", "unit_ids": ["U022", "U026", "U027"], "mode": "all", "necessary": true},
+          {"id": "vacancy_conflict", "unit_ids": ["U029", "U035", "U036"], "mode": "all", "necessary": true},
+          {"id": "later_deposit_handling", "unit_ids": ["U019", "U030"], "mode": "all", "necessary": true},
+          {"id": "original_deposit_record", "unit_ids": ["U010"], "mode": "all", "necessary": false}
+        ],
+        "scoring_basis": "人工评价过程覆盖、跨材料来源关系、时间精确性和关键未解问题；访问覆盖不代表正确还原过程。"
+      }
+    }
+  ]
+}
