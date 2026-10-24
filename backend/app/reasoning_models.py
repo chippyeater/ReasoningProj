@@ -122,14 +122,16 @@ class ReasoningProposal(ContractModel):
     # Relative only to the immutable proposals array in the enclosing run.
     hypothesis_proposal_indices: Annotated[list[Annotated[int, Field(ge=0, lt=6)]], Field(max_length=5)] = Field(default_factory=list)
     hypothesis_proposal_ids: Annotated[list[Annotated[str, Field(pattern=r"^proposal-[a-f0-9]{32}$")]], Field(max_length=5)] = Field(default_factory=list)
-    info_unit_ids: Annotated[list[Text], Field(min_length=1, max_length=5)]
+    info_unit_ids: Annotated[list[Text], Field(max_length=5)]
     meaning: LinkMeaning | None
     judgment: Judgment | None
     rationale: ReasoningText
-    evidence_refs: Annotated[list[ProposalEvidenceRef], Field(min_length=1, max_length=8)]
+    evidence_refs: Annotated[list[ProposalEvidenceRef], Field(max_length=8)]
 
     @model_validator(mode="after")
     def shape(self):
+        if self.kind in {"evidence_link", "hypothesis_status"} and (not self.info_unit_ids or not self.evidence_refs):
+            raise ValueError("Evidence Link and status proposals require info_unit_ids and evidence_refs")
         if len(self.hypothesis_ids) != len(set(self.hypothesis_ids)) or len(self.info_unit_ids) != len(set(self.info_unit_ids)):
             raise ValueError("Duplicate proposal references")
         if len(self.hypothesis_proposal_indices) != len(set(self.hypothesis_proposal_indices)):

@@ -3296,6 +3296,7 @@ export default function App() {
                   <p>{currentCase ? reasoningText(item.rationale, currentCase, reasoning, agentResult?.evidence) : item.rationale}</p>
                   {item.info_unit_ids.map(id => <button type="button" key={id} onClick={() => locateAgentNode(id)}>定位{currentCase?.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}
                 </details>
+                {!item.evidence_refs.length ? <p>尚无直接来源依据，待检验。</p> : null}
                 {pending ? <p>请先采纳关联假设；可在灵动岛查看关联。</p> : null}
                 <span>尚未保存</span><button type="button" disabled={reasoningBusy || pending} onClick={() => void mutateReasoning(undefined, index)}>采纳</button>
                 <button type="button" disabled={reasoningBusy} onClick={() => setDismissedProposals(ids => [...ids, index])}>忽略</button>

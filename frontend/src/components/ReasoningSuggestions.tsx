@@ -28,6 +28,7 @@ export function ReasoningSuggestions({ result, state, caseData, dismissed, busy,
       const pending = targets.some(target => !target.accepted);
       return <article key={index} className="reasoning-suggestion" data-proposal-index={index}>
       <strong>{kinds[item.kind]}{item.meaning ? ` · ${meanings[item.meaning]}` : item.judgment ? ` · ${judgments[item.judgment]}` : ""}</strong>
+      {!item.evidence_refs.length ? <p>尚无直接来源依据，待检验；采纳不代表已经证实。</p> : null}
       <p>{link ? `「${caseData.info_units.find(u => u.id === link.sourceId)?.title ?? "相关材料"}」→「${text(link.title)}」`
         : text(item.content ?? state.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "检查现有推理")}</p>
       {pending ? <p>请先采纳关联假设，再采纳此{item.kind === "evidence_link" ? "证据关联" : "缺口"}。若已忽略该假设，请重新调查。</p> : null}

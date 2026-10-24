@@ -92,6 +92,8 @@ def tool_definitions() -> list[dict]:
     schema = ReasoningProposal.model_json_schema()
     props = schema["properties"]
     common = {key: props[key] for key in ("rationale", "info_unit_ids", "evidence_refs")}
+    grounded = {**common, "info_unit_ids": {**props["info_unit_ids"], "minItems": 1},
+                "evidence_refs": {**props["evidence_refs"], "minItems": 1}}
     content = next(part for part in props["content"]["anyOf"] if part.get("type") != "null")
     text_id = {"type": "string", "minLength": 1, "pattern": r"\S"}
     specifications = {
@@ -99,10 +101,10 @@ def tool_definitions() -> list[dict]:
         "propose_evidence_link": {"hypothesis_id": {"anyOf": [text_id, {"type": "null"}]}, "info_unit_id": text_id,
             "hypothesis_proposal_ids": {**props["hypothesis_proposal_ids"], "maxItems": 1},
             "meaning": next(p for p in props["meaning"]["anyOf"] if p.get("type") != "null"),
-            "rationale": props["rationale"], "evidence_refs": props["evidence_refs"]},
+            "rationale": props["rationale"], "evidence_refs": grounded["evidence_refs"]},
         "propose_evidence_gap": {**common, "content": content, "hypothesis_ids": props["hypothesis_ids"],
             "hypothesis_proposal_ids": props["hypothesis_proposal_ids"]},
-        "propose_hypothesis_status": {**common, "hypothesis_id": text_id,
+        "propose_hypothesis_status": {**grounded, "hypothesis_id": text_id,
             "judgment": next(p for p in props["judgment"]["anyOf"] if p.get("type") != "null")},
     }
     for name, properties in specifications.items():
@@ -382,6 +384,12 @@ async def run_investigation(case: CaseData, goal: str,
         _write_audit(bound_case.case_id, output_path, audit)
 
     try:
+        # Prepare only the selected/bounded canvas nodes, after the audit path is available.
+        source_ids = list(dict.fromkeys([u.id for u in selected] + [
+            row["id"] for row in canvas_context.get("info_units", []) if row["id"] in seen["units"]]))
+        evidence_context = tools.initial_evidence_context(bound_case, source_ids)
+        initial_input["evidence_context"] = evidence_context
+        seen["evidence"].update((row["info_unit_id"], row["source_ref_index"]) for row in evidence_context["items"])
         config = llm_client.load_config()
         prompt = load_prompt(PROMPT_PATH, "investigation_agent")
         definitions = tool_definitions()

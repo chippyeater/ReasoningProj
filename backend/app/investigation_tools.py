@@ -21,6 +21,39 @@ SUMMARY_CHARS = 120
 MAX_QUERY_CHARS = 200
 MAX_EVIDENCE_REFS = 8
 MAX_EVIDENCE_CHARS = 4000
+INITIAL_EVIDENCE_REFS = 8
+INITIAL_EXCERPT_CHARS = 160
+
+
+def initial_evidence_context(case: CaseData, info_unit_ids: list[str]) -> dict:
+    """Server-prepared, verified source excerpts; reuse the exact cached-TXT reader.
+
+    At most one SourceRef per supplied node, eight total and 1280 excerpt chars.
+    Omitted or invalid sources never grant citation permission. No file parsing.
+    """
+    items, errors = [], []
+    has_more = False
+    for uid in dict.fromkeys(info_unit_ids):
+        if len(items) == INITIAL_EVIDENCE_REFS:
+            has_more = True
+            break
+        response = get_evidence(case, [uid])
+        if response["status"] in {"error", "invalid_request"}:
+            errors.append({"info_unit_id": uid, **response["error"]})
+            continue
+        if not response["items"]:
+            continue
+        item = response["items"][0]
+        ref = item["source_ref"]
+        excerpt = ref["quote"][:INITIAL_EXCERPT_CHARS]
+        items.append({"info_unit_id": uid, "source_ref_index": item["source_ref_index"],
+            **{key: ref[key] for key in ("file_id", "start", "end", "source_kind")},
+            "filename": next(f.filename for f in case.files if f.file_id == ref["file_id"]),
+            "quote_excerpt": excerpt, "excerpt_start": ref["start"], "excerpt_end": ref["start"] + len(excerpt),
+            "quote_truncated": len(excerpt) < len(ref["quote"]), "verified_against_cached_text": True})
+        has_more = has_more or response["has_more"] or len(response["items"]) > 1
+    return {"items": items, "errors": errors, "has_more": has_more,
+            "scope": "Verified source locations and excerpts only; not independent proof. Use get_evidence for complete wording or omitted sources."}
 
 
 def _result(items: list[dict], *, has_more: bool = False) -> dict:

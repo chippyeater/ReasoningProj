@@ -41,11 +41,12 @@ def _propose(case, seen, context, proposals, kind, **values):
     artifacts(case, seen, context, "validate pending suggestion", [*proposals, proposal], [], [], "evidence_insufficient")
     proposals.append(proposal)
     return {"status": "ok", "proposal_id": proposal.proposal_id, "pending": True,
+            "evidence_status": "traceable_source" if proposal.evidence_refs else "not_directly_evidenced",
             "proposal": proposal.model_dump(mode="json")}
 
 
 def propose_hypothesis(case, seen, context, proposals, *, content, rationale, info_unit_ids, evidence_refs):
-    """Propose a testable explanation after checking evidence; pending user approval, never verified by default."""
+    """Propose a testable explanation, pending user approval, never verified by default. Exploratory hypotheses may use empty info_unit_ids/evidence_refs; explain uncertainty in rationale. Cite validated initial evidence_context or get_evidence results when available; source location alone does not prove the hypothesis."""
     return _propose(case, seen, context, proposals, "hypothesis", content=content, rationale=rationale,
                     info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
 
@@ -60,20 +61,20 @@ def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info
 
 def propose_evidence_gap(case, seen, context, proposals, *, content, hypothesis_ids, hypothesis_proposal_ids,
                          rationale, info_unit_ids, evidence_refs):
-    """Propose a discriminating unresolved question, linked to existing Hypotheses or this run's returned Hypothesis proposal IDs."""
+    """Propose a discriminating unresolved question linked to existing Hypotheses or this run's returned Hypothesis proposal IDs. May use empty info_unit_ids/evidence_refs when no direct evidence exists; describe what is missing, not a proven fact."""
     return _propose(case, seen, context, proposals, "evidence_gap", content=content, hypothesis_ids=hypothesis_ids,
                     hypothesis_proposal_ids=hypothesis_proposal_ids, rationale=rationale,
                     info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
 
 
 def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, judgment, rationale, info_unit_ids, evidence_refs):
-    """Propose an evidence judgment for an existing Hypothesis; missing support does not establish refutation."""
+    """Propose an evidence judgment for an existing Hypothesis. Requires at least one provided InfoUnit and verified citation, from initial evidence_context or get_evidence. Missing support does not establish refutation."""
     return _propose(case, seen, context, proposals, "hypothesis_status", hypothesis_ids=[hypothesis_id],
                     judgment=judgment, rationale=rationale, info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
 
 
 def present_findings(case, seen, context, goal, proposals, previous_findings, previous_questions, *, findings, open_questions, completion_status):
-    """Publish bounded, cited findings for the existing source UI; append distinct findings, never create canvas objects."""
+    """Publish concise, cited findings for the source UI. Initial evidence_context citations are usable without another read. For factual conclusions include supplied SourceRef pointers; if no reliable finding is possible, submit empty findings, concrete open_questions and evidence_insufficient. Never invent evidence or create canvas objects."""
     if not isinstance(findings, list) or len(findings) > 4:
         raise AppError("invalid_findings", "Submit at most four findings per call")
     merged = [*previous_findings]
