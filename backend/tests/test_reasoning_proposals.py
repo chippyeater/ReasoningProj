@@ -59,15 +59,13 @@ class TestReasoningProposals(TestReasoningWorkspace):
             if step == 0:
                 reply = replies.tool("get_evidence", {"info_unit_ids": read_ids or ["U029"]})
             elif step <= len(proposals or []):
-                returned = [json.loads(m["content"]) for m in body["messages"] if m["role"] == "tool"]
-                ids = [r["proposal_id"] for r in returned if r.get("pending")]
+                state = json.loads(body["messages"][1]["content"])
+                ids = [p["proposal_id"] for p in state["knowledge_state"]["proposals"]["items"]]
                 reply = proposal_call(proposals[step - 1], ids, f"proposal-{step}")
-            elif step == len(proposals or []) + 1:
-                reply = replies.present(goal, ["U029"], refs=[("U029", 0)], status="completed")
             elif summary_failure:
                 return httpx.Response(500, text="mock final model failure")
             else:
-                reply = replies.final("已核对相关陈述，尚需独立材料；建议均待用户确认。")
+                reply = replies.finish(goal, ["U029"], refs=[("U029", 0)], status="completed")
             return httpx.Response(200, json=reply.response)
         with patch.object(llm_client.httpx, "AsyncClient", side_effect=lambda **kwargs:
                           real_client(transport=httpx.MockTransport(model), **kwargs)):
@@ -92,7 +90,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertEqual(path.read_bytes(), before)
         initial = json.loads(requests[0]["messages"][1]["content"])
         self.assertEqual(initial["work_context"]["reasoning"]["hypotheses"][0]["id"], hid)
-        self.assertNotIn("source_refs", json.dumps(initial))
+        self.assertNotIn("source_refs", json.dumps(initial["work_context"]))
         self.assertNotIn("node_positions", json.dumps(initial))
         self.assertNotIn("visible_node_ids", json.dumps(initial))
         self.assertNotIn("response_format", requests[0])

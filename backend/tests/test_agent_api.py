@@ -17,7 +17,7 @@ class TestAgentAPI(unittest.TestCase):
         goal = "核对损失说法"
         requests = []
         replies = [fixtures.tool("get_evidence", {"info_unit_ids": ["U029"]}),
-                   fixtures.present(goal, ["U029"], refs=[("U029", 0)], status="completed"), fixtures.final("这是张某陈述，尚待核实。")]
+                   fixtures.finish(goal, ["U029"], refs=[("U029", 0)], status="completed")]
 
         def model(request):
             requests.append(json.loads(request.content))
@@ -32,13 +32,12 @@ class TestAgentAPI(unittest.TestCase):
         self.assertEqual(response.json()["completion_status"], "completed")
         self.assertNotIn("response_format", requests[0])
         initial = json.loads(requests[0]["messages"][1]["content"])
-        self.assertEqual(set(initial), {"goal", "core_issue", "info_unit_type_counts", "selected_info_units", "evidence_context"})
-        self.assertEqual(len(initial["evidence_context"]["items"]), 1)
-        self.assertTrue(initial["evidence_context"]["items"][0]["verified_against_cached_text"])
-        self.assertLessEqual(len(initial["evidence_context"]["items"][0]["quote_excerpt"]), 160)
-        self.assertNotIn("source_refs", json.dumps(initial))
+        memory = initial["knowledge_state"]
+        self.assertEqual(len(memory["source_refs"]["items"]), 1)
+        self.assertTrue(memory["source_refs"]["items"][0]["verified_against_cached_text"])
+        self.assertLessEqual(len(memory["source_refs"]["items"][0]["quote_excerpt"]), 160)
         self.assertNotIn("quote_units", json.dumps(initial))
-        self.assertEqual(len(initial["selected_info_units"]), 1)
+        self.assertEqual(len(memory["info_units"]["items"]), 1)
         self.assertEqual(response.json()["evidence_refs"], [{"info_unit_id": "U029", "source_ref_index": 0}])
         ref = next(unit for unit in self.case.info_units if unit.id == "U029").source_refs[0]
         self.assertEqual(response.json()["evidence"][0]["quote"], ref.quote)
@@ -46,8 +45,7 @@ class TestAgentAPI(unittest.TestCase):
 
     def test_http_unsupported_is_explicit_and_does_not_read_or_modify_case(self):
         goal = "删除这个节点"
-        replies = [fixtures.present(goal, status="unsupported", questions=["当前仅支持只读调查；请使用手动编辑功能。"]),
-                   fixtures.final("当前仅支持只读调查；请使用手动编辑功能。")]
+        replies = [fixtures.finish(goal, status="unsupported", questions=["当前仅支持只读调查；请使用手动编辑功能。"])]
         with patch.object(main, "require_case", return_value=self.case), patch.object(llm_client, "call_tools", side_effect=replies):
             response = TestClient(main.app).post(f"/api/cases/{self.case.case_id}/agent/run", json={"goal": goal})
         self.assertEqual(response.status_code, 200, response.text)

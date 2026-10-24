@@ -19,11 +19,14 @@ from app.observability import RunTrace
 from app.prompt_loader import load_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
 from app.reasoning_models import ReasoningProposal
+from app.investigation_state import EvidencePointer, KnowledgeState, Question, QuestionState, model_context, _preview
 
 MAX_TOOL_CALLS = 8  # Read attempts, reserved independently from artifact submissions.
 MAX_PROPOSAL_CALLS = 6
-MAX_PRESENTATION_CALLS = 2
-MAX_TOTAL_CALLS = MAX_TOOL_CALLS + MAX_PROPOSAL_CALLS + MAX_PRESENTATION_CALLS
+MAX_QUESTION_CALLS = 8
+MAX_FINISH_CALLS = 3
+MAX_TOTAL_CALLS = MAX_TOOL_CALLS + MAX_PROPOSAL_CALLS + MAX_QUESTION_CALLS + MAX_FINISH_CALLS
+MAX_MODEL_CALLS = MAX_TOTAL_CALLS + 3
 MAX_SUMMARY_CHARACTERS = 240  # Soft target is 40–80; allow a little more for complex tasks.
 MAX_NO_PROGRESS = 3
 READ_TOOLS = {"search_info_units": tools.search_info_units, "get_relations": tools.get_relations, "get_evidence": tools.get_evidence}
@@ -35,11 +38,6 @@ IDs = Annotated[list[BoundedText], Field(max_length=80)]
 class InvestigationOutput(BaseModel):
     """Transport-only contracts; the persistent CaseData Schema is unchanged."""
     model_config = ConfigDict(extra="forbid", strict=True)
-
-
-class EvidencePointer(InvestigationOutput):
-    info_unit_id: BoundedText
-    source_ref_index: Annotated[int, Field(ge=0)]
 
 
 Pointers = Annotated[list[EvidencePointer], Field(max_length=64)]
@@ -89,7 +87,7 @@ def tool_definitions() -> list[dict]:
             "info_unit_ids": ids,
         }),
     ]
-    from app.investigation_actions import PROPOSAL_TOOLS, present_findings
+    from app.investigation_actions import PROPOSAL_TOOLS, finish_investigation
     schema = ReasoningProposal.model_json_schema()
     props = schema["properties"]
     common = {key: props[key] for key in ("rationale", "info_unit_ids", "evidence_refs")}
@@ -112,15 +110,28 @@ def tool_definitions() -> list[dict]:
         definition = _function(name, PROPOSAL_TOOLS[name].__doc__, deepcopy(properties))
         definition["function"]["parameters"]["$defs"] = schema["$defs"]
         definitions.append(definition)
+    question_schema = Question.model_json_schema()
+    question_defs = question_schema.pop("$defs")
+    update_schema = {"type": "array", "items": question_schema, "maxItems": 20}
+    definition = _function("update_questions", "Batch create/adjust run-local Questions. Root Q1 is initialized from the goal. Keep stable IDs and registered plans; answer only with obtained materials, block with a specific reason/kind. Planned hypothesis/gap descriptions equal intended Proposal content. These tasks never create canvas objects.", {"questions": update_schema})
+    definition["function"]["parameters"]["$defs"] = question_defs
+    definitions.append(definition)
     finding_schema = Finding.model_json_schema()
     finding_defs = finding_schema.pop("$defs")
-    definition = _function("present_findings", present_findings.__doc__, {
-        "findings": {"type": "array", "items": finding_schema, "maxItems": 4},
-        "open_questions": InvestigationResult.model_json_schema()["properties"]["open_questions"],
+    definition = _function("finish_investigation", finish_investigation.__doc__, {
+        "answer": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "findings": {"type": "array", "items": finding_schema, "maxItems": 12},
+        "question_updates": update_schema,
         "completion_status": InvestigationResult.model_json_schema()["properties"]["completion_status"],
     })
-    definition["function"]["parameters"]["$defs"] = finding_defs
+    definition["function"]["parameters"]["$defs"] = {**question_defs, **finding_defs}
     definitions.append(definition)
+    for definition in definitions:
+        if definition["function"]["name"] in READ_TOOLS or definition["function"]["name"] in PROPOSAL_TOOLS:
+            properties = definition["function"]["parameters"]["properties"]
+            properties["question_ids"] = {"type": ["array", "null"], "items": {"type": "string"}, "maxItems": 20,
+                "description": "Existing Question IDs; null associates the current Questions automatically"}
+            definition["function"]["parameters"]["required"].append("question_ids")
     return definitions
 
 
@@ -140,7 +151,7 @@ def _strict_json(raw: str) -> object:
 
 
 def _arguments(name: str, raw: str) -> dict:
-    if len(raw) > (4000 if name in READ_TOOLS else 12000):
+    if len(raw) > (4000 if name in READ_TOOLS else 64000 if name in {"update_questions", "finish_investigation"} else 12000):
         raise AppError("invalid_tool_arguments", "Tool arguments exceed their bounded size")
     try:
         args = _strict_json(raw)
@@ -152,6 +163,8 @@ def _arguments(name: str, raw: str) -> dict:
               set(d["function"]["parameters"]["properties"])) for d in tool_definitions()}
     fields["search_info_units"] = ({"query"}, fields["search_info_units"][1])
     fields["get_relations"] = ({"info_unit_ids"}, fields["get_relations"][1])
+    for tool_name in READ_TOOLS.keys() | {"propose_hypothesis", "propose_evidence_link", "propose_evidence_gap", "propose_hypothesis_status"}:
+        fields[tool_name] = (fields[tool_name][0] - {"question_ids"}, fields[tool_name][1])
     # Existing formal-Hypothesis calls remain valid; native schemas ask for an explicit empty list.
     fields["propose_evidence_link"] = (fields["propose_evidence_link"][0] - {"hypothesis_proposal_ids"}, fields["propose_evidence_link"][1])
     if name not in fields:
@@ -172,6 +185,7 @@ def _arguments(name: str, raw: str) -> dict:
 
 def _fingerprint(name: str, args: dict) -> str:
     normalized = deepcopy(args)
+    normalized.pop("question_ids", None)
     if name == "search_info_units" and isinstance(args.get("query"), str):
         normalized["query"] = sorted(set(re.findall(r"\w+", tools._normalized(args["query"]))))
     if name == "search_info_units" and normalized.get("types") is None:
@@ -309,7 +323,7 @@ def _tool_recovery(response, name):
             argument_loc[0] = "info_unit_ids"
         if name == "propose_evidence_link" and argument_loc[:1] in (["info_unit_ids"], ["hypothesis_ids"]):
             argument_loc = ["info_unit_id" if argument_loc[0] == "info_unit_ids" else "hypothesis_id"]
-        if name == "present_findings" and argument_loc[:1] in (["info_unit_ids"], ["relevant_relation_ids"], ["evidence_refs"]):
+        if name == "finish_investigation" and argument_loc[:1] in (["info_unit_ids"], ["relevant_relation_ids"], ["evidence_refs"]):
             argument_loc = ["findings"]
         item["argument_loc"] = argument_loc
         if item["code"] == "reference_not_obtained" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_id"]):
@@ -329,17 +343,6 @@ def _tool_recovery(response, name):
         hint = "对照工具 Schema 和错误字段修正参数；来源不可用时可换用其他材料或明确报告限制，不要反复原样重试。"
     error["recovery_hint"] = hint
     error["recoverable"] = True
-
-
-def _summary_context(proposals, tool_calls):
-    """Trusted handoff metadata, derived only from successfully validated artifacts."""
-    return "本轮界面交接状态（后端生成）：" + json.dumps({
-        "successful_proposals": [{"proposal_id": p.proposal_id, "kind": p.kind, "status": "pending_user_confirmation"}
-                                 for p in proposals],
-        "pending_count": len(proposals),
-        "failed_tool_calls": sum(c.get("result", {}).get("status") in {"error", "invalid_request"} for c in tool_calls),
-        "incomplete_tool_calls": sum(c.get("result", {}).get("status") == "truncated" for c in tool_calls),
-    }, ensure_ascii=False)
 
 
 def _validate_summary(text, proposals):
@@ -375,239 +378,259 @@ def _validate_summary(text, proposals):
 async def run_investigation(case: CaseData, goal: str,
                             selected_info_unit_ids: list[str] | None = None, *, work_context: dict | None = None,
                             issue_key: str | None = None) -> dict:
-    """Bounded native tool loop; artifact validation is independent of final prose.
-
-    Eight read attempts, six Proposal attempts, two presentation attempts and at
-    most one forced final turn. CaseData and Issue workspaces are never written.
-    """
+    """Run-local state loop. Only a validated finish call can end normally."""
     from app import investigation_actions as actions
     from app.reasoning_proposals import proposal_receipt
     if not isinstance(goal, str) or not goal.strip() or len(goal) > 2000:
         raise AppError("invalid_investigation_goal", "goal must contain 1 to 2000 nonblank characters")
     bound_case = case.model_copy(deep=True)
-    selected = [] if selected_info_unit_ids is None or selected_info_unit_ids == [] else tools._selected_units(bound_case, selected_info_unit_ids)
+    selected = [] if not selected_info_unit_ids else tools._selected_units(bound_case, selected_info_unit_ids)
     counts = Counter(unit.type.value for unit in bound_case.info_units)
-    initial_input = {
-        "goal": goal, "core_issue": bound_case.core_issue[:500] if bound_case.core_issue else None,
+    initial_input = {"goal": goal, "core_issue": bound_case.core_issue[:500] if bound_case.core_issue else None,
         "info_unit_type_counts": {kind.value: counts[kind.value] for kind in InfoUnitType},
-        "selected_info_units": [tools._summary(unit) for unit in selected],
-    }
+        "selected_info_units": [tools._summary(unit) for unit in selected]}
     if work_context is not None:
-        initial_input["work_context"] = work_context
-    run_id = f"investigation-{uuid4().hex}"
-    created_at = now_iso()
+        initial_input["work_context"] = deepcopy(work_context)
+    run_id, created_at = f"investigation-{uuid4().hex}", now_iso()
     trace = RunTrace(case_id=bound_case.case_id, case_title=bound_case.case_title, stage="Investigation Agent",
-                     run_id=run_id, workflow_id=run_id, created_at=created_at, initial_input=initial_input)
+        run_id=run_id, workflow_id=run_id, created_at=created_at, initial_input=initial_input)
     audit = {"run_id": run_id, "run_name": trace.run_name, "stage": "investigation_agent",
-             "workflow_id": run_id, "created_at": created_at, "status": "started",
-             "model_calls": [], "tool_calls": [], "stop_reason": None, "result": None}
+        "workflow_id": run_id, "created_at": created_at, "status": "started",
+        "model_calls": [], "tool_calls": [], "stop_reason": None, "result": None}
     output_path = f"runs/{run_id}.output.json"
     seen = {"units": {unit.id for unit in selected}, "relations": set(), "evidence": set()}
-    # Bounded canvas summaries are retrieved context, never permission to cite unread originals.
-    canvas_context = (work_context or {}).get("canvas", {})
-    seen["units"].update(row["id"] for row in canvas_context.get("info_units", []) if row["id"] in {u.id for u in bound_case.info_units})
+    canvas = (work_context or {}).get("canvas", {})
+    seen["units"].update(row["id"] for row in canvas.get("info_units", []) if row["id"] in {u.id for u in bound_case.info_units})
     seen["relations"].update(r.id for r in bound_case.relations
-        if r.id in {row["id"] for row in canvas_context.get("relations", [])} and {r.source_id, r.target_id} <= seen["units"])
+        if r.id in {row["id"] for row in canvas.get("relations", [])} and {r.source_id, r.target_id} <= seen["units"])
+    questions, knowledge = QuestionState(goal), None
+    proposals, findings, limitations = [], [], []
     fingerprints, call_ids = {}, set()
-    proposals, findings, questions, limitations = [], [], [], []
+    used = {"read": 0, "proposal": 0, "question": 0, "finish": 0}
+    limits = {"read": MAX_TOOL_CALLS, "proposal": MAX_PROPOSAL_CALLS,
+              "question": MAX_QUESTION_CALLS, "finish": MAX_FINISH_CALLS}
+    attempts = executed = no_progress = 0
+    stop_reason, recovery = None, None
     completion = "evidence_insufficient"
-    attempts = executed = 0
-    used = {"read": 0, "proposal": 0, "presentation": 0}
-    limits = {"read": MAX_TOOL_CALLS, "proposal": MAX_PROPOSAL_CALLS, "presentation": MAX_PRESENTATION_CALLS}
-    stop_reason = None
-    no_progress = 0
-    delivered = reviewed_completion = recovery_pending = False
+    recent = []
 
     def bucket(name):
-        return "read" if name in READ_TOOLS else "proposal" if name in actions.PROPOSAL_TOOLS else "presentation" if name == "present_findings" else None
+        return ("read" if name in READ_TOOLS else "proposal" if name in actions.PROPOSAL_TOOLS
+                else "question" if name == "update_questions" else "finish" if name == "finish_investigation" else None)
 
-    def snapshot(answer, summary_status):
-        result = actions.artifacts(bound_case, seen, work_context, goal, proposals, findings, questions, completion)
-        if used["read"] >= MAX_TOOL_CALLS:
-            result.completion_status = "budget_exhausted"
-        elif summary_status == "failed" or limitations or not result.findings or not result.evidence_refs:
-            if result.completion_status == "completed":
-                result.completion_status = "evidence_insufficient"
+    def snapshot(answer=None, summary_status="pending"):
+        result = actions.artifacts(bound_case, seen, work_context, goal, proposals, findings,
+                                   questions.open_questions(), completion)
         return {**result.model_dump(mode="json"), "answer": answer, "summary_status": summary_status,
-                "limitations": list(dict.fromkeys(limitations)), "run_id": run_id,
-                "stop_reason": stop_reason or ("running" if summary_status == "pending" else "model_finished"), "tool_call_count": executed,
-                "tool_attempt_count": attempts, "tool_budget_used": dict(used),
-                "model_call_count": len(audit["model_calls"])}
+            "question_state": questions.dump(), "limitations": list(dict.fromkeys(limitations)), "run_id": run_id,
+            "stop_reason": stop_reason or "running", "tool_call_count": executed,
+            "tool_attempt_count": attempts, "tool_budget_used": dict(used), "model_call_count": len(audit["model_calls"])}
 
-    def persist_artifacts():
-        audit["result"] = snapshot(None, "pending")
+    def persist():
+        if knowledge is not None:
+            knowledge.findings = deepcopy(findings)
+            knowledge.proposals = [p.model_dump(mode="json") for p in proposals]
+            audit["knowledge_state"] = knowledge.dump()
+        audit["question_state"] = questions.dump()
+        audit["stop_reason"] = stop_reason
+        audit["result"] = snapshot()
         if proposals:
             audit["proposal_receipt"] = proposal_receipt(bound_case, issue_key, work_context, proposals)
         _write_audit(bound_case.case_id, output_path, audit)
 
+    def record_final_state():
+        with trace.observation("Investigation Agent · final working state", input={
+                "knowledge_state": knowledge.dump() if knowledge else None, "question_state": questions.dump()}) as state_span:
+            state_span.update(output={"stop_reason": stop_reason, "completion_status": completion})
+
+    def stopped(reason):
+        nonlocal stop_reason, completion
+        stop_reason = reason
+        completion = "budget_exhausted" if "budget" in reason else "evidence_insufficient"
+        limitations.append("调查未通过结束校验：" + reason + "；未解决任务保留，可调整问题后继续。")
+        persist()
+        output = snapshot(None, "failed")
+        audit.update(status="partial", result=output)
+        _write_audit(bound_case.case_id, output_path, audit)
+        record_final_state()
+        trace.finish_success(output)
+        return output
+
     try:
-        # Prepare only the selected/bounded canvas nodes, after the audit path is available.
         source_ids = list(dict.fromkeys([u.id for u in selected] + [
-            row["id"] for row in canvas_context.get("info_units", []) if row["id"] in seen["units"]]))
-        evidence_context = tools.initial_evidence_context(bound_case, source_ids)
-        initial_input["evidence_context"] = evidence_context
-        seen["evidence"].update((row["info_unit_id"], row["source_ref_index"]) for row in evidence_context["items"])
+            row["id"] for row in canvas.get("info_units", []) if row["id"] in seen["units"]]))
+        initial_input["evidence_context"] = tools.initial_evidence_context(bound_case, source_ids)
+        seen["evidence"].update((row["info_unit_id"], row["source_ref_index"])
+                                for row in initial_input["evidence_context"]["items"])
+        knowledge = KnowledgeState(initial_input)
+        questions.items["Q1"].related_info_unit_ids = source_ids
+        questions.items["Q1"].evidence_refs = [EvidencePointer(info_unit_id=uid, source_ref_index=index)
+                                             for uid, index in sorted(seen["evidence"])]
         config = llm_client.load_config()
         prompt = load_prompt(PROMPT_PATH, "investigation_agent")
-        definitions = tool_definitions()
-        metadata = prompt.metadata(config.model)
-        messages = [{"role": "system", "content": prompt.content},
-                    {"role": "user", "content": json.dumps(initial_input, ensure_ascii=False)}]
+        definitions, metadata = tool_definitions(), prompt.metadata(config.model)
         _write_audit(bound_case.case_id, f"runs/{run_id}.input.json", {
             "run_id": run_id, "model_input": initial_input, "system_prompt": prompt.content,
             "tools": definitions, "configuration": config.public_metadata(), **metadata})
         while True:
+            if no_progress >= MAX_NO_PROGRESS:
+                return stopped("no_progress_limit")
+            if attempts >= MAX_TOTAL_CALLS or used["finish"] >= MAX_FINISH_CALLS:
+                return stopped("tool_budget_exhausted")
+            if len(audit["model_calls"]) >= MAX_MODEL_CALLS:
+                return stopped("model_budget_exhausted")
             available = [d for d in definitions if used[bucket(d["function"]["name"])] < limits[bucket(d["function"]["name"])]]
-            choice = "none" if stop_reason or not available else "auto"
-            request_messages = [
-                {"role": "system", "content": prompt.content + "\n\n" + _summary_context(proposals, audit["tool_calls"])},
-                *messages[1:],
-            ]
-            # No response_format: only tools have structured contracts; the final message is prose.
-            payload = llm_client.tool_request_payload(config, request_messages, available or definitions, tool_choice=choice)
+            remaining = {key: limits[key] - used[key] for key in limits}
+            remaining["total"] = MAX_TOTAL_CALLS - attempts
+            remaining["model"] = MAX_MODEL_CALLS - len(audit["model_calls"])
+            state = model_context(initial_input, knowledge, questions, remaining, recovery)
+            request_messages = [{"role": "system", "content": prompt.content},
+                                {"role": "user", "content": json.dumps(state, ensure_ascii=False)}, *recent]
+            # 'required' is supported by the existing native client; no fabricated tool call/ID for premature prose.
+            choice = "required" if recovery and recovery.get("code") == "finish_required" else "auto"
+            payload = llm_client.tool_request_payload(config, request_messages, available, tool_choice=choice)
             call_audit = {"step": len(audit["model_calls"]) + 1, **metadata, "request": deepcopy(payload)}
             audit["model_calls"].append(call_audit)
-            _write_audit(bound_case.case_id, output_path, audit)
+            persist()
             with trace.observation("Investigation Agent · model call", as_type="generation", input=payload,
-                                   model=config.model, version=prompt.version,
-                                   model_parameters={"max_completion_tokens": config.max_completion_tokens}, metadata=metadata) as generation:
-                reply = await llm_client.call_tools(config, request_messages, available or definitions, tool_choice=choice)
+                    model=config.model, version=prompt.version,
+                    model_parameters={"max_completion_tokens": config.max_completion_tokens}, metadata=metadata) as generation:
+                reply = await llm_client.call_tools(config, request_messages, available, tool_choice=choice)
                 generation.record_reply(reply)
-            call_audit.update(raw_response=reply.response, message=reply.message)
+            call_audit.update(raw_response=reply.response, message=deepcopy(reply.message))
             calls = reply.message.get("tool_calls")
             if not calls:
-                needs_sources = bool(seen["evidence"]) and (not delivered or bool(findings) and not any(f["evidence_refs"] for f in findings))
-                can_continue = choice != "none" and attempts < MAX_TOTAL_CALLS
-                if can_continue and not reviewed_completion and (needs_sources or recovery_pending):
-                    reviewed_completion = True
-                    call_audit["completion_check"] = {"missing_source_delivery": needs_sources, "recoverable_tool_error": recovery_pending}
-                    with trace.observation("Investigation Agent · completion check", as_type="guardrail", input=call_audit["completion_check"]) as checkpoint:
-                        checkpoint.update(output={"continue_investigation": True, "remaining_tool_attempts": MAX_TOTAL_CALLS - attempts})
-                    messages.append(deepcopy(reply.message))
-                    messages.append({"role": "system", "content":
-                        "完成检查（本轮最多一次）：尚有可恢复错误或来源成果未交付。根据工具错误位置和 recovery_hint 修正参数、补充读取或调整方案；不要因一次拒绝直接放弃目标。"
-                        "基于材料的事实结论请用 present_findings 提交已提供的 InfoUnit/来源引用，不能只有自然语言答案。"
-                        "无法形成可靠结论时，可提交空 findings、具体 open_questions 和 evidence_insufficient；不要编造发现或提案。若已无可行调查途径，明确说明限制后结束。"})
-                    continue
-                if needs_sources:
-                    raise AppError("investigation_delivery_incomplete", "本轮尚未提交可追溯的调查发现或明确说明证据不足，请调整问题后重试。",
-                        details={"category": "delivery", "errors": [{"loc": ["findings"], "code": "missing_source_delivery"}]})
-                with trace.observation("Investigation Agent · validate summary", as_type="guardrail", input=reply.content) as validation:
-                    text = _validate_summary(reply.content, proposals)
-                    output = snapshot(text, "completed")
-                    validation.update(output={"valid": True, "summary_status": "completed"})
-                stop_reason = output["stop_reason"]
-                audit.update(status="success", stop_reason=stop_reason, result=output)
-                _write_audit(bound_case.case_id, output_path, audit)
-                with trace.observation("Investigation Agent · stop", metadata={"stop_reason": stop_reason, **used}) as stop_span:
-                    stop_span.update(output={"status": output["completion_status"]})
-                trace.finish_success(output)
-                return output
-            if choice == "none" or not isinstance(calls, list) or len(calls) != 1:
-                raise AppError("investigation_protocol_invalid", "Only one permitted tool call is allowed before finalization")
+                no_progress += 1
+                recovery = {"code": "finish_required", "message": "Ordinary text does not finish investigation. Use finish_investigation with final Question states and findings.",
+                            "unaccepted_answer": _preview(reply.content)}
+                # Old exchange is retired only after its result has been merged and persisted.
+                recent = []
+                persist()
+                continue
+            if not isinstance(calls, list) or len(calls) != 1:
+                raise AppError("investigation_protocol_invalid", "Exactly one native tool call is allowed per turn")
             call = calls[0]
             if call["id"] in call_ids:
                 raise AppError("investigation_protocol_invalid", "Tool call IDs must be unique within a run")
             call_ids.add(call["id"])
-            messages.append(deepcopy(reply.message))
             name, raw = call["function"]["name"], call["function"]["arguments"]
             category = bucket(name)
             attempts += 1
+            permitted = category is not None and used[category] < limits[category]
+            if permitted:
+                used[category] += 1
             tool_audit = {"call_id": call["id"], "name": name, "raw_arguments": raw, "executed": False}
             audit["tool_calls"].append(tool_audit)
-            if category is not None and used[category] < limits[category]:
-                used[category] += 1
-                permitted = True
-            else:
-                permitted = False
+            args, qids, finished, fingerprint = {}, [], None, None
+            signature = (frozenset(seen["units"]), frozenset(seen["relations"]), frozenset(seen["evidence"]),
+                json.dumps(questions.dump()["questions"], sort_keys=True), tuple(p.proposal_id for p in proposals))
             with trace.observation("Investigation Agent · tool call", as_type="tool", input={"name": name, "arguments": raw},
-                                   metadata={"tool_name": name if category else "unsupported_tool", "attempt": attempts}) as tool_span:
+                    metadata={"tool_name": name if category else "unsupported_tool", "attempt": attempts}) as tool_span:
                 try:
                     args = _arguments(name, raw)
                     fingerprint = _fingerprint(name, args)
-                    tool_audit["arguments"] = args
+                    tool_audit["arguments"] = deepcopy(args)
                     if not permitted:
                         raise AppError("tool_budget_exhausted", "This tool budget is exhausted; choose a remaining tool or finish")
-                except AppError as exc:
-                    fingerprint = name + ":invalid:" + raw
-                    response = tools._failure(exc)
-                    response["error"]["validation_details"] = exc.details
-                else:
-                    response = None
-                knowledge = (frozenset(seen["units"]), frozenset(seen["relations"]), frozenset(seen["evidence"]))
-                prior = fingerprints.get(fingerprint)
-                if prior and (prior["successful"] or prior["knowledge"] == knowledge):
-                    response = tools._failure(AppError("duplicate_query", "Equivalent call was already attempted"))
-                else:
-                    if response is None:
+                    qids = questions.resolve(args.pop("question_ids", None))
+                    prior = fingerprints.get(fingerprint)
+                    if prior and prior["successful"] and name in READ_TOOLS:
+                        response = {**deepcopy(prior["result"]), "cached": True}
+                    else:
+                        if prior and (prior["successful"] or prior["state"] == signature):
+                            raise AppError("duplicate_query", "Equivalent call was already attempted in this working state")
                         tool_audit["executed"] = True
                         executed += 1
-                        try:
-                            if name in READ_TOOLS:
-                                response = getattr(tools, name)(bound_case, **args)
+                        if name in READ_TOOLS:
+                            response = getattr(tools, name)(bound_case, **args)
+                            if response["status"] not in {"error", "invalid_request"}:
                                 _remember(name, response, seen)
-                            elif name in actions.PROPOSAL_TOOLS:
-                                draft = list(proposals)
-                                response = actions.PROPOSAL_TOOLS[name](bound_case, seen, work_context, draft, **args)
-                                actions.artifacts(bound_case, seen, work_context, goal, draft, findings, questions, completion)
-                                proposals = draft
-                            else:
-                                if args["completion_status"] == "budget_exhausted" and used["read"] < MAX_TOOL_CALLS:
-                                    raise AppError("invalid_findings", "Read budget has not been exhausted")
-                                result = actions.present_findings(bound_case, seen, work_context, goal, proposals, findings, questions, **args)
-                                findings = [f.model_dump(mode="json") for f in result.findings]
-                                questions, completion = result.open_questions, result.completion_status
-                                delivered = True
-                                response = {"status": "ok", "findings": findings, "evidence_refs": result.model_dump(mode="json")["evidence_refs"]}
-                        except (AppError, ValidationError) as exc:
-                            details = exc.details if isinstance(exc, AppError) else _validation_details(exc)
-                            response = tools._failure(exc if isinstance(exc, AppError) else AppError("invalid_tool_arguments", "Artifact fields violate their contract"))
-                            response["error"]["validation_details"] = details
-                        except Exception as exc:
-                            tool_audit.update(exception_type=type(exc).__name__, error_code=getattr(exc, "code", "investigation_tool_failed"))
-                            response = tools._failure(AppError("investigation_tool_failed", "Tool failed; no artifact was accepted"), status="error")
-                    fingerprints[fingerprint] = {"successful": response["status"] not in {"invalid_request", "error"}, "knowledge": knowledge}
+                        elif name in actions.PROPOSAL_TOOLS:
+                            draft = list(proposals)
+                            response = actions.PROPOSAL_TOOLS[name](bound_case, seen, work_context, draft, **args)
+                            actions.artifacts(bound_case, seen, work_context, goal, draft, findings, questions.open_questions(), completion)
+                            proposals = draft
+                        elif name == "update_questions":
+                            response = questions.update(args["questions"], bound_case, seen, work_context, proposals)
+                        else:
+                            finished = actions.finish_investigation(bound_case, seen, work_context, goal, proposals, questions,
+                                **args, budget_exhausted=used["read"] >= limits["read"] or used["proposal"] >= limits["proposal"])
+                            result, final_questions, answer = finished
+                            findings = [f.model_dump(mode="json") for f in result.findings]
+                            questions, completion = final_questions, result.completion_status
+                            response = {"status": "ok", "completion_status": completion, "findings": findings}
+                    fingerprints[fingerprint] = {"successful": response["status"] not in {"error", "invalid_request"},
+                        "state": signature, "result": deepcopy(response)}
+                except (AppError, ValidationError) as exc:
+                    details = exc.details if isinstance(exc, AppError) else _validation_details(exc)
+                    response = tools._failure(exc if isinstance(exc, AppError) else AppError("invalid_tool_arguments", "Fields violate their contract"))
+                    response["error"]["validation_details"] = details
+                    if fingerprint is not None and response["error"]["code"] != "duplicate_query":
+                        fingerprints[fingerprint] = {"successful": False, "state": signature}
+                except Exception as exc:
+                    tool_audit.update(exception_type=type(exc).__name__, error_code="investigation_tool_failed")
+                    response = tools._failure(AppError("investigation_tool_failed", "Tool failed; no artifact was accepted"), status="error")
+                    if fingerprint is not None:
+                        fingerprints[fingerprint] = {"successful": False, "state": signature}
                 _tool_recovery(response, name)
                 failed = response["status"] in {"invalid_request", "error"}
-                if failed:
-                    recovery_pending = True
-                elif name not in READ_TOOLS:
-                    # A successful read alone does not resolve a rejected artifact.
-                    recovery_pending = False
-                no_progress = no_progress + 1 if failed else 0
-                if no_progress >= MAX_NO_PROGRESS:
-                    stop_reason = "no_progress_limit"
-                    limitations.append("连续请求未取得有效进展，本轮已停止；可调整调查问题后继续。")
-                if response["status"] in {"truncated", "invalid_request", "error"}:
-                    limitations.append(f"{name} 返回 {response['status']}，部分信息或建议尚未核查完成。")
-                if name == "get_relations" and any(row["relation"]["evidence_ids_truncated"] for row in response["items"]):
-                    limitations.append("部分关系的依据 ID 列表被截断。")
+                no_progress = no_progress + 1 if failed or response.get("cached") else 0
+                recovery = deepcopy(response["error"]) if failed else None
+                if response.get("has_more"):
+                    limitations.append(f"{name} 返回 truncated；仍有可继续检索的范围，详见工作记忆。")
+                # Merge before retiring any protocol messages, including empty/error/truncated activity.
+                index = knowledge.merge(name, args, response, qids)
+                questions.record(index, qids)
+                if not failed and name in READ_TOOLS:
+                    obtained_units = list(args.get("info_unit_ids", []))
+                    for row in response["items"]:
+                        if name == "search_info_units":
+                            obtained_units.append(row["id"])
+                        elif name == "get_relations":
+                            obtained_units.extend((row["relation"]["source_id"], row["relation"]["target_id"]))
+                    for qid in qids:
+                        q = questions.items[qid]
+                        for uid in obtained_units:
+                            if uid not in q.related_info_unit_ids:
+                                q.related_info_unit_ids.append(uid)
+                        if name == "get_evidence":
+                            for row in response["items"]:
+                                pointer = EvidencePointer(info_unit_id=row["info_unit_id"], source_ref_index=row["source_ref_index"])
+                                if pointer not in q.evidence_refs:
+                                    q.evidence_refs.append(pointer)
+                    if response.get("cached") and json.dumps(questions.dump()["questions"], sort_keys=True) != signature[3]:
+                        no_progress = 0  # Reusing a source for a new Question is useful progress.
+                tool_audit["question_ids"] = qids
                 tool_audit["result"] = deepcopy(response)
                 tool_span.update(output=response)
-            messages.append({"role": "tool", "tool_call_id": call["id"], "content": json.dumps(response, ensure_ascii=False)})
-            if attempts >= MAX_TOTAL_CALLS:
-                stop_reason = "tool_budget_exhausted"
-            if category and used[category] == limits[category]:
-                if category == "read":
-                    limitations.append("本轮检索预算已用尽，仍可提交已有依据的待确认成果。")
-                messages.append({"role": "system", "content": f"运行预算更新：{category} 已用尽。只能使用仍注册的工具，或直接简短总结。"})
-            if stop_reason:
-                messages.append({"role": "system", "content": f"工具阶段已停止：{stop_reason}。仅简短总结已取得成果和限制，不再调用工具。"})
-            persist_artifacts()
+            persist()
+            if finished:
+                stop_reason = "finish_investigation"
+                output = snapshot(answer, "completed")
+                audit.update(status="success", stop_reason=stop_reason, result=output)
+                _write_audit(bound_case.case_id, output_path, audit)
+                record_final_state()
+                trace.finish_success(output)
+                return output
+            # Keep exactly the latest completed Assistant/Tool pair, never an unpaired call.
+            recent = [deepcopy(reply.message), {"role": "tool", "tool_call_id": call["id"],
+                "content": json.dumps(response if len(json.dumps(response, ensure_ascii=False)) <= 12000 else _preview(response, 240), ensure_ascii=False)}]
+            if len(json.dumps(recent, ensure_ascii=False)) > 16000:
+                recent = []  # Already merged/persisted; retire the entire pair together.
     except Exception as exc:
         error = trace.error_payload(exc)
-        # A failed summary cannot invalidate successfully checked tools or adopt them.
-        recoverable = isinstance(exc, llm_client.LLMFailure) or isinstance(exc, AppError) and exc.code in {
-            "investigation_summary_invalid", "investigation_protocol_invalid", "investigation_delivery_incomplete"}
-        partial = recoverable and bool(proposals or findings)
-        audit.update(status="partial" if partial else "failed", stop_reason=stop_reason or "error", error=error)
+        stop_reason = "model_failed" if isinstance(exc, llm_client.LLMFailure) else "error"
+        persist()
+        partial = isinstance(exc, (llm_client.LLMFailure, AppError)) and bool(proposals or findings) and getattr(exc, "code", None) != "investigation_audit_failed"
+        audit.update(status="partial" if partial else "failed", error=error, stop_reason=stop_reason,
+                     result=snapshot(None, "failed"))
         if isinstance(exc, llm_client.LLMFailure):
             audit["provider_response"] = exc.response
+        record_final_state()
         trace.finish_error(exc)
         if partial:
-            stop_reason = "summary_failed"
             output = snapshot(None, "failed")
-            audit.update(result=output, stop_reason=stop_reason)
+            audit["result"] = output
             _write_audit(bound_case.case_id, output_path, audit)
             return output
         _write_audit(bound_case.case_id, output_path, audit)

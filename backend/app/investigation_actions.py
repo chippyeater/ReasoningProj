@@ -73,21 +73,50 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
                     judgment=judgment, rationale=rationale, info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
 
 
-def present_findings(case, seen, context, goal, proposals, previous_findings, previous_questions, *, findings, open_questions, completion_status):
-    """Publish concise, cited findings for the source UI. Initial evidence_context citations are usable without another read. For factual conclusions include supplied SourceRef pointers; if no reliable finding is possible, submit empty findings, concrete open_questions and evidence_insufficient. Never invent evidence or create canvas objects."""
-    if not isinstance(findings, list) or len(findings) > 4:
-        raise AppError("invalid_findings", "Submit at most four findings per call")
-    merged = [*previous_findings]
-    for finding in findings:
-        if finding not in merged:
-            merged.append(finding)
-    if not isinstance(open_questions, list) or any(not isinstance(q, str) for q in open_questions):
-        raise AppError("invalid_findings", "open_questions must be a list of strings")
-    questions = list(dict.fromkeys([*previous_questions, *open_questions]))
-    if not merged and completion_status == "completed":
-        raise AppError("invalid_findings", "没有可靠发现时请明确提交 evidence_insufficient 和待核查问题，不要标记 completed", details={
-            "category": "delivery", "errors": [{"loc": ["completion_status"], "code": "empty_completed_findings"}]})
-    return artifacts(case, seen, context, goal, proposals, merged, questions, completion_status)
+def finish_investigation(case, seen, context, goal, proposals, questions, *, answer, findings,
+                         question_updates, completion_status, budget_exhausted=False):
+    """Finish and publish cited findings plus concise answer, without another model call. Batch final Question updates here or use update_questions earlier. All Questions must be answered with obtained basis or specifically blocked. Resolve registered planned actions by actual Proposal ID or omission_reason. open_questions and pending Proposals are derived by Runtime. Source location does not establish truth."""
+    from copy import deepcopy
+    from app.investigation_agent import _validate_summary
+    if not isinstance(question_updates, list) or len(question_updates) > 20:
+        raise AppError("invalid_questions", "question_updates must be a list of at most twenty Questions")
+    draft = deepcopy(questions)
+    if question_updates:
+        draft.update(question_updates, case, seen, context, proposals)
+    pending = []
+    for q in draft.items.values():
+        if q.status in {"pending", "in_progress"}:
+            pending.append({"loc": ["questions", q.id], "code": "question_unresolved", "message": q.question})
+        for plan in q.planned_actions:
+            if not plan.proposal_id and not plan.omission_reason:
+                pending.append({"loc": ["questions", q.id, "planned_actions", plan.id],
+                    "code": "unresolved_plan", "message": plan.description})
+    if pending:
+        raise AppError("investigation_incomplete", "Resolve the listed Questions/planned actions before finishing",
+                       details={"category": "completion", "errors": pending})
+    blocked = [q for q in draft.items.values() if q.status == "blocked"]
+    if completion_status == "completed" and blocked:
+        raise AppError("investigation_incomplete", "Blocked Questions require an incomplete completion_status")
+    if completion_status == "budget_exhausted" and not budget_exhausted:
+        raise AppError("investigation_incomplete", "Execution budget is still available")
+    if any(q.block_kind == "budget_exhausted" for q in blocked) and not budget_exhausted:
+        raise AppError("investigation_incomplete", "Cannot claim budget blocking while budget is available")
+    if completion_status == "unsupported" and any(q.block_kind != "unsupported" for q in blocked):
+        raise AppError("investigation_incomplete", "Unsupported completion requires unsupported Questions")
+    if completion_status == "completed" and not findings:
+        raise AppError("invalid_findings", "Completed investigation requires a grounded finding")
+    result = artifacts(case, seen, context, goal, proposals, findings, draft.open_questions(), completion_status)
+    delivered_refs = {(r.info_unit_id, r.source_ref_index) for r in result.evidence_refs}
+    for q in draft.items.values():
+        if q.status == "answered" and (not set(q.related_info_unit_ids) & set(result.relevant_info_unit_ids)
+                or not {(r.info_unit_id, r.source_ref_index) for r in q.evidence_refs} <= delivered_refs):
+            raise AppError("investigation_incomplete", "Answered Question basis must appear in final findings or Proposals",
+                details={"category": "completion", "errors": [{"loc": ["questions", q.id], "code": "question_basis_not_delivered"}]})
+    if any(f.info_unit_ids and not f.evidence_refs and any(uid == ref[0] for uid in f.info_unit_ids for ref in seen["evidence"])
+           for f in result.findings):
+        raise AppError("investigation_incomplete", "Include obtained source pointers with factual findings")
+    text = _validate_summary(answer, proposals)
+    return result, draft, text
 
 
 PROPOSAL_TOOLS = {function.__name__: function for function in (

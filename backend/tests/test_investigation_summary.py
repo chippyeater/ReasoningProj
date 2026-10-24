@@ -51,67 +51,23 @@ class TestSummaryHandoff(unittest.TestCase):
     run_script = fixture.TestInvestigationAgent.run_script
     audits = fixture.TestInvestigationAgent.audits
 
-    def test_success_inventory_excludes_failed_calls_and_is_in_actual_request(self):
-        hypothesis = suggestion("hypothesis")
-        gap = suggestion("evidence_gap")
-        answer = "实际租金损失尚未证实。已提出一条假设和一项证据缺口，优先核对计租与收款；可查看后采纳或忽略。"
-        def decide(call, turn):
-            if turn == 1:
-                return fixture.tool("get_evidence", {"info_unit_ids": ["U029"]})
-            if turn == 2:
-                return proposal_call(hypothesis, [], "hypothesis")
-            if turn == 3:
-                # Failure is visible to the model, but does not become a pending suggestion.
-                return proposal_call({**gap, "hypothesis_proposal_ids": ["proposal-" + "f" * 32]}, [], "bad-gap")
-            if turn == 4:
-                parent = next(json.loads(m["content"])["proposal_id"] for m in call["messages"] if m["role"] == "tool" and json.loads(m["content"]).get("pending"))
-                return proposal_call({**gap, "hypothesis_proposal_ids": [parent]}, [], "gap")
-            if turn == 5:
-                return fixture.present("房东是否存在实际空置损失", ["U029"], refs=[("U029", 0)])
-            brief = json.loads(call["messages"][0]["content"].split("本轮界面交接状态（后端生成）：")[-1])
-            self.assertEqual(brief["pending_count"], 2)
-            self.assertEqual(brief["failed_tool_calls"], 1)
-            self.assertEqual([p["kind"] for p in brief["successful_proposals"]], ["hypothesis", "evidence_gap"])
-            self.assertTrue(all(p["status"] == "pending_user_confirmation" for p in brief["successful_proposals"]))
-            self.assertNotIn("rationale", json.dumps(brief))
-            return fixture.final(answer)
-        result, calls = self.run_script("房东是否存在实际空置损失", decide,
-            work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])
-        self.assertEqual(result["answer"], answer)
-        self.assertEqual(len(result["proposals"]), 2)
-        self.assertEqual(result["summary_status"], "completed")
-        audit = self.audits()[0]
-        self.assertEqual(audit["model_calls"][-1]["request"]["messages"], calls[-1]["messages"])
-        self.assertEqual(result["tool_attempt_count"], 5)
+    def test_rejected_answer_is_recoverable_finish_error_without_partial_findings(self):
+        result, calls = self.run_script("核对", [fixture.finish("核对", ["U029"], refs=[("U029", 0)], answer="字"*241, call_id="bad"),
+            fixture.finish("核对", ["U029"], refs=[("U029", 0)], answer="陈述仍需核实。")], selected=["U029"])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["answer"], "陈述仍需核实。")
+        error = json.loads(calls[1]["messages"][-1]["content"])["error"]
+        self.assertEqual(error["validation_details"]["errors"][0]["code"], "summary_too_long")
+        self.assertEqual(json.loads(calls[1]["messages"][1]["content"])["knowledge_state"]["findings"]["items"], [])
 
-    def test_no_proposals_context_and_fact_answer(self):
-        answer = "据张某陈述，替租人于 3 月 8 日搬入，尚需独立核实。"
-        result, calls = self.run_script("搬入时间", [
-            fixture.tool("get_evidence", {"info_unit_ids": ["U026"]}),
-            fixture.present("搬入时间", ["U026"], refs=[("U026", 0)], statement=answer), fixture.final(answer)])
-        brief = json.loads(calls[-1]["messages"][0]["content"].split("本轮界面交接状态（后端生成）：")[-1])
-        self.assertEqual(brief["successful_proposals"], [])
-        self.assertEqual(brief["pending_count"], 0)
-        self.assertEqual(result["answer"], answer)
-        self.assertEqual(result["evidence_refs"], [{"info_unit_id": "U026", "source_ref_index": 0}])
-
-    def test_rejected_summary_preserves_pending_proposal_and_cited_findings_without_retry(self):
-        long_content = "房屋交还后新租约尚未开始计租且房东未收到该时段租金因此可能存在实际损失"
-        result, calls = self.run_script("房东是否存在实际空置损失", [
-            fixture.tool("get_evidence", {"info_unit_ids": ["U029"]}),
-            proposal_call({**suggestion("hypothesis"), "content": long_content}, [], "hyp"),
-            fixture.present("房东是否存在实际空置损失", ["U029"], refs=[("U029", 0)]),
-            fixture.final("调查结论如下：" + long_content)],
+    def test_successful_proposals_survive_model_failure_before_finish(self):
+        from app import llm_client
+        result, _ = self.run_script("查损失", [proposal_call(suggestion("hypothesis"), [], "h"),
+            llm_client.LLMFailure("llm_timeout", "mock timeout")], selected=["U029"],
             work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])
-        self.assertEqual(len(calls), 4)  # No hidden summary retry or validation LLM.
-        self.assertIsNone(result["answer"])
         self.assertEqual(result["summary_status"], "failed")
+        self.assertIsNone(result["answer"])
         self.assertEqual(len(result["proposals"]), 1)
-        self.assertEqual(len(result["findings"]), 1)
-        self.assertEqual(result["evidence_refs"], [{"info_unit_id": "U029", "source_ref_index": 0}])
+        self.assertEqual(result["findings"], [])
         self.assertEqual(self.audits()[0]["status"], "partial")
-        self.assertEqual(self.audits()[0]["error"]["validation_details"]["errors"][0]["code"], "proposal_repeated")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertTrue(self.audits()[0]["proposal_receipt"])

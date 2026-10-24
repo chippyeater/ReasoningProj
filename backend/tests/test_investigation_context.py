@@ -31,8 +31,7 @@ class TestInvestigationContext(unittest.TestCase):
         self.edit(gap={"content": "实际计租和收款如何", "hypothesis_ids": [h], "info_unit_ids": ["U036"], "status": "open"})
         self.canvas(["U029", "U036", h], ["U029"], h)
         requests = []
-        responses = [replies.present("核查损失", ["U029", "U036"], ["R010"], [("U029", 0), ("U036", 0)], statement="双方陈述存在分歧，仍需独立核实。"),
-                     replies.final("陈述存在分歧，尚不能确认实际租金损失，优先核实收款。")]
+        responses = [replies.finish("核查损失", ["U029", "U036"], ["R010"], [("U029", 0), ("U036", 0)], statement="双方陈述存在分歧，仍需独立核实。")]
         def model(request):
             requests.append(json.loads(request.content))
             return httpx.Response(200, json=responses[len(requests) - 1].response)
@@ -55,7 +54,7 @@ class TestInvestigationContext(unittest.TestCase):
         self.assertEqual(context["reasoning"]["hypotheses"][0]["judgment"], "unverified")
         self.assertEqual(context["reasoning"]["gaps"][0]["status"], "open")
         self.assertEqual(context["reasoning"]["links"][0]["meaning"], "oppose")
-        serialized = json.dumps(initial)
+        serialized = json.dumps(initial["work_context"])
         for field in ("node_positions", "viewport", "offset_x", "display_levels", "source_refs", "quote_units", "files"):
             self.assertNotIn(field, serialized)
         self.assertEqual(len(response.json()["evidence_refs"]), 2)  # Verified initial excerpts are directly citable.

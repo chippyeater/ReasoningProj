@@ -18,12 +18,12 @@ class TestInitialEvidence(unittest.TestCase):
     def test_initial_sources_allow_findings_and_proposals_without_read_calls(self):
         answer = "张某认为没有损失，仍需核查实际收租情况。"
         result, calls = self.run_script("核对损失并提出假设", [proposal_call(suggestion("hypothesis"), [], "hyp"),
-            fixture.present("核对损失并提出假设", ["U029"], refs=[("U029", 0)], statement=answer), fixture.final(answer)],
+            fixture.finish("核对损失并提出假设", ["U029"], refs=[("U029", 0)], statement=answer)],
             selected=["U029"], work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])
         self.assertEqual(result["tool_budget_used"]["read"], 0)
         self.assertEqual(result["evidence_refs"], [{"info_unit_id": "U029", "source_ref_index": 0}])
         initial = json.loads(calls[0]["messages"][1]["content"])
-        ref = initial["evidence_context"]["items"][0]
+        ref = initial["knowledge_state"]["source_refs"]["items"][0]
         original = next(u for u in self.case.info_units if u.id == "U029").source_refs[0]
         self.assertEqual(ref["quote_excerpt"], original.quote[:160])
         self.assertEqual((ref["file_id"], ref["start"], ref["end"]), (original.file_id, original.start, original.end))
@@ -32,9 +32,9 @@ class TestInitialEvidence(unittest.TestCase):
 
     def test_canvas_sources_are_usable_and_share_the_selected_source_budget(self):
         context = {"canvas": {"info_units": [tools._summary(u) for u in self.case.info_units]}}
-        _, calls = self.run_script("核对来源", [fixture.present("核对来源", ["U026"], refs=[("U026", 0)]),
-            fixture.final("据笔录陈述，相关日期仍需独立核实。")], selected=["U026"], work_context=context)
-        sources = json.loads(calls[0]["messages"][1]["content"])["evidence_context"]
+        _, calls = self.run_script("核对来源", [fixture.finish("核对来源", ["U026"], refs=[("U026", 0)])], selected=["U026"], work_context=context)
+        view = json.loads(calls[0]["messages"][1]["content"])["knowledge_state"]
+        sources = {**view["initial_source_status"], "items": view["source_refs"]["items"]}
         self.assertEqual(sources["items"][0]["info_unit_id"], "U026")
         self.assertLessEqual(len(sources["items"]), 8)
         self.assertLessEqual(sum(len(r["quote_excerpt"]) for r in sources["items"]), 1280)
@@ -44,9 +44,10 @@ class TestInitialEvidence(unittest.TestCase):
     def test_invalid_cached_source_is_reported_and_never_grants_citation(self):
         case = self.case.model_copy(deep=True)
         next(u for u in case.info_units if u.id == "U029").source_refs[0].quote = "不是缓存中的原文"
-        result, calls = self.run_script("核对", [fixture.present("核对", ["U029"], refs=[("U029", 0)]),
-            fixture.final("该来源无法核验，暂不能判断。"), fixture.final("该来源无法核验，需补充其他材料。")], selected=["U029"], case=case)
-        sources = json.loads(calls[0]["messages"][1]["content"])["evidence_context"]
+        result, calls = self.run_script("核对", [fixture.finish("核对", ["U029"], refs=[("U029", 0)]),
+            fixture.finish("核对", questions=["该来源无法核验，需补充其他材料。"], call_id="fixed")], selected=["U029"], case=case)
+        view = json.loads(calls[0]["messages"][1]["content"])["knowledge_state"]
+        sources = {**view["initial_source_status"], "items": view["source_refs"]["items"]}
         self.assertEqual(sources["items"], [])
         self.assertEqual(sources["errors"][0]["code"], "source_quote_mismatch")
         self.assertEqual(result["findings"], [])
@@ -62,12 +63,12 @@ class TestInitialEvidence(unittest.TestCase):
             if turn == 2:
                 parent = json.loads(call["messages"][-1]["content"])["proposal_id"]
                 return proposal_call({**gap, "hypothesis_proposal_ids": [parent]}, [], "gap")
-            return fixture.final("已提出待检验解释与计租缺口，尚无直接材料支持，可采纳后补充核实。")
+            return fixture.finish("探索损失解释", questions=["缺计租材料和收款证据"])
         result, _ = self.run_script("探索损失解释", decide,
             work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])
         self.assertEqual(len(result["proposals"]), 2)
         self.assertEqual(result["evidence_refs"], [])
-        self.assertTrue(all(c["result"]["evidence_status"] == "not_directly_evidenced" for c in self.audits()[0]["tool_calls"]))
+        self.assertTrue(all(c["result"]["evidence_status"] == "not_directly_evidenced" for c in self.audits()[0]["tool_calls"] if c["name"].startswith("propose_")))
         definitions = {d["function"]["name"]: d["function"]["parameters"] for d in agent.tool_definitions()}
         for name in ("propose_hypothesis", "propose_evidence_gap"):
             self.assertEqual(definitions[name]["properties"]["evidence_refs"].get("minItems", 0), 0)

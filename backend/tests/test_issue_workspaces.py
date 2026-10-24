@@ -72,7 +72,7 @@ class TestIssueWorkspaces(unittest.TestCase):
         issue = self.case.issue_set[1]
         requests = []
         replies = [fixtures.tool("get_evidence", {"info_unit_ids": ["U029"]}),
-                   fixtures.present("核对来源", ["U029"], refs=[("U029", 0)], status="completed"), fixtures.final("已核对笔录原文。")]
+                   fixtures.finish("核对来源", ["U029"], refs=[("U029", 0)], status="completed")]
 
         def model(request):
             requests.append(json.loads(request.content))
@@ -92,8 +92,8 @@ class TestIssueWorkspaces(unittest.TestCase):
         self.assertEqual(initial["core_issue"], self.case.core_issue)
         self.assertEqual(initial["work_context"]["current_issue"], issue)
         self.assertEqual(initial["work_context"]["issues"][0]["status"], "investigating")
-        self.assertEqual([u["id"] for u in initial["selected_info_units"]], ["U001"])
-        for forbidden in ("source_refs", "visible_node_ids", "node_positions", "viewport", "quote_units", "files"):
+        self.assertIn("U001", [u["id"] for u in initial["knowledge_state"]["info_units"]["items"]])
+        for forbidden in ("visible_node_ids", "node_positions", "viewport", "quote_units", "files"):
             self.assertNotIn(forbidden, json.dumps(initial))
         self.assertLessEqual(len(initial["work_context"]["canvas"]["info_units"]), 8)
         self.assertLessEqual(len(initial["work_context"]["canvas"]["relations"]), 12)
