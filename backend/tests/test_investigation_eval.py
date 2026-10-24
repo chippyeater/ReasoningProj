@@ -300,7 +300,7 @@ class TestInvestigationEval(unittest.TestCase):
 
     def test_missing_native_experiment_link_fails_verification(self):
         client = Mock()
-        client.api.experiments.list_items.return_value = NS(data=[])
+        client.api.experiments.list_items.return_value = NS(data=[], meta=NS(cursor=None))
         item = NS(trace_id="d" * 32, item=NS(id="dataset-item", dataset_id="dataset"))
         with self.assertRaisesRegex(ValueError, "association"):
             remote.verify_experiment(client, NS(experiment_id="exp", item_results=[item]), datetime.now(timezone.utc))
@@ -309,7 +309,7 @@ class TestInvestigationEval(unittest.TestCase):
         client = FakeRemote()
         trace_id = "d" * 32
         client.api.experiments = NS(list_items=Mock(return_value=NS(data=[NS(trace_id=trace_id,
-            experiment_item_id="dataset-item", experiment_id="exp", experiment_dataset_id="dataset")])))
+            experiment_item_id="dataset-item", experiment_id="exp", experiment_dataset_id="dataset")], meta=NS(cursor=None))))
         metrics = {"model_call_count": 1, "tool_attempt_count": 1}
         remote.store_scores(client, trace_id, metrics, metadata={}, comment="Execution only")
         item = NS(trace_id=trace_id, item=NS(id="dataset-item", dataset_id="dataset"), output={"metrics": metrics})
@@ -325,11 +325,28 @@ class TestInvestigationEval(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "association"):
             remote.verify_experiment(client, result, datetime.now(timezone.utc))
 
+    def test_experiment_query_respects_server_limit_paginates_and_rejects_extra_items(self):
+        client = Mock()
+        rows = [NS(trace_id="t1", experiment_item_id="i1", experiment_id="exp", experiment_dataset_id="d"),
+                NS(trace_id="t2", experiment_item_id="i2", experiment_id="exp", experiment_dataset_id="d")]
+        client.api.experiments.list_items.side_effect = [NS(data=rows[:1], meta=NS(cursor="next")),
+                                                        NS(data=rows[1:], meta=NS(cursor=None))]
+        result = NS(experiment_id="exp", item_results=[NS(trace_id="t1", item=NS(id="i1", dataset_id="d"))])
+        with self.assertRaisesRegex(ValueError, "association"):
+            remote.verify_experiment(client, result, datetime.now(timezone.utc))
+        self.assertEqual(client.api.experiments.list_items.call_count, 2)
+        for call in client.api.experiments.list_items.call_args_list:
+            self.assertEqual(call.kwargs["limit"], 100)
+            self.assertIn("dataset", call.kwargs["fields"].split(","))
+        self.assertEqual(client.api.experiments.list_items.call_args.kwargs["cursor"], "next")
+
     def test_score_cursor_reads_and_visibility_wait_never_repeat_writes(self):
         client = Mock()
         client.api.scores.get_many.side_effect = [NS(data=[NS(id="one")], meta=NS(cursor="next")),
                                                  NS(data=[NS(id="two")], meta=NS(cursor=None))]
         self.assertEqual([row.id for row in remote.read_scores(client, "trace")], ["one", "two"])
+        for call in client.api.scores.get_many.call_args_list:
+            self.assertEqual(set(call.kwargs["fields"].split(",")), {"details", "subject"})
         check = Mock(side_effect=[ValueError("indexing"), ValueError("indexing"), True])
         with patch.object(remote.time, "sleep"):
             self.assertTrue(remote.verify_with_bounded_wait(check))

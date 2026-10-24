@@ -32,7 +32,7 @@
 | gap_handling | 54d069a7-212b-4253-8f50-4b10a6ee3c21 | 重要缺口遗漏或当作事实 / 已识别但处理不足 / 合理调查或记录 |
 | completion_calibration | 63d36db7-0119-4873-8d45-d16ff100c270 | 明显提前/错误完成 / 基本合理但局部不一致 / 与实际完成程度一致 |
 
-在 Trace/Observation 详情点击 **Annotate**，选择以上配置、给出整数 0/1/2，并在 Comment 写明 Finding、来源指针或模型/工具/Question 记录的依据。新实验执行后，也可从 Experiment compare view 打开对应任务和原生 Trace 评分。UI 的评论功能可用，但后端配置不会强制人工必须填写评论；这是标注规范。没有自动预填人工分或未经验证的总分通过线。当前不额外建立 Annotation Queue。
+在 Trace/Observation 详情点击 **Annotate**，选择以上配置、给出整数 0/1/2，并在 Comment 写明 Finding、来源指针或模型/工具/Question 记录的依据。新实验执行后，也可从 Experiment compare view 打开对应任务和原生 Trace 评分。UI 的评论功能可用，但后端配置不会强制人工必须填写评论；这是标注规范。Runner 不自动预填人工分，也不设置未经验证的总分通过线。经明确授权的 Codex 审阅可使用原生 ANNOTATION 预标注，必须记录 `reviewer=Codex`、`human_verified=false`，供真人复核；不能冒充已完成真人标注。当前不额外建立 Annotation Queue。
 
 ## 命令
 
@@ -69,6 +69,8 @@ backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py live --task A
 
 live 的审计保存在被 Git 忽略的 `evals/case_a/results/investigation/<run>/<A1|A2|A3>/runs/`。Trace/Score 上传后，通过 v2 Observations、原生 Experiments 和 Scores 读取核对关联，失败时保留审计并报错；最多核验 5 次，间隔 1/2/4/8 秒，仅等待服务写入可见性，不重试模型。每次新实验使用独立运行名和自己的 Trace ID。
 
+Experiments 查询使用服务器支持的 `limit=100` 与 cursor 分页，并请求 `core,dataset` 字段组以读取 Dataset ID；返回的 Item/Trace/Dataset 关联集合必须与本次选择完全一致，额外任务也会导致核验失败。Scores 读取显式请求 `details,subject`，供核对评论、配置、审阅来源及关联对象。核验故障可仅修复读取逻辑后使用本次 `execution.json` 中的 ID 继续查询，不重写原始运行记录或重新执行付费调查。
+
 当前 Agent 每项最多 **28 次模型调用**，三项最多 **84 次**；每次最多 `LLM_MAX_COMPLETION_TOKENS`（当前默认 20,000），理论 completion 上界 1,680,000，含 reasoning tokens。模型客户端没有自动重试；提前结束通常显著少于此上界。输入量、Azure 实际单价及总费用不由此上界保证。
 
 ## 自动 Scores 的解释
@@ -85,7 +87,7 @@ live 的审计保存在被 Git 忽略的 `evals/case_a/results/investigation/<ru
 backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -p 'test_investigation_eval.py' -v
 ```
 
-初始集成验证：集成测试 21 项、后端全量 308 项、Case A 原有回归 21 项均通过；独立 dry-run 完成三项协议检查（30 个内存观察节点、0 次真实模型调用）。Dataset 重复初始化返回一致对象；历史 19 个自动 Scores 已从远端读回。单任务参数新增后，集成回归 24 项通过，A1 dry-run 仅运行一个任务（10 个内存观察节点、0 次真实模型调用）。Prompt 版本同步检查通过。
+初始集成验证：集成测试 21 项、后端全量 308 项、Case A 原有回归 21 项均通过；独立 dry-run 完成三项协议检查（30 个内存观察节点、0 次真实模型调用）。Dataset 重复初始化返回一致对象；历史 19 个自动 Scores 已从远端读回。单任务参数及远端读取修复后，集成回归 25 项、Case A 原有回归 21 项通过，A1 dry-run 仅运行一个任务（10 个内存观察节点、0 次真实模型调用）。Prompt 版本同步检查通过。
 
 - [SDK v5 原生 Experiment Runner](https://langfuse.com/docs/evaluation/experiments/experiments-via-sdk)
 - [Dataset 与 source_trace_id](https://langfuse.com/docs/evaluation/experiments/data-model)

@@ -176,7 +176,7 @@ def store_scores(client, trace_id, metrics, *, metadata, comment):
 def read_scores(client, trace_id):
     rows, cursor = [], None
     while True:
-        response = client.api.scores.get_many(trace_id=trace_id, limit=100, cursor=cursor)
+        response = client.api.scores.get_many(trace_id=trace_id, fields="details,subject", limit=100, cursor=cursor)
         rows.extend(response.data)
         cursor = response.meta.cursor
         if not cursor:
@@ -192,9 +192,18 @@ def verify_scores(client, trace_id, metrics):
 
 def verify_experiment(client, result, since):
     """Check native experiment/item linkage AND the existing nested Agent tree."""
-    items = client.api.experiments.list_items(experiment_id=result.experiment_id, from_start_time=since,
-                                             fields="core", limit=1000).data
+    items, cursor = [], None
+    while True:
+        response = client.api.experiments.list_items(experiment_id=result.experiment_id, from_start_time=since,
+                                                     fields="core,dataset", limit=100, cursor=cursor)
+        items.extend(response.data)
+        cursor = response.meta.cursor
+        if not cursor:
+            break
     remote_ids = {(row.trace_id, row.experiment_item_id, row.experiment_id, row.experiment_dataset_id) for row in items}
+    expected_ids = {(row.trace_id, row.item.id, result.experiment_id, row.item.dataset_id) for row in result.item_results}
+    if remote_ids != expected_ids or len(items) != len(result.item_results):
+        raise ValueError("Native Experiment / Dataset Item / Trace association was not verified")
     for item_result in result.item_results:
         if not item_result.trace_id or (item_result.trace_id, item_result.item.id, result.experiment_id, item_result.item.dataset_id) not in remote_ids:
             raise ValueError("Native Experiment / Dataset Item / Trace association was not verified")
