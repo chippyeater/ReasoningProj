@@ -53,7 +53,7 @@ def propose_hypothesis(case, seen, context, proposals, *, content, rationale, in
 
 def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info_unit_id, meaning, rationale, evidence_refs,
                           hypothesis_proposal_ids=None):
-    """Propose support/oppose/verify from a retrieved InfoUnit to exactly one Hypothesis. Use hypothesis_id for an existing context Hypothesis, or null plus one actually returned same-run hypothesis_proposal_ids entry for a new pending Hypothesis. Never both. User must adopt that Hypothesis first, then separately adopt this Link; nothing is automatically accepted."""
+    """Propose support/oppose/verify from a provided InfoUnit with a verified evidence_context or get_evidence citation to exactly one Hypothesis. Use hypothesis_id for an existing context Hypothesis, or null plus one actually returned same-run hypothesis_proposal_ids entry for a new pending Hypothesis. Never both. User must adopt that Hypothesis first, then separately adopt this Link; nothing is automatically accepted."""
     return _propose(case, seen, context, proposals, "evidence_link", hypothesis_ids=[] if hypothesis_id is None else [hypothesis_id],
                     hypothesis_proposal_ids=[] if hypothesis_proposal_ids is None else hypothesis_proposal_ids,
                     info_unit_ids=[info_unit_id], meaning=meaning, rationale=rationale, evidence_refs=evidence_refs)
@@ -84,6 +84,9 @@ def present_findings(case, seen, context, goal, proposals, previous_findings, pr
     if not isinstance(open_questions, list) or any(not isinstance(q, str) for q in open_questions):
         raise AppError("invalid_findings", "open_questions must be a list of strings")
     questions = list(dict.fromkeys([*previous_questions, *open_questions]))
+    if not merged and completion_status == "completed":
+        raise AppError("invalid_findings", "没有可靠发现时请明确提交 evidence_insufficient 和待核查问题，不要标记 completed", details={
+            "category": "delivery", "errors": [{"loc": ["completion_status"], "code": "empty_completed_findings"}]})
     return artifacts(case, seen, context, goal, proposals, merged, questions, completion_status)
 
 

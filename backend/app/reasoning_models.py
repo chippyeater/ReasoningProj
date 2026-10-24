@@ -132,8 +132,9 @@ class ReasoningProposal(ContractModel):
     def shape(self):
         if self.kind in {"evidence_link", "hypothesis_status"} and (not self.info_unit_ids or not self.evidence_refs):
             raise ValueError("Evidence Link and status proposals require info_unit_ids and evidence_refs")
-        if len(self.hypothesis_ids) != len(set(self.hypothesis_ids)) or len(self.info_unit_ids) != len(set(self.info_unit_ids)):
-            raise ValueError("Duplicate proposal references")
+        for field in ("hypothesis_ids", "info_unit_ids"):
+            if len(getattr(self, field)) != len(set(getattr(self, field))):
+                raise ValueError(f"Duplicate {field}")
         if len(self.hypothesis_proposal_indices) != len(set(self.hypothesis_proposal_indices)):
             raise ValueError("Duplicate hypothesis_proposal_indices")
         if len(self.hypothesis_proposal_ids) != len(set(self.hypothesis_proposal_ids)):

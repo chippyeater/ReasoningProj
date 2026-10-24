@@ -45,7 +45,7 @@ class TestInitialEvidence(unittest.TestCase):
         case = self.case.model_copy(deep=True)
         next(u for u in case.info_units if u.id == "U029").source_refs[0].quote = "不是缓存中的原文"
         result, calls = self.run_script("核对", [fixture.present("核对", ["U029"], refs=[("U029", 0)]),
-            fixture.final("该来源无法核验，暂不能判断。")], selected=["U029"], case=case)
+            fixture.final("该来源无法核验，暂不能判断。"), fixture.final("该来源无法核验，需补充其他材料。")], selected=["U029"], case=case)
         sources = json.loads(calls[0]["messages"][1]["content"])["evidence_context"]
         self.assertEqual(sources["items"], [])
         self.assertEqual(sources["errors"][0]["code"], "source_quote_mismatch")

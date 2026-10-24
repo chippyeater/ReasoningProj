@@ -333,6 +333,23 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertEqual(self.accept(result["run_id"]).status_code, 200)
         self.assertEqual(self.accept(result["run_id"], 1).status_code, 200)
 
+    def test_ungrounded_exploration_still_requires_separate_user_approval(self):
+        h = {**suggestion("hypothesis"), "info_unit_ids": [], "evidence_refs": [], "rationale": "探索性解释尚待验证。"}
+        gap = {**suggestion("evidence_gap"), "info_unit_ids": [], "evidence_refs": [], "hypothesis_proposal_indices": [0]}
+        response, _ = self.investigate([h, gap])
+        self.assertEqual(response.status_code, 200, response.text)
+        run = response.json()["run_id"]
+        self.assertEqual(self.accept(run, 1).status_code, 409)
+        parent = self.accept(run).json()["object_id"]
+        state = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        self.assertEqual((state.hypotheses[0].judgment, state.gaps), ("unverified", []))
+        adopted = self.accept(run, 1)
+        self.assertEqual(adopted.status_code, 200, adopted.text)
+        state = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        self.assertEqual(state.gaps[0].hypothesis_ids, [parent])
+        self.assertEqual(state.gaps[0].info_unit_ids, [])
+        self.assertTrue(self.accept(run, 1).json()["already_accepted"])
+
     def test_legacy_audit_without_proposal_ids_remains_adoptable(self):
         from app.reasoning_models import ReasoningProposal
         from app.reasoning_proposals import proposal_receipt

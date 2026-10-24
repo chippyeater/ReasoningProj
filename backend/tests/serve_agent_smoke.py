@@ -21,6 +21,37 @@ async def model(config, messages, definitions, schema=None, **kwargs):
     goal = initial["goal"]
     names = [m["tool_calls"][0]["function"]["name"] for m in messages if m["role"] == "assistant" and m.get("tool_calls")]
     returned = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
+    # New delivery/recovery scenarios reuse actual initial sources and real tools.
+    if any(word in goal for word in ("首轮来源直用", "遗漏来源交付", "恢复参数", "探索无直接证据")):
+        from test_reasoning_proposals import suggestion, proposal_call
+        sources = initial["evidence_context"]["items"]
+        uid = sources[0]["info_unit_id"] if sources else "U026"
+        index = sources[0]["source_ref_index"] if sources else 0
+        proof = {"info_unit_ids": [uid], "evidence_refs": [{"info_unit_id": uid, "source_ref_index": index}]}
+        reviewed = any(m["role"] == "system" and "完成检查（" in m["content"] for m in messages)
+        if "恢复参数" in goal and not any(r.get("pending") for r in returned):
+            if not names:
+                return proposal_call({**suggestion("hypothesis"), **proof,
+                    "evidence_refs": [{"info_unit_id": uid, "source_ref_index": 999}]}, [], "bad-proposal")
+            if not reviewed:
+                return replies.final("该建议暂未成功提交。")
+            return proposal_call({**suggestion("hypothesis"), **proof}, [], "corrected-proposal")
+        if "探索无直接证据" in goal:
+            ids = [r["proposal_id"] for r in returned if r.get("pending")]
+            if not ids:
+                return proposal_call({**suggestion("hypothesis"), "info_unit_ids": [], "evidence_refs": []}, [], "exploratory-h")
+            if len(ids) == 1:
+                return proposal_call({**suggestion("evidence_gap"), "info_unit_ids": [], "evidence_refs": [],
+                    "hypothesis_proposal_ids": ids}, ids, "exploratory-gap")
+            if "present_findings" not in names:
+                return replies.present(goal, questions=["能否补充新旧租约计租日和收款记录？"])
+            return replies.final("已提出待检验解释与关键缺口，尚无直接证明材料；可逐项采纳或补充计租和收款记录。")
+        answer = "据张某陈述，替租人于 2026 年 3 月 8 日搬入，尚未独立核实。"
+        if "遗漏来源交付" in goal and not names and not reviewed:
+            return replies.final(answer)
+        if "present_findings" not in names:
+            return replies.present(goal, [uid], refs=[(uid, index)], statement=answer, status="completed")
+        return replies.final(answer if "恢复参数" not in goal else "相关陈述尚未独立核实。已提出一条待检验假设，可在画布中查看、采纳或忽略。")
     if "失败" in goal and "总结失败" not in goal:
         raise llm_client.LLMFailure("llm_timeout", "离线模拟调用超时")
     if "删除" in goal:

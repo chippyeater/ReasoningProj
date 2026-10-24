@@ -22,6 +22,7 @@ const api = 'http://127.0.0.1:8018';
       viewport: { zoom: 1, offset_x: 0, offset_y: 0 } } } });
     await page.goto('http://127.0.0.1:5178');
     await page.getByRole('tab', { name: issue, exact: true }).waitFor();
+    await page.locator('.canvas-node[data-node-id="U029"]').waitFor();
     await page.getByRole('button', { name: 'Agent 调查', exact: true }).click();
     await page.getByPlaceholder('提出调查问题，或检查假设与证据缺口…').fill('检查同轮证据关联');
     const request = page.waitForRequest(r => r.url().endsWith('/agent/run'));

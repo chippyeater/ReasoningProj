@@ -66,6 +66,8 @@ class TestSummaryHandoff(unittest.TestCase):
             if turn == 4:
                 parent = next(json.loads(m["content"])["proposal_id"] for m in call["messages"] if m["role"] == "tool" and json.loads(m["content"]).get("pending"))
                 return proposal_call({**gap, "hypothesis_proposal_ids": [parent]}, [], "gap")
+            if turn == 5:
+                return fixture.present("房东是否存在实际空置损失", ["U029"], refs=[("U029", 0)])
             brief = json.loads(call["messages"][0]["content"].split("本轮界面交接状态（后端生成）：")[-1])
             self.assertEqual(brief["pending_count"], 2)
             self.assertEqual(brief["failed_tool_calls"], 1)
@@ -80,7 +82,7 @@ class TestSummaryHandoff(unittest.TestCase):
         self.assertEqual(result["summary_status"], "completed")
         audit = self.audits()[0]
         self.assertEqual(audit["model_calls"][-1]["request"]["messages"], calls[-1]["messages"])
-        self.assertEqual(result["tool_attempt_count"], 4)
+        self.assertEqual(result["tool_attempt_count"], 5)
 
     def test_no_proposals_context_and_fact_answer(self):
         answer = "据张某陈述，替租人于 3 月 8 日搬入，尚需独立核实。"

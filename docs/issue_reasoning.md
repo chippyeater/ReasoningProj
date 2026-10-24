@@ -29,7 +29,7 @@
 
 ## Agent 边界
 
-新建议只由四个独立 Proposal 工具产生，工具名决定种类；最终回复不携带建议 JSON。成功工具返回随机临时 proposal_id，并立即持久化至本次运行审计。kind 继续用于既有存储和 UI。新假设采纳后仍为未证实、活跃；引用仍须来自本轮实际读取的 InfoUnits/SourceRefs。
+新建议只由四个独立 Proposal 工具产生，工具名决定种类；最终回复不携带建议 JSON。成功工具返回随机临时 proposal_id，并立即持久化至本次运行审计。kind 继续用于既有存储和 UI。新假设采纳后仍为未证实、活跃；引用可使用已核验的首轮来源或本轮 get_evidence 返回结果。探索性假设/缺口允许空材料和空引用，界面明确提示尚无直接来源依据；证据关联与判断调整仍必须有可追溯材料。空列表不取消同轮依赖审批或目标版本检查。
 
 hypothesis_ids 保留引用有限上下文中已有假设的方式。Evidence Gap 可填写 hypothesis_proposal_ids，引用同一运行里已经成功返回的 Hypothesis proposal_id；两个列表合计 1–5 个目标。Evidence Link 同样复用该字段，但必须恰有一个正式或临时假设目标、一个 InfoUnit；工具以 hypothesis_id=null 加单项 hypothesis_proposal_ids 指向新假设，已有假设则传正式 ID 和空列表。模型不能自造 ID、引用未来建议、其他运行或其他建议类型。临时调查计划不需要调用 Proposal，不写工作区。
 

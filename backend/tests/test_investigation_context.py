@@ -31,7 +31,7 @@ class TestInvestigationContext(unittest.TestCase):
         self.edit(gap={"content": "实际计租和收款如何", "hypothesis_ids": [h], "info_unit_ids": ["U036"], "status": "open"})
         self.canvas(["U029", "U036", h], ["U029"], h)
         requests = []
-        responses = [replies.present("核查损失", ["U029", "U036"], ["R010"], statement="双方陈述存在分歧，原文仍待核验。"),
+        responses = [replies.present("核查损失", ["U029", "U036"], ["R010"], [("U029", 0), ("U036", 0)], statement="双方陈述存在分歧，仍需独立核实。"),
                      replies.final("陈述存在分歧，尚不能确认实际租金损失，优先核实收款。")]
         def model(request):
             requests.append(json.loads(request.content))
@@ -58,7 +58,7 @@ class TestInvestigationContext(unittest.TestCase):
         serialized = json.dumps(initial)
         for field in ("node_positions", "viewport", "offset_x", "display_levels", "source_refs", "quote_units", "files"):
             self.assertNotIn(field, serialized)
-        self.assertEqual(response.json()["evidence_refs"], [])  # Summaries do not authorize original citations.
+        self.assertEqual(len(response.json()["evidence_refs"]), 2)  # Verified initial excerpts are directly citable.
 
     def test_large_canvas_prioritizes_selection_focus_and_goal_and_marks_omissions(self):
         self.canvas([u.id for u in self.case.info_units], ["U036"], "U029")

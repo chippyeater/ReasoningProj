@@ -25,6 +25,7 @@ MAX_PROPOSAL_CALLS = 6
 MAX_PRESENTATION_CALLS = 2
 MAX_TOTAL_CALLS = MAX_TOOL_CALLS + MAX_PROPOSAL_CALLS + MAX_PRESENTATION_CALLS
 MAX_SUMMARY_CHARACTERS = 240  # Soft target is 40–80; allow a little more for complex tasks.
+MAX_NO_PROGRESS = 3
 READ_TOOLS = {"search_info_units": tools.search_info_units, "get_relations": tools.get_relations, "get_evidence": tools.get_evidence}
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts/investigation_agent_prompt.md"
 BoundedText = Annotated[str, Field(min_length=1, max_length=600, pattern=r"\S")]
@@ -144,7 +145,9 @@ def _arguments(name: str, raw: str) -> dict:
     try:
         args = _strict_json(raw)
     except (ValueError, TypeError, RecursionError) as exc:
-        raise AppError("invalid_tool_arguments", "Tool arguments must be strict JSON") from exc
+        raise AppError("invalid_tool_arguments", "Tool arguments must be strict JSON", details={
+            "category": "json", "errors": [{"loc": [], "code": "invalid_json",
+                **{key: getattr(exc, key) for key in ("lineno", "colno", "pos") if hasattr(exc, key)}}]}) from exc
     fields = {d["function"]["name"]: (set(d["function"]["parameters"]["required"]),
               set(d["function"]["parameters"]["properties"])) for d in tool_definitions()}
     fields["search_info_units"] = ({"query"}, fields["search_info_units"][1])
@@ -155,7 +158,10 @@ def _arguments(name: str, raw: str) -> dict:
         raise AppError("unknown_tool", "Only registered investigation and pending-artifact tools are allowed")
     required, allowed = fields[name]
     if not isinstance(args, dict) or not required <= args.keys() or not args.keys() <= allowed:
-        raise AppError("invalid_tool_arguments", "Missing or unsupported tool argument fields")
+        missing = sorted(required - args.keys()) if isinstance(args, dict) else []
+        raise AppError("invalid_tool_arguments", "Missing or unsupported tool argument fields", details={
+            "category": "structure", "errors": [{"loc": [missing[0]] if missing else ["<extra>"] if isinstance(args, dict) else [],
+                "code": "missing" if missing else "invalid_arguments"}]})
     if name in {"search_info_units", "get_relations"}:
         args["limit"] = tools.DEFAULT_LIMIT if args.get("limit") is None else args["limit"]
         args.setdefault("types" if name == "search_info_units" else "relation_types", None)
@@ -201,7 +207,14 @@ def _validation_details(exc: ValidationError) -> dict:
         loc = list(error["loc"])
         if error["type"] == "extra_forbidden":
             loc[-1] = "<extra>"
-        errors.append({"loc": loc, "code": error["type"], "message": error["msg"],
+        code = error["type"]
+        if "Duplicate" in error["msg"]:
+            code = "duplicate_reference"
+            loc += [next((field for field in ("hypothesis_proposal_ids", "hypothesis_proposal_indices", "info_unit_ids", "hypothesis_ids")
+                          if field in error["msg"]), "references")]
+        if "proposals require info_unit_ids and evidence_refs" in error["msg"]:
+            code, loc = "evidence_required", [*loc, "evidence_refs"]
+        errors.append({"loc": loc, "code": code, "message": error["msg"],
                        "category": "proposal_semantics" if error["type"] == "value_error" else "structure"})
     categories = {e["category"] for e in errors}
     return {"category": next(iter(categories)) if len(categories) == 1 else "mixed", "errors": errors}
@@ -221,25 +234,28 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
     units = {unit.id: unit for unit in case.info_units}
     relations = {relation.id for relation in case.relations}
 
-    def invalid(code, category, loc, message):
+    def invalid(code, category, loc, message, detail_code=None):
         return AppError(code, message, details={"category": category, "errors": [
-            {"loc": loc, "code": code, "message": message}]})
+            {"loc": loc, "code": detail_code or code, "message": message}]})
 
-    def check(ids, available, loc):
+    def check(ids, available, loc, known=None):
         visited = set()
         for index, value in enumerate(ids):
-            if value in visited or value not in available:
+            detail = ("duplicate_reference" if value in visited else "reference_not_found" if known is not None and value not in known
+                      else "reference_not_obtained" if value not in available else None)
+            if detail:
                 raise invalid("invalid_investigation_reference", "reference", [*loc, index],
-                              "Reference is duplicate, nonexistent or was not retrieved")
+                              "Use a unique, current-case reference supplied in context or tool results", detail)
             visited.add(value)
 
-    check(result.relevant_info_unit_ids, seen["units"] & units.keys(), ["relevant_info_unit_ids"])
-    check(result.relevant_relation_ids, seen["relations"] & relations, ["relevant_relation_ids"])
+    check(result.relevant_info_unit_ids, seen["units"] & units.keys(), ["relevant_info_unit_ids"], units)
+    check(result.relevant_relation_ids, seen["relations"] & relations, ["relevant_relation_ids"], relations)
     pointers = [(ref.info_unit_id, ref.source_ref_index) for ref in result.evidence_refs]
-    check(pointers, seen["evidence"], ["evidence_refs"])
     for offset, (uid, index) in enumerate(pointers):
         if uid not in units or index >= len(units[uid].source_refs) or uid not in result.relevant_info_unit_ids:
-            raise invalid("invalid_investigation_reference", "reference", ["evidence_refs", offset], "Invalid SourceRef index or InfoUnit")
+            raise invalid("invalid_investigation_reference", "reference", ["evidence_refs", offset], "Invalid SourceRef index or InfoUnit",
+                          "reference_not_found" if uid not in units else "reference_out_of_range" if index >= len(units[uid].source_refs) else "reference_not_obtained")
+    check(pointers, seen["evidence"], ["evidence_refs"])
     if result.goal != goal:
         raise invalid("investigation_result_invalid", "result_semantics", ["goal"], "Final goal must match the requested goal")
     if result.completion_status == "unsupported" and (
@@ -274,6 +290,45 @@ def _write_audit(case_id: str, path: str, payload: dict) -> None:
         write_json(artifact_path(case_id, path), llm_client.redact(payload))
     except (OSError, AppError) as exc:
         raise AppError("investigation_audit_failed", "Cannot persist the investigation audit", 500) from exc
+
+
+def _tool_recovery(response, name):
+    """Add actionable diagnostics to this loop's existing tool error envelope."""
+    if response["status"] not in {"error", "invalid_request"}:
+        return
+    error = response["error"]
+    details = error.setdefault("validation_details", {})
+    if not details:
+        details.update(category="tool", errors=[{"loc": [], "code": error["code"]}])
+        if error["code"] == "unknown_info_unit":
+            details.update(category="reference", errors=[{"loc": ["info_unit_ids"], "code": "reference_not_found"}])
+    for item in details["errors"]:
+        loc = item.get("loc", [])
+        argument_loc = loc[2:] if loc[:1] == ["proposals"] else list(loc)
+        if argument_loc[:1] == ["relevant_info_unit_ids"]:
+            argument_loc[0] = "info_unit_ids"
+        if name == "propose_evidence_link" and argument_loc[:1] in (["info_unit_ids"], ["hypothesis_ids"]):
+            argument_loc = ["info_unit_id" if argument_loc[0] == "info_unit_ids" else "hypothesis_id"]
+        if name == "present_findings" and argument_loc[:1] in (["info_unit_ids"], ["relevant_relation_ids"], ["evidence_refs"]):
+            argument_loc = ["findings"]
+        item["argument_loc"] = argument_loc
+        if item["code"] == "reference_not_obtained" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_id"]):
+            item["code"] = "invalid_hypothesis_target"
+    codes = {item["code"] for item in details["errors"]}
+    if codes & {"invalid_hypothesis_proposal_target", "invalid_hypothesis_target"}:
+        hint = "仅使用本轮成功返回的 Hypothesis proposal_id，或上下文中的正式 Hypothesis ID；不能使用其他运行或其他建议类型。"
+    elif "duplicate_reference" in codes:
+        hint = "删除指出字段中的重复引用，保留原始有效 ID；不要原样重试。"
+    elif "reference_out_of_range" in codes or "reference_not_found" in codes:
+        hint = "使用当前案件上下文或检索结果中的有效 ID 和来源索引；不要猜测来源。"
+    elif "reference_not_obtained" in codes or "evidence_required" in codes:
+        hint = "使用 evidence_context 已提供的有效引用，或用 get_evidence 补充来源后修正参数；探索性假设/缺口可明确无直接证据并使用空列表。"
+    elif error["code"] == "duplicate_query":
+        hint = "该等价调用未执行；使用已有成功结果或调整参数。失败请求可在获取新节点/来源后修正重试。"
+    else:
+        hint = "对照工具 Schema 和错误字段修正参数；来源不可用时可换用其他材料或明确报告限制，不要反复原样重试。"
+    error["recovery_hint"] = hint
+    error["recoverable"] = True
 
 
 def _summary_context(proposals, tool_calls):
@@ -353,13 +408,15 @@ async def run_investigation(case: CaseData, goal: str,
     seen["units"].update(row["id"] for row in canvas_context.get("info_units", []) if row["id"] in {u.id for u in bound_case.info_units})
     seen["relations"].update(r.id for r in bound_case.relations
         if r.id in {row["id"] for row in canvas_context.get("relations", [])} and {r.source_id, r.target_id} <= seen["units"])
-    fingerprints, call_ids = set(), set()
+    fingerprints, call_ids = {}, set()
     proposals, findings, questions, limitations = [], [], [], []
     completion = "evidence_insufficient"
     attempts = executed = 0
     used = {"read": 0, "proposal": 0, "presentation": 0}
     limits = {"read": MAX_TOOL_CALLS, "proposal": MAX_PROPOSAL_CALLS, "presentation": MAX_PRESENTATION_CALLS}
     stop_reason = None
+    no_progress = 0
+    delivered = reviewed_completion = recovery_pending = False
 
     def bucket(name):
         return "read" if name in READ_TOOLS else "proposal" if name in actions.PROPOSAL_TOOLS else "presentation" if name == "present_findings" else None
@@ -419,6 +476,22 @@ async def run_investigation(case: CaseData, goal: str,
             call_audit.update(raw_response=reply.response, message=reply.message)
             calls = reply.message.get("tool_calls")
             if not calls:
+                needs_sources = bool(seen["evidence"]) and (not delivered or bool(findings) and not any(f["evidence_refs"] for f in findings))
+                can_continue = choice != "none" and attempts < MAX_TOTAL_CALLS
+                if can_continue and not reviewed_completion and (needs_sources or recovery_pending):
+                    reviewed_completion = True
+                    call_audit["completion_check"] = {"missing_source_delivery": needs_sources, "recoverable_tool_error": recovery_pending}
+                    with trace.observation("Investigation Agent · completion check", as_type="guardrail", input=call_audit["completion_check"]) as checkpoint:
+                        checkpoint.update(output={"continue_investigation": True, "remaining_tool_attempts": MAX_TOTAL_CALLS - attempts})
+                    messages.append(deepcopy(reply.message))
+                    messages.append({"role": "system", "content":
+                        "完成检查（本轮最多一次）：尚有可恢复错误或来源成果未交付。根据工具错误位置和 recovery_hint 修正参数、补充读取或调整方案；不要因一次拒绝直接放弃目标。"
+                        "基于材料的事实结论请用 present_findings 提交已提供的 InfoUnit/来源引用，不能只有自然语言答案。"
+                        "无法形成可靠结论时，可提交空 findings、具体 open_questions 和 evidence_insufficient；不要编造发现或提案。若已无可行调查途径，明确说明限制后结束。"})
+                    continue
+                if needs_sources:
+                    raise AppError("investigation_delivery_incomplete", "本轮尚未提交可追溯的调查发现或明确说明证据不足，请调整问题后重试。",
+                        details={"category": "delivery", "errors": [{"loc": ["findings"], "code": "missing_source_delivery"}]})
                 with trace.observation("Investigation Agent · validate summary", as_type="guardrail", input=reply.content) as validation:
                     text = _validate_summary(reply.content, proposals)
                     output = snapshot(text, "completed")
@@ -458,14 +531,14 @@ async def run_investigation(case: CaseData, goal: str,
                 except AppError as exc:
                     fingerprint = name + ":invalid:" + raw
                     response = tools._failure(exc)
+                    response["error"]["validation_details"] = exc.details
                 else:
                     response = None
-                if fingerprint in fingerprints:
-                    stop_reason = "duplicate_query"
-                    limitations.append("等价重复调用已被阻止，请调整问题后继续调查。")
+                knowledge = (frozenset(seen["units"]), frozenset(seen["relations"]), frozenset(seen["evidence"]))
+                prior = fingerprints.get(fingerprint)
+                if prior and (prior["successful"] or prior["knowledge"] == knowledge):
                     response = tools._failure(AppError("duplicate_query", "Equivalent call was already attempted"))
                 else:
-                    fingerprints.add(fingerprint)
                     if response is None:
                         tool_audit["executed"] = True
                         executed += 1
@@ -484,6 +557,7 @@ async def run_investigation(case: CaseData, goal: str,
                                 result = actions.present_findings(bound_case, seen, work_context, goal, proposals, findings, questions, **args)
                                 findings = [f.model_dump(mode="json") for f in result.findings]
                                 questions, completion = result.open_questions, result.completion_status
+                                delivered = True
                                 response = {"status": "ok", "findings": findings, "evidence_refs": result.model_dump(mode="json")["evidence_refs"]}
                         except (AppError, ValidationError) as exc:
                             details = exc.details if isinstance(exc, AppError) else _validation_details(exc)
@@ -492,6 +566,18 @@ async def run_investigation(case: CaseData, goal: str,
                         except Exception as exc:
                             tool_audit.update(exception_type=type(exc).__name__, error_code=getattr(exc, "code", "investigation_tool_failed"))
                             response = tools._failure(AppError("investigation_tool_failed", "Tool failed; no artifact was accepted"), status="error")
+                    fingerprints[fingerprint] = {"successful": response["status"] not in {"invalid_request", "error"}, "knowledge": knowledge}
+                _tool_recovery(response, name)
+                failed = response["status"] in {"invalid_request", "error"}
+                if failed:
+                    recovery_pending = True
+                elif name not in READ_TOOLS:
+                    # A successful read alone does not resolve a rejected artifact.
+                    recovery_pending = False
+                no_progress = no_progress + 1 if failed else 0
+                if no_progress >= MAX_NO_PROGRESS:
+                    stop_reason = "no_progress_limit"
+                    limitations.append("连续请求未取得有效进展，本轮已停止；可调整调查问题后继续。")
                 if response["status"] in {"truncated", "invalid_request", "error"}:
                     limitations.append(f"{name} 返回 {response['status']}，部分信息或建议尚未核查完成。")
                 if name == "get_relations" and any(row["relation"]["evidence_ids_truncated"] for row in response["items"]):
@@ -512,7 +598,7 @@ async def run_investigation(case: CaseData, goal: str,
         error = trace.error_payload(exc)
         # A failed summary cannot invalidate successfully checked tools or adopt them.
         recoverable = isinstance(exc, llm_client.LLMFailure) or isinstance(exc, AppError) and exc.code in {
-            "investigation_summary_invalid", "investigation_protocol_invalid"}
+            "investigation_summary_invalid", "investigation_protocol_invalid", "investigation_delivery_incomplete"}
         partial = recoverable and bool(proposals or findings)
         audit.update(status="partial" if partial else "failed", stop_reason=stop_reason or "error", error=error)
         if isinstance(exc, llm_client.LLMFailure):

@@ -100,7 +100,7 @@ class TestInvestigationAgent(unittest.TestCase):
         self.assertEqual([c["name"] for c in self.audits()[0]["tool_calls"]], ["search_info_units", "search_info_units"])
 
     def test_initial_context_is_bounded_and_full_registry_has_no_case_selector(self):
-        _, calls = self.run_script("查看材料", [final("请进一步明确需要核查的问题。")], selected=["U029"])
+        _, calls = self.run_script("查看材料", [present("查看材料", questions=["请明确需要核查的问题。"]), final("请进一步明确需要核查的问题。")], selected=["U029"])
         context = json.loads(calls[0]["messages"][1]["content"])
         self.assertEqual(sum(context["info_unit_type_counts"].values()), 17)
         self.assertEqual([row["id"] for row in context["selected_info_units"]], ["U029"])
@@ -118,17 +118,18 @@ class TestInvestigationAgent(unittest.TestCase):
             model.assert_not_called()
 
     def test_truncated_results_cannot_claim_completion(self):
+        matched_id = tools.search_info_units(self.case, query="押金", limit=1)["items"][0]["id"]
         result, _ = self.run_script("检索", [tool("search_info_units", {"query": "押金", "limit": 1}),
-            present("检索", ["U008"], status="completed"), final("仍有材料尚未核查。")])
+            present("检索", [matched_id], status="completed"), final("仍有材料尚未核查。")])
         self.assertEqual(result["completion_status"], "evidence_insufficient")
         self.assertIn("truncated", " ".join(result["limitations"]))
 
-    def test_tool_error_repeat_stops_without_retry(self):
+    def test_tool_error_duplicate_is_blocked_but_can_finish_after_one_review(self):
         with patch.object(tools, "get_evidence", side_effect=OSError("cache unavailable")) as read:
             result, _ = self.run_script("核对错误", [tool("get_evidence", {"info_unit_ids": ["U029"]}),
-                tool("get_evidence", {"info_unit_ids": ["U029"]}, "again"), final("原文暂时无法读取。")])
+                tool("get_evidence", {"info_unit_ids": ["U029"]}, "again"), final("原文暂时无法读取。"), final("原文暂时无法读取，暂不能判断。")])
         self.assertEqual(read.call_count, 1)
-        self.assertEqual(result["stop_reason"], "duplicate_query")
+        self.assertEqual(result["stop_reason"], "model_finished")
         self.assertEqual(self.audits()[0]["tool_calls"][0]["exception_type"], "OSError")
 
     def test_bad_arguments_can_be_corrected_and_unknown_tools_never_dispatch(self):
@@ -142,7 +143,7 @@ class TestInvestigationAgent(unittest.TestCase):
         self.assertEqual(audit["tool_calls"][1]["result"]["error"]["code"], "invalid_tool_arguments")
 
     def test_read_budget_keeps_presentation_available(self):
-        reads = [tool("get_evidence", {"info_unit_ids": [f"foreign-{i}"]}, str(i)) for i in range(8)]
+        reads = [tool("search_info_units", {"query": f"未记录的材料{i}"}, str(i)) for i in range(8)]
         result, calls = self.run_script("预算", [*reads, present("预算", status="budget_exhausted"), final("材料未取得，无法判断。")])
         self.assertEqual(result["tool_budget_used"], {"read": 8, "proposal": 0, "presentation": 1})
         self.assertEqual(result["completion_status"], "budget_exhausted")
@@ -150,7 +151,7 @@ class TestInvestigationAgent(unittest.TestCase):
         self.assertIn("present_findings", [d["function"]["name"] for d in calls[8]["definitions"]])
 
     def test_invalid_findings_are_tool_errors_not_silently_published(self):
-        result, _ = self.run_script("无效引用", [present("无效引用", ["U010"], refs=[("U010", 0)]), final("没有取得可核对的来源。")])
+        result, _ = self.run_script("无效引用", [present("无效引用", ["U010"], refs=[("U010", 0)]), final("没有取得可核对的来源。"), final("没有取得可核对的来源，暂不能判断。")])
         self.assertEqual(result["findings"], [])
         self.assertEqual(self.audits()[0]["tool_calls"][0]["result"]["error"]["code"], "invalid_investigation_reference")
 
@@ -158,7 +159,7 @@ class TestInvestigationAgent(unittest.TestCase):
         case = self.case.model_copy(deep=True)
         next(r for r in case.relations if r.id == "R010").evidence_unit_ids.append("U010")
         result, _ = self.run_script("引用", [tool("get_relations", {"info_unit_ids": ["U029"], "relation_types": ["contradict"]}),
-            present("引用", ["U010"], ["R010"]), final("尚未读取该关系依据。")], case=case)
+            present("引用", ["U010"], ["R010"]), final("尚未读取该关系依据。"), final("尚未读取该依据，暂不能判断。")], case=case)
         self.assertEqual(result["findings"], [])
 
     def test_tool_injection_stays_data_and_original_cache_is_never_written(self):
@@ -177,7 +178,7 @@ class TestInvestigationAgent(unittest.TestCase):
 
     def test_malformed_artifact_input_is_explicit_and_no_partial_artifact_is_saved(self):
         result, _ = self.run_script("坏参数", [tool("present_findings", {
-            "findings": [7], "open_questions": [], "completion_status": "completed"}), final("没有提交有效发现。")])
+            "findings": [7], "open_questions": [], "completion_status": "completed"}), final("没有提交有效发现。"), final("没有有效发现，仍需核查。")])
         rejected = self.audits()[0]["tool_calls"][0]["result"]
         self.assertEqual(rejected["status"], "invalid_request")
         self.assertEqual(rejected["error"]["validation_details"]["category"], "structure")
@@ -186,7 +187,7 @@ class TestInvestigationAgent(unittest.TestCase):
     def test_model_cannot_supply_kind_ids_or_indices_to_proposal_tools(self):
         invalid = {"content": "推断", "rationale": "待核实", "info_unit_ids": ["U029"],
                    "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}], "proposal_id": "proposal-" + "a"*32}
-        result, _ = self.run_script("参数权限", [tool("propose_hypothesis", invalid), final("该建议未提交。")])
+        result, _ = self.run_script("参数权限", [tool("propose_hypothesis", invalid), final("该建议未提交。"), final("未形成有效建议，仍需调查。")])
         self.assertEqual(result["proposals"], [])
         self.assertEqual(self.audits()[0]["tool_calls"][0]["result"]["error"]["code"], "invalid_tool_arguments")
 
@@ -212,8 +213,8 @@ class TestInvestigationAgent(unittest.TestCase):
     def test_duplicate_relation_queries_normalize_order(self):
         result, _ = self.run_script("重复", [
             tool("get_relations", {"info_unit_ids": ["U029", "U036"], "relation_types": ["about", "contradict"]}),
-            tool("get_relations", {"info_unit_ids": ["U036", "U029"], "relation_types": ["contradict", "about"]}, "same"), final("未重复查询。")])
-        self.assertEqual(result["stop_reason"], "duplicate_query")
+            tool("get_relations", {"info_unit_ids": ["U036", "U029"], "relation_types": ["contradict", "about"]}, "same"), final("未重复查询。"), final("已有关系摘要，原文仍待核实。")])
+        self.assertEqual(result["stop_reason"], "model_finished")
         self.assertEqual(result["tool_call_count"], 1)
 
     def test_audits_and_privacy_traces_record_tools_and_prose_separately(self):
@@ -282,7 +283,8 @@ class TestInvestigationAgent(unittest.TestCase):
 
     def test_duplicate_call_ids_and_tools_after_stop_fail_explicitly(self):
         for script in ([tool("get_evidence", {"info_unit_ids": ["U029"]}), tool("search_info_units", {"query": "押金"})],
-                       [tool("get_evidence", {"info_unit_ids": ["U029"]}), tool("get_evidence", {"info_unit_ids": ["U029"]}, "dup"),
+                       [tool("get_evidence", {"info_unit_ids": ["U029"]}),
+                        *[tool("get_evidence", {"info_unit_ids": ["U029"]}, f"dup-{i}") for i in range(3)],
                         tool("search_info_units", {"query": "押金"}, "forbidden")]):
             with self.subTest(script=len(script)), self.assertRaises(AppError) as caught:
                 self.run_script("停止", script)
