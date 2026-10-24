@@ -20,7 +20,22 @@ from . import remote
 REPO = ROOT.parents[1]
 
 
-def run_metadata(model):
+def selected_task_ids(task_id=None):
+    ids = [item["task_id"] for item in load_definition()["items"]]
+    if task_id is not None and task_id not in ids:
+        raise ValueError(f"Unknown task: {task_id}")
+    return [task_id] if task_id is not None else ids
+
+
+def select_dataset_items(dataset, task_id=None):
+    ids = selected_task_ids(task_id)
+    dataset.items = [item for item in dataset.items if item.input["task_id"] in ids]
+    if [item.input["task_id"] for item in dataset.items] != ids:
+        raise ValueError("Selected Dataset items differ from the requested tasks")
+    return dataset
+
+
+def run_metadata(model, task_id=None):
     prompt = load_prompt(agent.PROMPT_PATH, "investigation_agent")
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, check=True).stdout.strip()
     dirty = bool(subprocess.run(["git", "status", "--porcelain=v1"], cwd=REPO, capture_output=True, text=True, check=True).stdout)
@@ -31,6 +46,8 @@ def run_metadata(model):
             "initial_state_sha256": digest(load_definition()["initial_state"]),
             "tool_contract_sha256": digest(agent.tool_definitions()), "langfuse_sdk_version": version("langfuse"),
             "max_model_calls_per_item": agent.MAX_MODEL_CALLS, "max_model_calls_three_items": 3 * agent.MAX_MODEL_CALLS,
+            "selected_task_ids": selected_task_ids(task_id),
+            "max_model_calls_this_run": len(selected_task_ids(task_id)) * agent.MAX_MODEL_CALLS,
             "max_concurrency": 1}
 
 
@@ -98,7 +115,7 @@ def _mock_reply(config, messages, definitions, schema=None, **kwargs):
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "completion_tokens_details": {"reasoning_tokens": 0}}})
 
 
-def dry_run():
+def dry_run(*, task_id=None):
     """Real SDK v5 experiment + real Agent; memory-only spans and denied network."""
     import httpx
     from unittest.mock import patch, AsyncMock
@@ -128,6 +145,7 @@ def dry_run():
         created_at=stamp, updated_at=stamp), items=[DatasetItem(**i, status="ACTIVE", dataset_id="dry-dataset",
         dataset_name=definition["name"], created_at=stamp, updated_at=stamp, media_references=[]) for i in dataset_items()],
         langfuse_client=client, version=stamp)
+    select_dataset_items(dataset, task_id)
     config = llm_client.LLMConfig("openai", "https://offline.invalid/v1", "offline-mock", "unused", max_completion_tokens=20000)
     settings = observability.ObservabilitySettings(True, True, "offline", "unused", "https://offline.invalid", "evaluation-dry-run")
     backend = SimpleNamespace(client=client, propagate_attributes=propagate_attributes)
@@ -139,12 +157,13 @@ def dry_run():
             stack.enter_context(patch.object(llm_client, "call_tools", new=AsyncMock(side_effect=_mock_reply)))
             stack.enter_context(patch.object(llm_client, "_post_completion", new=AsyncMock(side_effect=AssertionError("Paid transport forbidden in dry-run"))))
             result = dataset.run_experiment(name="offline-protocol-check", task=make_task(client, offline=True),
-                evaluators=[evaluator], max_concurrency=1, metadata=run_metadata(config.model))
+                evaluators=[evaluator], max_concurrency=1, metadata=run_metadata(config.model, task_id))
             client.flush()
         spans = exporter.get_finished_spans()
         summaries = [{"trace_id": format(s.context.trace_id, "032x"), "name": s.name,
                       "parent_span_id": format(s.parent.span_id, "016x") if s.parent else None} for s in spans]
-        if len(result.item_results) != 3 or any(not r.evaluations or not r.output["metrics"]["runtime_finish_validated"] for r in result.item_results):
+        if [r.output["task_id"] for r in result.item_results] != selected_task_ids(task_id) or any(
+                not r.evaluations or not r.output["metrics"]["runtime_finish_validated"] for r in result.item_results):
             raise ValueError("Offline native experiment or Agent protocol check failed")
         for item in result.item_results:
             own = [s for s in summaries if s["trace_id"] == item.trace_id]
@@ -156,13 +175,13 @@ def dry_run():
         return {"mode": "dry-run", "remote_synchronized": False, "paid_model_calls": 0, "sdk_mock_http_calls": len(calls),
                 "items": [{"task_id": r.output["task_id"], "metrics": r.output["metrics"], "initial_case_data_sha256": r.output["initial_case_data_sha256"]} for r in result.item_results],
                 "span_count": len(spans), "trace_ids": [r.trace_id for r in result.item_results], "semantic_quality_scored": False,
-                "maximum_live_model_calls": 3 * agent.MAX_MODEL_CALLS}
+                "maximum_live_model_calls": len(selected_task_ids(task_id)) * agent.MAX_MODEL_CALLS}
     finally:
         client.shutdown()
         http.close()
 
 
-def live(*, allow_paid=False):
+def live(*, allow_paid=False, task_id=None):
     if not allow_paid:
         raise ValueError("live requires --allow-paid-models; no model was called")
     settings = observability.load_settings()
@@ -172,25 +191,34 @@ def live(*, allow_paid=False):
     if backend is None:
         raise ValueError("Langfuse backend unavailable; no model was called")
     client, config = backend.client, llm_client.load_config()
-    metadata = run_metadata(config.model)
+    metadata = run_metadata(config.model, task_id)
     if metadata["worktree_dirty"]:
         raise ValueError("Live evaluation requires a clean committed checkout")
     remote.project_id(client)
     since = datetime.now(timezone.utc)
     dataset = remote.validate_remote_dataset(client.get_dataset(load_definition()["name"], version=since))
+    select_dataset_items(dataset, task_id)
     metadata.update(dataset_id=dataset.id, dataset_server_version=since.isoformat(),
                     max_completion_tokens=config.max_completion_tokens)
     output_dir = ROOT / "results" / "investigation" / uuid4().hex
+    output_dir.mkdir(parents=True, exist_ok=False)
     result = dataset.run_experiment(name=f"case-a-{metadata['code_git_commit'][:8]}-{metadata['prompt_version']}",
         run_name=f"case-a-{metadata['code_git_commit'][:8]}-{uuid4().hex}", metadata=metadata,
         task=make_task(client, allow_paid=True, artifact_dir=output_dir), evaluators=[evaluator], max_concurrency=1)
-    if len(result.item_results) != 3:
-        raise ValueError(f"Native SDK did not retain all three results; inspect Langfuse and {output_dir}")
+    execution = {"mode": "live", "experiment_id": result.experiment_id, "experiment_url": result.experiment_url,
+        "remote_verified": False, "audit_directory": str(output_dir), "metadata": metadata,
+        "since": since.isoformat(),
+        "items": [{"task_id": r.item.input["task_id"], "dataset_item_id": r.item.id, "trace_id": r.trace_id,
+                   "metrics": r.output["metrics"] if isinstance(r.output, dict) else None} for r in result.item_results]}
+    manifest = output_dir / "execution.json"
+    manifest.write_text(json.dumps(execution, ensure_ascii=False, indent=2), encoding="utf-8")
+    if [item["task_id"] for item in execution["items"]] != selected_task_ids(task_id):
+        raise ValueError(f"Native SDK did not retain exactly the requested tasks; inspect Langfuse and {output_dir}")
     client.flush()
     remote.verify_with_bounded_wait(lambda: remote.verify_experiment(client, result, since))
-    return {"mode": "live", "experiment_id": result.experiment_id, "experiment_url": result.experiment_url,
-            "remote_verified": True, "audit_directory": str(output_dir), "metadata": metadata,
-            "items": [{"task_id": r.output["task_id"], "trace_id": r.trace_id, "metrics": r.output["metrics"]} for r in result.item_results]}
+    execution["remote_verified"] = True
+    manifest.write_text(json.dumps(execution, ensure_ascii=False, indent=2), encoding="utf-8")
+    return execution
 
 
 def score_history(client):
@@ -207,14 +235,17 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", nargs="?", default="dry-run", choices=["dry-run", "init", "live", "score-history"])
     parser.add_argument("--allow-paid-models", action="store_true", help="Explicit paid-model authorization, only for live")
+    parser.add_argument("--task", choices=["A1", "A2", "A3"], help="Run only this item; default: all three tasks")
     args = parser.parse_args(argv)
+    if args.task and args.operation not in {"dry-run", "live"}:
+        parser.error("--task applies only to dry-run and live")
     if not version("langfuse").startswith("5."):
         parser.error("This integration requires the reviewed Langfuse Python SDK v5")
     try:
         if args.operation == "dry-run":
-            result = dry_run()
+            result = dry_run(task_id=args.task)
         elif args.operation == "live":
-            result = live(allow_paid=args.allow_paid_models)
+            result = live(allow_paid=args.allow_paid_models, task_id=args.task)
         elif args.operation == "init":
             result = remote.initialize(remote.remote_client())
         else:

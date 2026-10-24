@@ -226,6 +226,62 @@ class TestInvestigationEval(unittest.TestCase):
         self.assertEqual(report["maximum_live_model_calls"], 84)
         self.assertTrue(all(i["metrics"]["model_call_count"] == 2 for i in report["items"]))
 
+    def test_single_task_dry_run_invokes_full_agent_exactly_once(self):
+        with patch.object(runner.agent, "run_investigation", wraps=runner.agent.run_investigation) as run:
+            report = runner.dry_run(task_id="A1")
+        self.assertEqual([item["task_id"] for item in report["items"]], ["A1"])
+        self.assertEqual(len(report["trace_ids"]), 1)
+        self.assertEqual(report["maximum_live_model_calls"], 28)
+        self.assertEqual(report["paid_model_calls"], 0)
+        self.assertEqual(run.await_count, 1)
+
+    def test_selector_and_cli_reject_unknown_tasks_and_non_run_operations(self):
+        dataset = NS(items=[NS(input=row["input"]) for row in data.dataset_items()])
+        runner.select_dataset_items(dataset, "A2")
+        self.assertEqual([item.input["task_id"] for item in dataset.items], ["A2"])
+        with self.assertRaises(ValueError):
+            runner.select_dataset_items(dataset, "A1")
+        with self.assertRaises(ValueError):
+            runner.selected_task_ids("A4")
+        for args in (["dry-run", "--task", "A4"], ["init", "--task", "A1"]):
+            with patch("sys.stderr"), self.assertRaises(SystemExit) as exc:
+                runner.main(args)
+            self.assertEqual(exc.exception.code, 2)
+        with patch.object(runner, "live", return_value={}) as live, patch("builtins.print"):
+            runner.main(["live", "--task", "A1", "--allow-paid-models"])
+        live.assert_called_once_with(allow_paid=True, task_id="A1")
+
+    def test_live_selection_is_one_native_execution_and_saves_manifest_before_remote_check(self):
+        client = FakeRemote()
+        remote.initialize(client)
+        item = client.dataset.items[0]
+        item.dataset_id = client.dataset.id
+        result = NS(experiment_id="one-run", experiment_url="https://example.test/one-run",
+            item_results=[NS(item=item, trace_id="f" * 32, output={"metrics": {"model_call_count": 1}})])
+        client.dataset.run_experiment = Mock(return_value=result)
+        client.flush = Mock()
+        for verification_failure in (False, True):
+            with self.subTest(verification_failure=verification_failure), TemporaryDirectory() as directory:
+                client.dataset.items = [NS(status="ACTIVE", **row) for row in data.dataset_items()]
+                with patch.object(runner, "ROOT", Path(directory)), patch.object(runner, "run_metadata", return_value={
+                    "worktree_dirty": False, "code_git_commit": "a" * 40, "prompt_version": "v5"}), patch.object(
+                    runner.observability, "load_settings", return_value=NS(enabled=True, capture_content=True)), patch.object(
+                    runner.observability, "_get_backend", return_value=NS(client=client)), patch.object(llm_client, "load_config", return_value=NS(
+                    model="mock", max_completion_tokens=20000)), patch.object(remote, "verify_experiment", side_effect=(
+                    ValueError("not indexed") if verification_failure else None)), patch.object(remote.time, "sleep"):
+                    if verification_failure:
+                        with self.assertRaisesRegex(ValueError, "not indexed"):
+                            runner.live(allow_paid=True, task_id="A1")
+                    else:
+                        self.assertTrue(runner.live(allow_paid=True, task_id="A1")["remote_verified"])
+                saved = json.loads(next(Path(directory).glob("results/investigation/*/execution.json")).read_text(encoding="utf-8"))
+                self.assertEqual(saved["remote_verified"], not verification_failure)
+                self.assertEqual(saved["items"][0]["trace_id"], "f" * 32)
+                self.assertEqual([row.input["task_id"] for row in client.dataset.items], ["A1"])
+                client.dataset.run_experiment.assert_called_once()
+                self.assertEqual(client.dataset.run_experiment.call_args.kwargs["max_concurrency"], 1)
+                client.dataset.run_experiment.reset_mock()
+
     def test_agent_failure_is_retained_as_item_output_and_local_audit(self):
         import asyncio
         client = Mock()

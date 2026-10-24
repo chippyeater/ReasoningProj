@@ -42,6 +42,7 @@
 # 默认操作，无远端写入、无真实模型调用
 backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py
 backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py dry-run
+backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py dry-run --task A1
 
 # 显式初始化 Dataset / 3 个 Item / 4 个 Score Config，不运行模型或 Experiment
 backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py init
@@ -49,9 +50,14 @@ backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py init
 # 为历史 A1 附加确定性执行指标，不运行模型、不创建新 Experiment
 backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py score-history
 
-# 仅在明确接受付费执行后使用；本次交付未执行此命令
+# 仅在明确接受付费执行后使用
 backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py live --allow-paid-models
+
+# 仅执行 A1 一次，不运行 A2/A3
+backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py live --task A1 --allow-paid-models
 ```
+
+`--task A1|A2|A3` 仅用于 dry-run/live。省略时仍运行三个任务；指定时先核对完整远端 Dataset，再仅在本地筛选原生 Item，不修改 Dataset。运行元数据记录选择范围及本次调用上界，单任务最多 28 次模型调用。Runner 不自动重跑任务；远端核验失败时，可从审计目录的 `execution.json` 找到本次 Experiment/Trace ID，继续只读核查，避免为同步问题重新调用模型。
 
 `init` 使用确定性 Dataset Item ID；已存在且一致的对象不重建。定义、快照、配置或远端 Item 漂移时明确失败，不静默覆盖。远端 unavailable、权限不足、写入拒绝或读回核验失败均返回非零退出码，不冒充同步成功。`live` 缺少授权标志会在加载模型或执行调查前失败；还要求干净且已提交的工作区和开启 Langfuse 内容记录。
 
@@ -79,7 +85,7 @@ live 的审计保存在被 Git 忽略的 `evals/case_a/results/investigation/<ru
 backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -p 'test_investigation_eval.py' -v
 ```
 
-本次验证：新增集成测试 21 项、后端全量 308 项、Case A 原有回归 21 项均通过；独立 dry-run 完成三项协议检查（30 个内存观察节点、0 次真实模型调用）。Dataset 重复初始化返回一致对象；历史 19 个自动 Scores 已从远端读回。Prompt 版本同步检查通过。
+初始集成验证：集成测试 21 项、后端全量 308 项、Case A 原有回归 21 项均通过；独立 dry-run 完成三项协议检查（30 个内存观察节点、0 次真实模型调用）。Dataset 重复初始化返回一致对象；历史 19 个自动 Scores 已从远端读回。单任务参数新增后，集成回归 24 项通过，A1 dry-run 仅运行一个任务（10 个内存观察节点、0 次真实模型调用）。Prompt 版本同步检查通过。
 
 - [SDK v5 原生 Experiment Runner](https://langfuse.com/docs/evaluation/experiments/experiments-via-sdk)
 - [Dataset 与 source_trace_id](https://langfuse.com/docs/evaluation/experiments/data-model)
@@ -87,4 +93,4 @@ backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -p 'test_
 - [UI 人工评分与评论](https://langfuse.com/docs/evaluation/evaluation-methods/scores-via-ui)
 - [v2 读取与原生 Experiment 查询](https://langfuse.com/docs/api-and-data-platform/features/public-api)
 
-尚需后续明确授权的 live 三任务运行验证真实模型质量和真实 Experiment 摄取。Mock 不作为质量验收结论；本轮仅实际初始化 Dataset/配置及历史执行 Scores，未执行 live。
+Mock 不作为质量验收结论。真实模型质量和远端 Experiment 摄取须通过明确授权的 live 运行逐次验证，具体结果保留在被忽略的运行审计与 Langfuse 中。
