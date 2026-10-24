@@ -74,8 +74,8 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
 
 
 def finish_investigation(case, seen, context, goal, proposals, questions, *, answer, findings,
-                         question_updates, completion_status, budget_exhausted=False):
-    """Finish and publish cited findings plus concise answer, without another model call. Batch final Question updates here or use update_questions earlier. All Questions must be answered with obtained basis or specifically blocked. Resolve registered planned actions by actual Proposal ID or omission_reason. open_questions and pending Proposals are derived by Runtime. Source location does not establish truth."""
+                         question_updates, completion_status, knowledge, budget_exhausted=False, read_budget_exhausted=False):
+    """Finish with answer, cited findings and final Question updates; no extra summary call. Q1 retains the full goal; track independent requested aspects as Questions. Unanswered aspects must be specifically blocked, never answered merely because evidence conflicts. Before claiming insufficiency inspect useful investigation_opportunities or record each skipped_leads {lead_id, reason} explaining why it cannot resolve the missing condition. This is a model relevance judgment, not proof. Resolve planned actions; Runtime derives open_questions/Proposals. No read quota or required Proposal count."""
     from copy import deepcopy
     from app.investigation_agent import _validate_summary
     if not isinstance(question_updates, list) or len(question_updates) > 20:
@@ -95,6 +95,12 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
         raise AppError("investigation_incomplete", "Resolve the listed Questions/planned actions before finishing",
                        details={"category": "completion", "errors": pending})
     blocked = [q for q in draft.items.values() if q.status == "blocked"]
+    if draft.items["Q1"].status == "answered" and blocked:
+        raise AppError("investigation_incomplete", "Q1 covers the whole goal and cannot be answered while a requested aspect remains blocked",
+            details={"category": "completion", "errors": [{"loc": ["questions", "Q1", "status"], "code": "goal_scope_incomplete"}]})
+    if completion_status == "evidence_insufficient" and not blocked:
+        raise AppError("investigation_incomplete", "Evidence insufficiency requires an explicitly unresolved Question and missing condition; all-answered is inconsistent",
+            details={"category": "completion", "errors": [{"loc": ["completion_status"], "code": "insufficiency_without_unresolved_question"}]})
     if completion_status == "completed" and blocked:
         raise AppError("investigation_incomplete", "Blocked Questions require an incomplete completion_status")
     if completion_status == "budget_exhausted" and not budget_exhausted:
@@ -105,6 +111,27 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
         raise AppError("investigation_incomplete", "Unsupported completion requires unsupported Questions")
     if completion_status == "completed" and not findings:
         raise AppError("invalid_findings", "Completed investigation requires a grounded finding")
+    opportunities = knowledge.available_work(case, draft)
+    known_leads = {prefix + u.id for u in case.info_units for prefix in ("unit:", "source:")}
+    known_leads.update(f"query:{i}" for i, a in enumerate(knowledge.activities) if a["has_more"])
+    review_errors = []
+    for q in draft.items.values():
+        assessed = {assessment.lead_id for assessment in q.skipped_leads}
+        if not assessed <= known_leads:
+            raise AppError("invalid_investigation_reference", "Skipped leads must reference current-case material or actual truncated queries")
+        if q.status != "blocked" or q.block_kind == "unsupported":
+            continue
+        for lead in opportunities[q.id]["items"]:
+            if lead["lead_id"] in assessed:
+                continue
+            if read_budget_exhausted and q.block_kind == "budget_exhausted":
+                continue
+            review_errors.append({"loc": ["questions", q.id, "skipped_leads"],
+                "code": "uninvestigated_lead", "opportunity": lead,
+                "message": "Investigate this lead or explain why it cannot resolve the missing condition; if reads are exhausted report budget blocking, not missing evidence"})
+    if review_errors:
+        raise AppError("investigation_incomplete", "Relevant material may still be available; inspect or explicitly assess remaining work",
+                       details={"category": "completion", "errors": review_errors})
     result = artifacts(case, seen, context, goal, proposals, findings, draft.open_questions(), completion_status)
     delivered_refs = {(r.info_unit_id, r.source_ref_index) for r in result.evidence_refs}
     for q in draft.items.values():

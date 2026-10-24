@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import re
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
@@ -38,6 +39,11 @@ class PlannedAction(StateModel):
         return self
 
 
+class LeadAssessment(StateModel):
+    lead_id: Annotated[str, Field(min_length=1, max_length=700, pattern=r"\S")]
+    reason: Text
+
+
 class Question(StateModel):
     id: Identifier
     question: Annotated[str, Field(min_length=1, max_length=2000, pattern=r"\S")]
@@ -48,6 +54,7 @@ class Question(StateModel):
     block_reason: Text | None
     block_kind: Literal["evidence_missing", "tool_failure", "unsupported", "budget_exhausted"] | None
     planned_actions: Annotated[list[PlannedAction], Field(max_length=6)]
+    skipped_leads: Annotated[list[LeadAssessment], Field(max_length=80)]
 
     @model_validator(mode="after")
     def consistent_status(self):
@@ -60,13 +67,15 @@ class Question(StateModel):
             raise ValueError("Answered questions require a finding and obtained materials")
         if len({p.id for p in self.planned_actions}) != len(self.planned_actions):
             raise ValueError("Duplicate planned action IDs")
+        if len({p.lead_id for p in self.skipped_leads}) != len(self.skipped_leads):
+            raise ValueError("Duplicate skipped lead IDs")
         return self
 
 
 class QuestionState:
     def __init__(self, goal):
         self.items = {"Q1": Question(id="Q1", question=goal, status="pending", related_info_unit_ids=[],
-            evidence_refs=[], finding=None, block_reason=None, block_kind=None, planned_actions=[])}
+            evidence_refs=[], finding=None, block_reason=None, block_kind=None, planned_actions=[], skipped_leads=[])}
         self.activities = {"Q1": []}
 
     def dump(self):
@@ -93,6 +102,8 @@ class QuestionState:
         for q in parsed:
             # Preserve registered commitments when adjusting/splitting a task.
             previous = draft.get(q.id)
+            if q.id == "Q1" and q.question != self.items["Q1"].question:
+                raise AppError("goal_scope_changed", "Q1 must retain the complete original goal; add Questions to track its aspects")
             if previous and not {p.id for p in previous.planned_actions} <= {p.id for p in q.planned_actions}:
                 raise AppError("unresolved_plan", "Do not delete planned actions; submit them or record omission_reason")
             for plan in q.planned_actions:
@@ -175,6 +186,71 @@ class KnowledgeState:
             "work_context": self.work_context,
             "activities": self.activities, "findings": self.findings, "proposals": self.proposals})
 
+    def available_work(self, case, questions):
+        """Discovery hints, NOT obtained evidence or a semantic relevance judgment.
+
+        Derive from current records/activity every time; no second task/lead store.
+        A short list may be investigated or explicitly declined, never exhausted
+        as a completion quota. Looking at this index grants no citation permission.
+        """
+        from app import investigation_tools as tools
+
+        units = {u.id: u for u in case.info_units}
+        result = {}
+        for q in questions.items.values():
+            anchors = set(q.related_info_unit_ids)
+            if q.id == "Q1":
+                anchors.update(self.info_units)
+                anchors.update(row["info_unit_id"] for row in self.source_refs.values())
+            else:
+                for activity in self.activities:
+                    if q.id in activity["question_ids"] and activity["status"] not in {"error", "invalid_request"}:
+                        anchors.update(uid for uid in activity["arguments"].get("info_unit_ids", []) if uid in units)
+                        anchors.update(uid for uid in activity["obtained"] if uid in units)
+            neighbors = {uid for r in case.relations if {r.source_id, r.target_id} & anchors
+                         for uid in [r.source_id, r.target_id, *r.evidence_unit_ids]} - anchors
+            # Generic language matching, not case-specific terms or a truth test.
+            text = " ".join([q.question, q.finding or "", q.block_reason or "",
+                             *(p.description for p in q.planned_actions)])
+            terms = set(re.findall(r"[^\W_]+", tools._normalized(text)))
+            for part in re.findall(r"[\u3400-\u9fff]+", text):
+                terms.update(part[i:i+2] for i in range(len(part)-1))
+            candidates = []
+            for uid, unit in units.items():
+                score, weighted = tools._keyword_score(unit, list(terms))
+                if uid in anchors:
+                    missing = [i for i in range(len(unit.source_refs)) if self.ref_key({"info_unit_id": uid, "source_ref_index": i}) not in self.source_refs]
+                    partial = any(row.get("quote_truncated") for row in self.source_refs.values() if row["info_unit_id"] == uid)
+                    if missing or partial:
+                        candidates.append((3, score, {"lead_id": "source:" + uid, "kind": "unread_source",
+                            "info_unit_id": uid, "title": unit.title[:120],
+                            "reason": "Associated material has unprovided sources or only an excerpt",
+                            "next_tool": "get_evidence", "arguments": {"info_unit_ids": [uid]}}))
+                elif uid not in self.info_units and not any(r["info_unit_id"] == uid for r in self.source_refs.values()) and (uid in neighbors or weighted >= 3):
+                    candidates.append((2 if uid in neighbors else 1, score, {
+                        "lead_id": "unit:" + uid, "kind": "unread_info_unit", "info_unit_id": uid,
+                        "title": unit.title[:120], "reason": "One-hop relation" if uid in neighbors else "Text overlap with this Question/missing condition",
+                        "next_tool": "get_evidence" if unit.source_refs else "search_info_units",
+                        "arguments": {"info_unit_ids": [uid]} if unit.source_refs else {"query": unit.title[:tools.MAX_QUERY_CHARS]}}))
+            for index, activity in enumerate(self.activities):
+                if q.id not in activity["question_ids"] or not activity["has_more"] or activity["tool"] not in {"search_info_units", "get_relations"}:
+                    continue
+                # A wider successful query supersedes a bounded earlier prefix.
+                args = activity["arguments"]
+                if any(a["tool"] == activity["tool"] and a["status"] in {"ok", "empty", "truncated"}
+                       and {k:v for k,v in a["arguments"].items() if k != "limit"} == {k:v for k,v in args.items() if k != "limit"}
+                       and a["arguments"].get("limit", tools.DEFAULT_LIMIT) > args.get("limit", tools.DEFAULT_LIMIT)
+                       for a in self.activities[index+1:]):
+                    continue
+                candidates.append((3, 0, {"lead_id": f"query:{index}", "kind": "truncated_query",
+                    "reason": "Returned prefix does not exhaust this query; widen/refine if useful",
+                    "next_tool": activity["tool"], "arguments": {**args, "limit": tools.MAX_LIMIT}}))
+            candidates.sort(key=lambda row: (-row[0], -row[1], row[2]["lead_id"]))
+            result[q.id] = {"question_id": q.id, "items": [row[2] for row in candidates[:tools.MAX_LIMIT]],
+                "has_more": len(candidates) > tools.MAX_LIMIT,
+                "scope": "Heuristic discovery index only. Inspect valuable leads, or explain specifically why they cannot improve this Question. Not proof of missing evidence."}
+        return result
+
 
 def _preview(value, text_limit=500):
     if isinstance(value, str) and len(value) > text_limit:
@@ -187,7 +263,7 @@ def _preview(value, text_limit=500):
     return value
 
 
-def model_context(initial, knowledge, questions, budget, recovery):
+def model_context(initial, knowledge, questions, budget, recovery, opportunities=None):
     """Bound each section and disclose omitted records; no summarization model."""
     # Work context is already bounded by the Issue service, retained as user data.
     result = {**deepcopy(initial), "question_state": {}, "knowledge_state": {},
@@ -231,8 +307,9 @@ def model_context(initial, knowledge, questions, budget, recovery):
         "activities": section([(str(i), a) for i, a in enumerate(knowledge.activities)], 4500),
         "findings": section([(str(i), f) for i, f in enumerate(knowledge.findings)], 3000),
         "proposals": section([(p["proposal_id"], p) for p in knowledge.proposals], 5000)}
+    result["investigation_opportunities"] = section(sorted((opportunities or {}).items(), key=lambda row: row[0] not in current), 6500)
     # Global cap: trim the largest detailed section; progress/budget/recovery stay visible.
-    candidates = [result["question_state"]["details"], *[v for v in result["knowledge_state"].values()
+    candidates = [result["question_state"]["details"], result["investigation_opportunities"], *[v for v in result["knowledge_state"].values()
                   if isinstance(v, dict) and "omitted_ids" in v]]
     while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and any(s["items"] for s in candidates):
         target = max((s for s in candidates if s["items"]), key=lambda s: len(json.dumps(s, ensure_ascii=False)))

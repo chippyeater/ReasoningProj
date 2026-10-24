@@ -6,6 +6,7 @@ Only the model boundary is mocked; existing CRUD and workspace routes stay real.
 import asyncio
 import json
 import os
+from functools import partial
 from unittest.mock import patch
 
 import test_investigation_tools as fixtures
@@ -18,9 +19,18 @@ import uvicorn
 async def model(config, messages, definitions, schema=None, **kwargs):
     await asyncio.sleep(0.15)
     initial = json.loads(messages[1]["content"])
+    finish = partial(replies.finish, call_id=f"finish-{initial['remaining_budget']['model']}")
     goal = initial["goal"]
     names = [a["tool"] for a in initial["knowledge_state"]["activities"]["items"]]
     returned = [{**p, "pending": True} for p in initial["knowledge_state"]["proposals"]["items"]]
+    # Mock semantic review for these UI scenarios: other statements/contract
+    # amounts do not establish actual receipts. Runtime still validates IDs and
+    # the explicit disposition; this fixture makes no real-model quality claim.
+    opportunities = [lead for q in initial["investigation_opportunities"]["items"] for lead in q["items"]]
+    errors = (initial.get("recovery") or {}).get("validation_details", {}).get("errors", [])
+    opportunities.extend(e["opportunity"] for e in errors if "opportunity" in e)
+    skipped = [{"lead_id": lead_id, "reason": "该陈述或约定可提示争议，但不能确认实际收款和计租起点，需要独立记录才能确定净额。"}
+               for lead_id in dict.fromkeys(lead["lead_id"] for lead in opportunities)]
     # New delivery/recovery scenarios reuse actual initial sources and real tools.
     if any(word in goal for word in ("首轮来源直用", "遗漏来源交付", "恢复参数", "探索无直接证据")):
         from test_reasoning_proposals import suggestion, proposal_call
@@ -43,15 +53,16 @@ async def model(config, messages, definitions, schema=None, **kwargs):
             if len(ids) == 1:
                 return proposal_call({**suggestion("evidence_gap"), "info_unit_ids": [], "evidence_refs": [],
                     "hypothesis_proposal_ids": ids}, ids, "exploratory-gap")
-            return replies.finish(goal, questions=["能否补充新旧租约计租日和收款记录？"], answer="已提出待检验解释与关键缺口，尚无直接证明材料；可逐项采纳或补充计租和收款记录。")
+            return finish(goal, questions=["能否补充新旧租约计租日和收款记录？"], skipped_leads=skipped,
+                answer="已提出待检验解释与关键缺口，尚无直接证明材料；可逐项采纳或补充计租和收款记录。")
         answer = "据张某陈述，替租人于 2026 年 3 月 8 日搬入，尚未独立核实。"
         if "遗漏来源交付" in goal and not names and not reviewed:
             return replies.final(answer)
-        return replies.finish(goal, [uid], refs=[(uid, index)], statement=answer, status="completed", answer=answer if "恢复参数" not in goal else "相关陈述尚未独立核实。已提出一条待检验假设，可在画布中查看、采纳或忽略。")
+        return finish(goal, [uid], refs=[(uid, index)], statement=answer, status="completed", answer=answer if "恢复参数" not in goal else "相关陈述尚未独立核实。已提出一条待检验假设，可在画布中查看、采纳或忽略。")
     if "失败" in goal and "总结失败" not in goal:
         raise llm_client.LLMFailure("llm_timeout", "离线模拟调用超时")
     if "删除" in goal:
-        return replies.finish(
+        return finish(
             goal, status="unsupported", questions=["当前仅支持只读调查；请使用手动编辑功能。"])
     arrival = any(word in goal for word in ("入住", "搬进去"))
     analysis = "房东是否存在实际空置损失" in goal
@@ -95,7 +106,7 @@ async def model(config, messages, definitions, schema=None, **kwargs):
         raise llm_client.LLMFailure("llm_timeout", "离线模拟结束前超时")
     if "超长总结" in goal:
         # Invalid answer rejected inside the finish tool; no Findings have been accepted.
-        return replies.finish(goal, ["U029"], refs=[("U029", 0)], answer="重复的完整调查报告。" * 40, call_id=f"bad-finish-{len(names)}")
+        return finish(goal, ["U029"], refs=[("U029", 0)], answer="重复的完整调查报告。" * 40)
     if "安全格式检查" in goal:
         answer = '实际损失**尚未证实**。\n\n<img src=x onerror="window.summaryInjected=true">[查看](javascript:alert(1))'
     elif analysis:
@@ -107,8 +118,8 @@ async def model(config, messages, definitions, schema=None, **kwargs):
         if proposals:
             answer += "已提出待确认建议，可在画布查看。"
     uid = "U026" if arrival else "U029"
-    return replies.finish(goal, [uid], refs=[(uid, 0)], status="evidence_insufficient" if analysis else "completed",
-        statement="张某在笔录中提出相关说法，尚未独立核实。", answer=answer)
+    return finish(goal, [uid], refs=[(uid, 0)], status="evidence_insufficient" if analysis else "completed",
+        statement="张某在笔录中提出相关说法，尚未独立核实。", answer=answer, skipped_leads=skipped)
 
 
 if __name__ == "__main__":

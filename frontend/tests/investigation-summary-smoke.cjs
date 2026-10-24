@@ -23,7 +23,8 @@ const api = 'http://127.0.0.1:8018';
     const input = page.getByPlaceholder('提出调查问题，或检查假设与证据缺口…');
     async function ask(goal) {
       await input.fill(goal);
-      const response = page.waitForResponse(r => r.url().endsWith('/agent/run') && r.request().method() === 'POST');
+      // Bounded finish recovery adds audited turns; keep UI action timeouts unchanged.
+      const response = page.waitForResponse(r => r.url().endsWith('/agent/run') && r.request().method() === 'POST', { timeout: 30000 });
       await page.getByRole('button', { name: '发送调查问题' }).click();
       const result = await (await response).json();
       await panel.waitFor();

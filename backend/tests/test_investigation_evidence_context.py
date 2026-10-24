@@ -45,7 +45,10 @@ class TestInitialEvidence(unittest.TestCase):
         case = self.case.model_copy(deep=True)
         next(u for u in case.info_units if u.id == "U029").source_refs[0].quote = "不是缓存中的原文"
         result, calls = self.run_script("核对", [fixture.finish("核对", ["U029"], refs=[("U029", 0)]),
-            fixture.finish("核对", questions=["该来源无法核验，需补充其他材料。"], call_id="fixed")], selected=["U029"], case=case)
+            fixture.finish("核对", call_id="fixed", updates=[fixture.question("核对", status="blocked", reason="该来源的缓存定位校验失败", block_kind="tool_failure", skipped_leads=[
+                {"lead_id": "source:U029", "reason": "当前原文与缓存不一致，需恢复正确缓存，不能把故障当作不存在的证据。"},
+                {"lead_id": "unit:U036", "reason": "另一方陈述不能修复当前笔录的定位错误。"},
+                {"lead_id": "unit:U026", "reason": "入住日期的陈述也不能修复所请求原文的缓存定位错误。"}])])], selected=["U029"], case=case)
         view = json.loads(calls[0]["messages"][1]["content"])["knowledge_state"]
         sources = {**view["initial_source_status"], "items": view["source_refs"]["items"]}
         self.assertEqual(sources["items"], [])

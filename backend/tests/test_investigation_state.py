@@ -30,11 +30,16 @@ class TestInvestigationState(unittest.TestCase):
                 self.assertEqual(q["status"], "in_progress")
                 self.assertEqual(q["evidence_refs"], [{"info_unit_id": "U026", "source_ref_index": 0}])
                 return f.tool("get_evidence", {"info_unit_ids": ["U029"], "question_ids": ["loss"]}, "loss-source")
-            return f.finish(goal, ["U026", "U029"], refs=[("U026", 0), ("U029", 0)], updates=[
+            if turn == 4:
+                return f.tool("get_evidence", {"info_unit_ids": ["U036"], "question_ids": ["loss"]}, "opposing-source")
+            return f.finish(goal, ["U026", "U029", "U036"], refs=[("U026", 0), ("U029", 0), ("U036", 0)], status="evidence_insufficient", updates=[
                 f.question(goal, status="blocked", units=["U026", "U029"], reason="计租和收款证据缺失", block_kind="evidence_missing"),
                 f.question(date["question"], "date", status="answered", units=["U026"], refs=[("U026", 0)], finding="张某陈述 3 月 8 日入住。"),
                 f.question(loss["question"], "loss", status="blocked", units=["U029"], reason="缺少租约及收款记录", block_kind="evidence_missing")])
-        result, _ = self.run_script(goal, decide)
+        case = self.case.model_copy(deep=True)
+        case.info_units = [u for u in case.info_units if u.id in {"U026", "U029", "U036"}]
+        case.relations = [r for r in case.relations if {r.source_id, r.target_id} <= {"U026", "U029", "U036"}]
+        result, _ = self.run_script(goal, decide, case=case)
         self.assertEqual([q["status"] for q in result["question_state"]["questions"]], ["blocked", "answered", "blocked"])
         self.assertEqual(len(result["open_questions"]), 2)
         activities = self.audits()[0]["knowledge_state"]["activities"]
@@ -46,9 +51,9 @@ class TestInvestigationState(unittest.TestCase):
         pending = f.question("还需核对另一方陈述", "Q2")
         result, calls = self.run_script(goal, [f.tool("update_questions", {"questions": [pending]}, "add"),
             f.finish(goal, ["U029"], refs=[("U029", 0)], status="completed", call_id="premature"),
-            f.finish(goal, ["U029"], refs=[("U029", 0)], updates=[
-                f.question(goal, status="answered", units=["U029"], finding="已读张某陈述"),
-                f.question(pending["question"], "Q2", status="blocked", reason="缺少独立核查材料", block_kind="evidence_missing")])], selected=["U029"])
+            f.finish(goal, ["U029"], refs=[("U029", 0)], status="evidence_insufficient", updates=[
+                f.question(goal, status="blocked", units=["U029"], reason="另一项请求仍缺独立佐证", block_kind="evidence_missing", skipped_leads=[{"lead_id":"unit:U036", "reason":"需要独立佐证，另一份单方陈述不能满足这个缺失条件"}, {"lead_id":"source:U029", "reason":"同一当事人的聊天不能补足独立佐证"}, {"lead_id":"unit:U026", "reason":"当事人对入住的陈述不是独立佐证"}, {"lead_id":"unit:U022", "reason":"当事人对搬离的自述不是独立佐证"}]),
+                f.question(pending["question"], "Q2", status="blocked", reason="缺少独立核查材料", block_kind="evidence_missing", skipped_leads=[{"lead_id":"unit:U036", "reason":"独立佐证需由非当事人材料补充，另一方笔录无法满足"}])])], selected=["U029"])
         error = json.loads(calls[2]["messages"][-1]["content"])["error"]
         self.assertEqual(error["code"], "investigation_incomplete")
         self.assertEqual(error["validation_details"]["errors"][0]["loc"], ["questions", "Q2"])
@@ -74,9 +79,12 @@ class TestInvestigationState(unittest.TestCase):
                 error = json.loads(call["messages"][-1]["content"])["error"]
                 self.assertEqual(error["validation_details"]["errors"][0]["code"], "unresolved_plan")
                 updated[1]["omission_reason"] = "与当前已采纳解释重复；不新增同义假设。"
-            return f.finish(goal, ["U029"], refs=[("U029", 0)], call_id=f"finish-{turn}", updates=[
-                f.question(goal, status="blocked", units=["U029"], reason="缺收款证据", block_kind="evidence_missing", plans=updated)])
-        result, calls = self.run_script(goal, decide, selected=["U029"],
+            return f.finish(goal, ["U029"], refs=[("U029", 0)], status="evidence_insufficient", call_id=f"finish-{turn}", updates=[
+                f.question(goal, status="blocked", units=["U029"], reason="缺收款证据", block_kind="evidence_missing", plans=updated, skipped_leads=[{"lead_id":"source:U029", "reason":"同一当事人的聊天不能替代实际收款凭据。"}])])
+        case = self.case.model_copy(deep=True)
+        case.info_units = [u for u in case.info_units if u.id == "U029"]
+        case.relations = []
+        result, calls = self.run_script(goal, decide, selected=["U029"], case=case,
             work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])
         self.assertEqual(len(calls), 4)
         self.assertEqual(len(result["proposals"]), 1)
@@ -84,11 +92,13 @@ class TestInvestigationState(unittest.TestCase):
 
     def test_registered_plan_cannot_be_silently_deleted_or_relabelled(self):
         plan = {"id": "h", "kind": "hypothesis", "description": "可能少收租金", "proposal_id": None, "omission_reason": None}
+        case = self.case.model_copy(deep=True)
+        case.info_units, case.relations = [], []
         result, _ = self.run_script("核对", [f.tool("update_questions", {"questions": [f.question("核对", plans=[plan])]}, "plan"),
             f.tool("update_questions", {"questions": [f.question("核对")]}, "delete"),
             f.tool("update_questions", {"questions": [f.question("核对", plans=[{**plan, "description": "替换候选"}])]}, "replace"),
             f.finish("核对", updates=[f.question("核对", status="blocked", reason="缺少收款证据", block_kind="evidence_missing",
-                plans=[{**plan, "omission_reason": "缺少检验路径，暂不提出"}])])])
+                plans=[{**plan, "omission_reason": "缺少检验路径，暂不提出"}])])], case=case)
         self.assertEqual([c["result"]["error"]["code"] for c in self.audits()[0]["tool_calls"][1:3]], ["unresolved_plan"]*2)
         self.assertEqual(result["summary_status"], "completed")
 

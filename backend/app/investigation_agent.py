@@ -113,7 +113,7 @@ def tool_definitions() -> list[dict]:
     question_schema = Question.model_json_schema()
     question_defs = question_schema.pop("$defs")
     update_schema = {"type": "array", "items": question_schema, "maxItems": 20}
-    definition = _function("update_questions", "Batch create/adjust run-local Questions. Root Q1 is initialized from the goal. Keep stable IDs and registered plans; answer only with obtained materials, block with a specific reason/kind. Planned hypothesis/gap descriptions equal intended Proposal content. These tasks never create canvas objects.", {"questions": update_schema})
+    definition = _function("update_questions", "Batch create/adjust run-local Questions. Q1 retains the full original goal. Track independently requested answers/conditions as distinct Questions, not just an aggregate 'done'. Only mark answered when its requested aspect is resolved; otherwise block with specific missing condition/kind. Review useful investigation_opportunities before evidence insufficiency; skipped_leads records each declined lead_id and concrete reason. Preserve IDs and registered plans. No canvas writes.", {"questions": update_schema})
     definition["function"]["parameters"]["$defs"] = question_defs
     definitions.append(definition)
     finding_schema = Finding.model_json_schema()
@@ -329,7 +329,11 @@ def _tool_recovery(response, name):
         if item["code"] == "reference_not_obtained" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_id"]):
             item["code"] = "invalid_hypothesis_target"
     codes = {item["code"] for item in details["errors"]}
-    if codes & {"invalid_hypothesis_proposal_target", "invalid_hypothesis_target"}:
+    if "uninvestigated_lead" in codes:
+        hint = "检查 opportunity 中可继续取得的材料；有判断价值则用所列只读工具调查，否则在对应 Question.skipped_leads 逐项说明不能补足缺失条件的原因。预算阻止继续时明确报告预算限制。"
+    elif codes & {"goal_scope_changed", "goal_scope_incomplete", "insufficiency_without_unresolved_question"}:
+        hint = "保留 Q1 原始目标，逐项跟踪用户要求；尚未解决的方面应 blocked 并说明缺失条件，不能用 answered 和证据不足同时结束。"
+    elif codes & {"invalid_hypothesis_proposal_target", "invalid_hypothesis_target"}:
         hint = "仅使用本轮成功返回的 Hypothesis proposal_id，或上下文中的正式 Hypothesis ID；不能使用其他运行或其他建议类型。"
     elif "duplicate_reference" in codes:
         hint = "删除指出字段中的重复引用，保留原始有效 ID；不要原样重试。"
@@ -431,6 +435,7 @@ async def run_investigation(case: CaseData, goal: str,
             knowledge.findings = deepcopy(findings)
             knowledge.proposals = [p.model_dump(mode="json") for p in proposals]
             audit["knowledge_state"] = knowledge.dump()
+            audit["investigation_opportunities"] = knowledge.available_work(bound_case, questions)
         audit["question_state"] = questions.dump()
         audit["stop_reason"] = stop_reason
         audit["result"] = snapshot()
@@ -440,7 +445,8 @@ async def run_investigation(case: CaseData, goal: str,
 
     def record_final_state():
         with trace.observation("Investigation Agent · final working state", input={
-                "knowledge_state": knowledge.dump() if knowledge else None, "question_state": questions.dump()}) as state_span:
+                "knowledge_state": knowledge.dump() if knowledge else None, "question_state": questions.dump(),
+                "investigation_opportunities": audit.get("investigation_opportunities")}) as state_span:
             state_span.update(output={"stop_reason": stop_reason, "completion_status": completion})
 
     def stopped(reason):
@@ -484,7 +490,8 @@ async def run_investigation(case: CaseData, goal: str,
             remaining = {key: limits[key] - used[key] for key in limits}
             remaining["total"] = MAX_TOTAL_CALLS - attempts
             remaining["model"] = MAX_MODEL_CALLS - len(audit["model_calls"])
-            state = model_context(initial_input, knowledge, questions, remaining, recovery)
+            state = model_context(initial_input, knowledge, questions, remaining, recovery,
+                                  knowledge.available_work(bound_case, questions))
             request_messages = [{"role": "system", "content": prompt.content},
                                 {"role": "user", "content": json.dumps(state, ensure_ascii=False)}, *recent]
             # 'required' is supported by the existing native client; no fabricated tool call/ID for premature prose.
@@ -555,7 +562,8 @@ async def run_investigation(case: CaseData, goal: str,
                             response = questions.update(args["questions"], bound_case, seen, work_context, proposals)
                         else:
                             finished = actions.finish_investigation(bound_case, seen, work_context, goal, proposals, questions,
-                                **args, budget_exhausted=used["read"] >= limits["read"] or used["proposal"] >= limits["proposal"])
+                                **args, knowledge=knowledge, read_budget_exhausted=used["read"] >= limits["read"],
+                                budget_exhausted=used["read"] >= limits["read"] or used["proposal"] >= limits["proposal"])
                             result, final_questions, answer = finished
                             findings = [f.model_dump(mode="json") for f in result.findings]
                             questions, completion = final_questions, result.completion_status
