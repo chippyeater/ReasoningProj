@@ -49,13 +49,18 @@ class TestAgentAPI(unittest.TestCase):
         self.assertNotIn("pending_action_ids", json.dumps(initial))
         step_fields = definitions["update_investigation_steps"]["parameters"]["properties"]["steps"]["items"]["properties"]
         self.assertNotIn("activity_indices", step_fields)
+        self.assertNotIn("activity_start_index", step_fields)
+        self.assertIn("basis_info_unit_ids", step_fields)
+        finish_schema = definitions["finish_investigation"]["parameters"]
+        self.assertIn("step_updates", finish_schema["required"])
+        self.assertEqual(finish_schema["properties"]["step_updates"]["items"]["properties"], step_fields)
         self.assertEqual(response.json()["question_state"]["investigation_steps"], [])
 
     def test_http_step_plan_uses_same_model_loop_and_returns_server_activity(self):
         replies = [fixtures.tool("update_investigation_steps", {"steps": [fixtures.step()]}, "plan"),
             fixtures.tool("get_evidence", {"info_unit_ids": ["U029"], "step_id": "S1"}, "read"),
-            fixtures.tool("update_investigation_steps", {"steps": [fixtures.step(status="completed", note="已核对来源，仍需独立佐证")]}, "handled"),
-            fixtures.finish("核对", ["U029"], refs=[("U029", 0)])]
+            fixtures.finish("核对", ["U029"], refs=[("U029", 0)],
+                step_updates=[fixtures.step(status="completed", note="已核对来源，仍需独立佐证")])]
         requests = []
         def model(request):
             requests.append(json.loads(request.content))
@@ -66,6 +71,8 @@ class TestAgentAPI(unittest.TestCase):
             response = TestClient(main.app).post(f"/api/cases/{self.case.case_id}/agent/run", json={"goal": "核对"})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["question_state"]["investigation_steps"][0]["activity_indices"], [1])
+        self.assertEqual(response.json()["question_state"]["investigation_steps"][0]["status"], "completed")
+        self.assertEqual(response.json()["tool_budget_used"]["question"], 1)
         self.assertEqual(response.json()["proposals"], [])
         state = json.loads(requests[2]["messages"][1]["content"])
         self.assertEqual(state["investigation_steps"]["progress"][0]["status"], "in_progress")

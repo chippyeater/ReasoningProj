@@ -106,7 +106,7 @@ def _mock_reply(config, messages, definitions, schema=None, **kwargs):
         refs = [{"info_unit_id": "U004", "source_ref_index": i} for i in (0, 1)]
         finding = "离线协议样例，仅核对可定位来源，不代表完成真实调查。"
         args = {"answer": finding, "findings": [{"statement": finding, "info_unit_ids": ["U004"], "relation_ids": [], "evidence_refs": refs}],
-            "completion_status": "completed", "question_updates": [{"id": "Q1", "question": state["goal"], "status": "answered",
+            "completion_status": "completed", "step_updates": [], "question_updates": [{"id": "Q1", "question": state["goal"], "status": "answered",
                 "related_info_unit_ids": ["U004"], "evidence_refs": refs, "finding": finding,
                 "block_reason": None, "block_kind": None}]}
     call = {"id": uuid4().hex, "type": "function", "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}}

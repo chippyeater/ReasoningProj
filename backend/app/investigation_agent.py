@@ -130,8 +130,11 @@ def tool_definitions() -> list[dict]:
         "Incrementally upsert changed run-local investigation steps, not Proposals; omitted IDs remain registered. "
         "Use stable id and registered question_id, a specific objective, pending/in_progress/completed/deferred status and result_note. "
         "Completed/deferred require a result/specific reason. Completed means handled, not proven; it needs an actual linked read result "
-        "or already obtained Question material. Proposal submission alone is not investigation. "
-        "Backend owns activity_indices; never submit them. Reads may use step_id and its owning question_ids; success only starts work. "
+        "for the current objective/opening, or explicitly listed basis_info_unit_ids already obtained in the owning Question. "
+        "Use basis_info_unit_ids=[] otherwise; a Question having unrelated material is not completion basis. "
+        "Backend owns activity_indices/activity_start_index; never submit them. Reopening or changing objective excludes old reads; "
+        "explicitly select material again if reusing it. Proposal submission alone is not investigation. "
+        "Reads may use step_id and its owning question_ids; success only starts work. "
         "Terminal steps retain history, may reopen in_progress with the same objective; ownership cannot change. "
         "Simple tasks need no plan. Shares update_questions budget; no canvas writes."
     ), {"steps": {"type": "array", "items": step_schema, "minItems": 1, "maxItems": 20}}))
@@ -141,6 +144,7 @@ def tool_definitions() -> list[dict]:
         "answer": {"type": "string", "minLength": 1, "maxLength": 1000},
         "findings": {"type": "array", "items": finding_schema, "maxItems": 12},
         "question_updates": update_schema,
+        "step_updates": {"type": "array", "items": step_schema, "maxItems": 20},
         "completion_status": InvestigationResult.model_json_schema()["properties"]["completion_status"],
     })
     definition["function"]["parameters"]["$defs"] = {**question_defs, **finding_defs}
@@ -370,8 +374,8 @@ def _tool_recovery(response, name):
         if item["code"] == "reference_not_obtained" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_id"]):
             item["code"] = "invalid_hypothesis_target"
     codes = {item["code"] for item in details["errors"]}
-    if codes & {"step_unresolved", "all_steps_deferred", "step_completion_without_basis", "invalid_step_reference", "step_question_mismatch", "step_not_active"}:
-        hint = "根据 investigation_steps 和真实活动记录继续调查，或用 update_investigation_steps 记录具体结果/延期理由；来源已有可直接使用。全部延期不代表问题已回答，不要为结束而形式化延期或伪造执行。"
+    if codes & {"step_unresolved", "all_steps_deferred", "step_completion_without_basis", "invalid_step_basis", "invalid_step_reference", "step_question_mismatch", "step_not_active"}:
+        hint = "继续调查，或用 update_investigation_steps / finish.step_updates 记录结果和依据或具体延期理由；已有材料须明确填写属于该Question且已取得的basis_info_unit_ids，重新打开/改目标不沿用旧读取。全部延期不代表问题已回答，不得伪造执行。"
     elif codes & {"goal_scope_changed", "goal_scope_incomplete", "insufficiency_without_unresolved_question"}:
         hint = "保留 Q1 原始目标，逐项跟踪用户要求；尚未解决的方面应 blocked 并说明缺失条件，不能用 answered 和证据不足同时结束。"
     elif codes & {"invalid_hypothesis_proposal_target", "invalid_hypothesis_target"}:
@@ -392,6 +396,8 @@ def _tool_recovery(response, name):
             hint += " 合法 Question 更新已保存为工作记忆；question_updates=[] 可复用，只提交需修改的问题。最终答复和 Findings 尚未接受。"
         else:
             hint += " 本次 Question 更新未接受；根据当前 Question 状态一次修正所有字段。"
+        if details.get("step_updates_applied") is False:
+            hint += " finish中的Step更新未提交；修正后重发step_updates及Question更新，全部校验通过后统一接受，不额外消耗更新预算；无Step更新时传[]。"
     error["recovery_hint"] = hint
     error["recoverable"] = True
 
@@ -626,11 +632,11 @@ async def run_investigation(case: CaseData, goal: str,
                         elif name == "update_questions":
                             response = questions.update(args["questions"], bound_case, seen, work_context)
                         elif name == "update_investigation_steps":
-                            response = questions.update_steps(args["steps"], knowledge)
+                            response = questions.update_steps(args["steps"], bound_case, knowledge)
                             qids = list(dict.fromkeys(questions.steps[sid].question_id for sid in response["updated_step_ids"]))
                         else:
                             finished = actions.finish_investigation(bound_case, seen, work_context, goal, proposals, questions,
-                                **args,
+                                **args, knowledge=knowledge,
                                 budget_exhausted=used["read"] >= limits["read"] or used["proposal"] >= limits["proposal"])
                             result, final_questions, answer = finished
                             findings = [f.model_dump(mode="json") for f in result.findings]

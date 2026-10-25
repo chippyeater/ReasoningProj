@@ -102,7 +102,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         answered = f.question("核对", status="answered", units=["U029"], finding="双方陈述有分歧，不能确定")
         with self.assertRaises(AppError) as caught:
             actions.finish_investigation(case, seen, None, "核对", [], questions,
-                **self.finish_args(updates=[answered]))
+                knowledge=knowledge, **self.finish_args(updates=[answered]))
         self.assertEqual(caught.exception.details["errors"][0]["code"], "insufficiency_without_unresolved_question")
         # The Question basis is valid working memory; the inconsistent final
         # completion_status still prevents any delivery.
@@ -117,7 +117,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
             f.question("损失金额", "amount", status="blocked", reason="未提供净额计算条件", block_kind="evidence_missing")]
         with self.assertRaises(AppError) as caught:
             actions.finish_investigation(case, seen, None, goal, [], questions,
-                **self.finish_args(goal, updates=updates))
+                knowledge=knowledge, **self.finish_args(goal, updates=updates))
         self.assertEqual(caught.exception.details["errors"][0]["code"], "goal_scope_incomplete")
         self.assertEqual(questions.items["amount"].status, "pending")
 
@@ -134,7 +134,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         blocked = f.question("核对", status="blocked", reason="缺独立佐证", block_kind="evidence_missing")
         with patch.object(knowledge, "available_work", side_effect=AssertionError("Advice is not a completion dependency")):
             result, updated, _answer = actions.finish_investigation(case, seen, None, "核对", [], questions,
-                **self.finish_args(updates=[blocked]))
+                knowledge=knowledge, **self.finish_args(updates=[blocked]))
         self.assertEqual(result.completion_status, "evidence_insufficient")
         self.assertEqual(updated.items["Q1"].status, "blocked")
         self.assertNotIn("U036", seen["units"])
@@ -167,7 +167,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         self.assertEqual(knowledge.dump(), before)
         self.assertNotIn(("U036", 0), seen["evidence"])
         result, _, _ = actions.finish_investigation(case, seen, None, "核对", [], questions,
-            **self.finish_args())
+            knowledge=knowledge, **self.finish_args())
         self.assertEqual(result.completion_status, "evidence_insufficient")
         self.assertEqual(knowledge.dump(), before)
 
@@ -178,11 +178,11 @@ class TestInvestigationSufficiency(unittest.TestCase):
             args["completion_status"] = completion
             with self.subTest(completion=completion), self.assertRaises(AppError) as caught:
                 actions.finish_investigation(case, seen, None, "核对", [], questions,
-                    **args)
+                    knowledge=knowledge, **args)
             self.assertIn("budget_available", {e["code"] for e in caught.exception.details["errors"]})
         args = self.finish_args(status="budget_exhausted")
         result, _, _ = actions.finish_investigation(case, seen, None, "核对", [], questions,
-            budget_exhausted=True, **args)
+            knowledge=knowledge, budget_exhausted=True, **args)
         self.assertEqual(result.completion_status, "budget_exhausted")
 
     def test_advisory_candidates_do_not_authorize_unread_finding_references(self):
@@ -192,7 +192,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
             status="evidence_insufficient").message["tool_calls"][0]["function"]["arguments"])
         with self.assertRaises(AppError) as caught:
             actions.finish_investigation(case, seen, None, "核对", [], questions,
-                **args)
+                knowledge=knowledge, **args)
         self.assertIn("reference_not_obtained", {e["code"] for e in caught.exception.details["errors"]})
         self.assertNotIn("U036", seen["units"])
         self.assertEqual(questions.items["Q1"].status, "pending")
@@ -202,7 +202,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         blocked = f.question("核对", status="blocked", reason="缺独立佐证", block_kind="evidence_missing")
         with self.assertRaises(AppError) as caught:
             actions.finish_investigation(case, seen, None, "核对", [], questions,
-                **self.finish_args(status="completed", updates=[blocked]))
+                knowledge=knowledge, **self.finish_args(status="completed", updates=[blocked]))
         self.assertIn("blocked_questions", {e["code"] for e in caught.exception.details["errors"]})
 
     def test_discovery_index_does_not_authorize_unread_proposal_references(self):

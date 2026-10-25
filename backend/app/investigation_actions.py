@@ -74,9 +74,11 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
 
 
 def finish_investigation(case, seen, context, goal, proposals, questions, *, answer, findings,
-                         question_updates, completion_status, budget_exhausted=False):
-    """Finish with answer, grounded findings and changed Questions; question_updates=[] reuses validated working state. Every registered InvestigationStep must be completed or deferred with a specific result/reason via update_investigation_steps; pending/in_progress work cannot be hidden as evidence_missing. All-deferred work cannot establish an answered Question. Failures aggregate independent field errors and report retained Question updates; failed findings/answer are never published. Q1 retains the full goal; unresolved aspects must be specifically blocked. Runtime derives open_questions/Proposals. No mandatory plan, minimum read/Proposal count or extra summary call."""
-    from pydantic import ValidationError
+                         question_updates, step_updates, completion_status, knowledge, budget_exhausted=False):
+    """Finish with grounded findings, changed Questions and step_updates (use [] when unchanged). Step updates use exactly the normal update_investigation_steps rules, including explicit basis_info_unit_ids or valid linked reads, even when the shared update budget is exhausted. A nonempty step_updates batch, Question updates and final delivery commit together only on full success; failure preserves the pre-finish state. With step_updates=[], independently valid Question updates may remain working memory as reported in errors. Every Step must be completed or deferred with a result/reason; all-deferred work cannot establish an answered Question. No mandatory plan or minimum reads/Proposals. Runtime derives open_questions/Proposals; no extra model call."""
+    from pydantic import TypeAdapter, ValidationError
+    from typing import Annotated
+    from pydantic import Field
     from app.investigation_agent import Finding, _validate_summary
     from app.investigation_state import validation_issues
 
@@ -87,6 +89,20 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
         issue.setdefault("error_code", issue["code"] if issue["code"] in {
             "goal_scope_changed", "invalid_questions",
             "question_limit", "invalid_investigation_reference"} else "invalid_tool_arguments")
+
+    # Reuse normal step validation on a detached Question/Step draft. Never
+    # publish a finalization batch separately from its findings and answer.
+    try:
+        TypeAdapter(Annotated[list[dict], Field(max_length=20)]).validate_python(step_updates, strict=True)
+        if step_updates:
+            draft.update_steps(step_updates, case, knowledge)
+    except (AppError, ValidationError) as exc:
+        for issue in validation_issues(exc):
+            path = issue["loc"]
+            issue["loc"] = ["step_updates", *(path[1:] if path[:1] == ["steps"] else path)]
+            issue["argument_loc"] = list(issue["loc"])
+            issue["error_code"] = exc.code if isinstance(exc, AppError) else "invalid_tool_arguments"
+            errors.append(issue)
 
     def error(loc, code, message, fix, *, error_code="investigation_incomplete"):
         errors.append({"loc": loc, "code": code, "message": message, "fix": fix,
@@ -100,7 +116,7 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
         for step in steps:
             if step.status in {"pending", "in_progress"}:
                 error(["investigation_steps", step.id, "status"], "step_unresolved", step.objective,
-                      "Continue the registered step or use update_investigation_steps to record its result or specific deferral reason; do not replace uninvestigated work with evidence_missing")
+                      "Continue investigation, or record its validated result/deferral in step_updates on this finish (or update_investigation_steps); do not replace uninvestigated work with evidence_missing")
         if steps and all(s.status == "deferred" for s in steps) and q.status == "answered":
             question_errors = True
             error(["questions", q.id, "status"], "all_steps_deferred", "Deferring all registered work does not establish that this Question is answered",
@@ -175,7 +191,8 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
 
     # Reuse a completely validated Question batch as working memory even if
     # delivery fails elsewhere. Findings/answer/completion are never accepted.
-    if not question_errors and question_updates:
+    retain_questions = not question_errors and step_updates == []
+    if retain_questions and question_updates:
         questions.items, questions.activities = draft.items, draft.activities
     if errors:
         indices = {q["id"]: i for i, q in enumerate(question_updates) if isinstance(q, dict) and isinstance(q.get("id"), str)} if isinstance(question_updates, list) else {}
@@ -209,14 +226,16 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
                           ["question_updates", indices[qid], *path[2:]] if qid in indices else ["question_updates"])
                 issue["argument_loc"] = mapped
             if path[:1] == ["investigation_steps"]:
-                issue["repair_tool"] = "update_investigation_steps"
-                issue["argument_loc"] = ["steps", path[1], *path[2:]]
+                issue["repair_tool"] = "finish_investigation"
+                issue["argument_loc"] = ["step_updates", path[1], *path[2:]]
         raise AppError(errors[0].get("error_code", "investigation_incomplete"), "Finish rejected; address all listed issues before retrying",
             details={"category": errors[0].get("category", "completion"), "errors": errors,
-                     "question_updates_applied": not question_errors,
-                     "updated_question_ids": list(indices) if not question_errors else [],
+                     "question_updates_applied": retain_questions,
+                     "updated_question_ids": list(indices) if retain_questions else [],
+                     "step_updates_applied": False,
+                     "step_recovery": "No finish step_updates were committed. Resend corrected step_updates; a nonempty batch commits with Questions/findings/answer only on full success.",
                      "question_recovery": "Validated Question updates are working memory only. Use question_updates=[] to reuse them; send only changed Questions."
-                        if not question_errors else "Question update batch was not accepted. Restore registered IDs and fix all Question errors; other diagnostics use the tentative draft."})
+                        if retain_questions else "No Question updates committed: finish step_updates are atomic with delivery, or Questions contain errors. Resend changed Questions together with corrected step_updates."})
     return result, draft, text
 
 

@@ -12,9 +12,13 @@ Q1 的问题全文不可缩减；独立请求和条件性后续问题由模型�
 
 调查行动独立于 Question 的回答字段，以 `QuestionState.steps` 保存，输出在 `question_state.investigation_steps`。最多20项，既不是正式画布对象也不是 Proposal。Question 可以独立存在，简单任务不必建立计划；Question 受阻不要求创建 Gap，Hypothesis 获得支持不自动 verified。
 
-`InvestigationStep` 完整结构：`id: string`（1–80字符）、`question_id: string`（1–80字符）、`objective: string`（1–600字符）、`status: pending|in_progress|completed|deferred`、`result_note: string|null`（非空时1–600字符）、`activity_indices: integer[]`（非负索引，后端维护）。文本须包含非空白字符。`update_investigation_steps(steps=[...])` 每次只提交需新增/调整的行动，字段为上述结构除 activity_indices；省略的行动不会删除，模型提交执行索引会被拒绝。整批验证后原子接受。
+`InvestigationStep` 完整结构：`id: string`（1–80字符）、`question_id: string`（1–80字符）、`objective: string`（1–600字符）、`status: pending|in_progress|completed|deferred`、`result_note: string|null`（非空时1–600字符）、`basis_info_unit_ids: string[]`（最多80个唯一ID，单项1–600字符）、`activity_indices: integer[]`（全部关联活动的非负索引）、`activity_start_index: integer`（当前目标/本次重新打开的执行依据起点）。后两个字段由后端维护。文本须包含非空白字符。`update_investigation_steps(steps=[...])` 每次只提交需新增/调整的行动，字段为上述结构除两个活动索引字段；省略的行动不会删除，模型提交执行索引会被拒绝。整批验证后原子接受。
 
-状态转换：新行动可从任意状态登记；pending 可保持或进入其余状态；in_progress 可保持、completed 或 deferred；completed/deferred 可保持原状态，或以原目标重新打开为 in_progress。已开始的工作不能重置 pending。Question 归属不能改变，终态目标不能覆写；重新打开后可调整目标，旧参数和状态变更仍保留在已有工具审计中。completed/deferred 必须记录结果/具体延期理由。completed 只表示处理过，不表示事实证实；至少要有真实关联读取的 ok/empty/truncated 结果，或该 Question 已取得的材料，不能仅凭 Proposal 或任意文字伪造调查。
+状态转换：新行动可从任意状态登记；pending 可保持或进入其余状态；in_progress 可保持、completed 或 deferred；completed/deferred 可保持原状态，或以原目标重新打开为 in_progress。已开始的工作不能重置 pending。Question 归属不能改变，终态目标不能覆写；重新打开后可调整目标，旧参数和状态变更仍保留在已有工具审计中。completed/deferred 必须记录结果/具体延期理由。非completed状态的 basis_info_unit_ids 须为[]。
+
+completed 必须有以下至少一种明确依据：当前目标/重新打开后，以step_id关联的实际执行或缓存访问的合法只读结果（ok/empty/truncated），或显式 basis_info_unit_ids。每个指定ID均须属于当前案件、已提供/取得，且在所属Question的 related_info_unit_ids/evidence_refs 范围内；即使已有合法活动，错误材料ID仍会被拒绝。Question有任意材料不再自动构成依据。空搜索可以证明该Query未命中，不能证明案件不存在相关事实；失败或未经执行的响应不能充当完成依据。
+
+创建、重新打开或变更目标时，后端把 activity_start_index 设为当前活动日志长度；旧 activity_indices 保留，但起点之前的记录不再自动支持新一轮完成。重新打开须传空材料列表，之后如要重用已有材料必须明确重新选择ID；当前状态及历史更新/读取都保存在原有活动和审计中，不复制来源或建立第二套执行日志。
 
 三个只读工具增加可选 `step_id`，属于当前运行并且与唯一关联 Question 一致；question_ids=null/省略时使用该 Step 的 Question。未关联 Step 的读取仍有效。后端复用 `KnowledgeState.activities` 的稳定 activity_index，记录 step_id、executed、cached、状态和结果；Step 只保存指针，无第二套执行日志。真正执行或读取缓存的调用会将 pending 改为 in_progress，成功不会自动 completed。非法 Step/Question 关联不执行工具、不添加 Step 活动。终态需先重新打开才能关联新读取；已有上下文足够时无需重复调用工具。
 
@@ -34,15 +38,15 @@ Q1 的问题全文不可缩减；独立请求和条件性后续问题由模型�
 
 注册十个原生工具：三个只读查询、四个原有 `propose_*`、`update_questions`、`update_investigation_steps` 和 `finish_investigation`。继续使用现有 Chat Completions 客户端，strict 参数、关闭并行调用，无 result response_format。
 
-`finish_investigation(answer, findings, question_updates, completion_status)` 保持参数不变。后端先在副本中汇总 Question 更新的结构和引用错误，再检查独立结束条件：所有问题 answered 或具体 blocked、登记的 Step 均 completed/deferred、最终成果包含回答所用材料及来源、Proposal/引用/Issue 依赖一致、状态与实际预算一致，并沿用简洁回复校验（默认40–80字，上限240个非空白字符）。pending/in_progress Step 即使被写成 evidence_missing 也不能结束，须继续处理或明确延期；错误给出 Step ID 和 update_investigation_steps 修复工具。某 Question 的行动全部 deferred 时不能将它标为 answered；全部行动延期会在最终 limitations 显式提示，原因和执行记录保留供评审。`completed` 需要有依据的 Finding 且无 blocked；证据不足可以空 Findings、blocked + evidence_insufficient 结束。
+`finish_investigation(answer, findings, question_updates, step_updates, completion_status)` 增加必填 step_updates，无更新时传[]。先在副本中审核Question，然后复用同一个 update_steps 对Step增量更新进行案件、归属、转换与依据校验；最后统一检查所有问题 answered 或具体 blocked、登记的Step均completed/deferred、成果/引用/Proposal/Issue/预算一致，并沿用简洁回复校验（默认40–80字，上限240个非空白字符）。pending/in_progress即使被写成evidence_missing也不能结束；错误指向Step及finish.step_updates，仍可在调查过程中使用update_investigation_steps。某Question的行动全部deferred时不能answered；全部延期仍在limitations显式提示。completed需要有依据的Finding且无blocked，证据不足可以空Findings、blocked+evidence_insufficient结束。
 
 存在未读取的候选线索、未提供的来源或截断检索建议，不会阻止结构和状态均合法的结束。`evidence_insufficient` 仍需具体 blocked Question，`completed` 仍不得存在 blocked Question；引用只能使用实际取得的材料，预算类状态仍校验实际预算。模型自主判断调查是否充分，后端不以启发式候选清单决定结束，也不要求固定读取次数、假设数量或案件关键词。Question 不保存候选跳过清单。
 
 Proposal 不再绑定“交付计划”。其 kind/字段约束、当前运行实际返回的 proposal_id、Hypothesis 依赖类型和先后顺序、已获 InfoUnit/SourceRef、Issue 隔离及用户审批全部由现有 Proposal 工具、成果校验和独立采纳服务负责。Proposal 调用的 question_ids 仍须为已登记问题，归属记录在同一活动日志，合法 Hypothesis 依赖可以跨子问题共享。原交付计划的一对一绑定、材料交集、不可替换绑定检查随该关系删除；新 Step 不接受 Proposal ID，也不能通过提交 Proposal 自动完成。没有另建相同绑定或兼容旧字段。
 
-不通过时，一次返回可独立发现的 Question、计划、状态、成果引用和简洁答复问题，每项带 loc、argument_loc、message、fix。非法结构字段无法支撑的派生判断不会被当作已验证事实。Question 更新整批合法且不与总体目标/实际预算矛盾时，作为工作记忆保留，即便另有交付错误；validation_details 明确标记 question_updates_applied/updated_question_ids。下一次可用 question_updates=[] 复用，仅提交需要改变的问题。Question 更新批次有错则整批不接受；诊断草稿仍用于暴露独立问题。失败的 Findings、answer、completion_status 始终不交付。通过后直接返回 answer 与完整成果，**没有后续总结模型调用**。已删除旧消息 append、临时 System Completion Check、动态预算 System 消息和普通文本直接结束路径。提前输出文本仅产生 user 状态中的 `finish_required` 恢复信息；下一轮要求原生工具调用，不伪造 Assistant/Tool ID。
+不通过时，一次返回可独立发现的Question、Step、状态、引用和答复问题，每项带loc、argument_loc、message、fix。step_updates非空时，Step更新、Question更新及最终成果构成同一提交边界：任何校验失败都不提交这批状态或成果，保留调用前合法状态；修正后重发Step和Question更新。错误明确返回step_updates_applied=false与question_updates_applied=false。step_updates=[]时，沿用既有机制：合法Question更新可以作为工作记忆保留，下一次question_updates=[]复用；非法Question批次不接受。诊断副本不授权引用、不提交失败成果。通过后直接返回answer与完整成果，**没有后续总结模型调用**。普通文本仅触发finish_required恢复，不伪造Assistant/Tool ID。
 
-8 次只读、6 次 Proposal、8 次 Question/Step 共享更新、3 次结束尝试独立计数，最多25次工具尝试、28次模型调用。两个更新工具共同消耗现有 question 桶，没有增加预算。错误也消耗相应预算；连续三次失败、重复无进展或提前文本会异常停止。预算/异常停止不冒充通过 finish：保留 unresolved 状态，返回 answer=null、summary_status=failed 和明确 stop_reason；已有合法 Proposal 仍可审核。更新预算耗尽后不放宽 Step 校验，无法完成交付时保留未完成工作及失败审计。没有成果的模型传输失败仍返回错误。审计写入失败不降级为成功。
+8次只读、6次Proposal、8次Question/Step共享更新、3次结束尝试，最多25次工具尝试、28次模型调用，所有上限不变。更新预算耗尽后，仍能在本次finish请求携带step_updates合法收尾，只消耗原finish/total/model预算，不调用额外模型、不自动延期、不跳过依据或未完成状态校验。错误也消耗预算；连续三次无进展仍停止。预算/异常停止不冒充通过finish，保留未完成工作、answer=null及summary_status=failed；已有合法Proposal仍可审核。模型传输或审计写入失败不降级为成功。
 
 ## 成果、审批与审计
 
@@ -56,7 +60,7 @@ Proposal 不再绑定“交付计划”。其 kind/字段约束、当前运行�
 
 运行 `backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -q`。Mock 覆盖连续多任务、压缩后材料可用、空/错/截断状态、未读建议下合法结束、Step 执行/延期/遗漏与共享预算、Gap 依赖、正常/非法结束、预算和恢复；原有 HTTP、来源权限、Issue 隔离、Proposal 依赖/过期/幂等采纳继续回归。Case A TXT/Gold 仅作为临时案件输入，不修改固定评测或历史记录，不调用付费模型。
 
-结构检查能排除虚构活动索引、未知问题、跨 Question 的 Step 读取和覆写终态历史；已有材料是否真能处理该行动、completed 的结果是否合理、延期理由是否充分，仍是语义判断。代码只检查有真实读取结果或已有 Question 材料，不保证其与目标充分相关；自然语言声称“执行过某工具”也不能靠文本校验保证，只以实际活动记录为准。全延期不能被标成任务已回答，但不凭关键词或读取数量判断其理由，明确阻塞的证据不足交付仍可接受，供审计发现形式化延期。
+结构检查能排除虚构活动索引、未知问题、跨Question的Step读取、无明确依据的completed和旧执行记录被自动复用；不能凭ID判断指定材料与目标是否相关，也不能保证调查充分或延期合理。自然语言声称执行过某工具不能靠文本校验保证，以真实活动为准。全延期不能被标成任务已回答；明确blocked的证据不足交付仍可接受，供审计发现形式化延期。
 
 校验能检查明确登记的任务和计划，不能自动发现模型从未识别的解释，也不能仅凭引用确定结论语义真实或充分。Question 的重要性与是否值得继续调查仍由模型判断；Mock 不代表真实模型质量。字符预算是规模代理，非提供商精确 Token 计数；查询仍无分页，不保证遍历全部截断材料。没有跨会话长期记忆、通用 Agent 框架或额外总结模型。
 

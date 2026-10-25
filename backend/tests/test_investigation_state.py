@@ -92,7 +92,7 @@ class TestInvestigationState(unittest.TestCase):
             if turn == 6:
                 error = json.loads(call["messages"][-1]["content"])["error"]
                 self.assertEqual(error["validation_details"]["errors"][0]["code"], "step_unresolved")
-                self.assertEqual(error["validation_details"]["errors"][0]["repair_tool"], "update_investigation_steps")
+                self.assertEqual(error["validation_details"]["errors"][0]["repair_tool"], "finish_investigation")
                 self.assertEqual(state["investigation_steps"]["progress"][1]["status"], "pending")
                 return f.tool("update_investigation_steps", {"steps": [f.step("S2", status="deferred", objective="核对独立收款证明", note="本轮已获得的材料仅含双方陈述，独立账目需另行取得")]}, "defer")
             return f.finish("核对", ["U029"], refs=[("U029", 0)], status="evidence_insufficient", updates=[])
@@ -109,7 +109,7 @@ class TestInvestigationState(unittest.TestCase):
 
     def test_steps_can_complete_from_initial_material_without_reads_or_proposals(self):
         result, calls = self.run_script("核对", [
-            f.tool("update_investigation_steps", {"steps": [f.step(status="completed", note="已核对当前上下文中提供的陈述及来源")]}, "handled"),
+            f.tool("update_investigation_steps", {"steps": [f.step(status="completed", note="已核对当前上下文中提供的陈述及来源", basis=["U029"])]}, "handled"),
             f.finish("核对", ["U029"], refs=[("U029", 0)])], selected=["U029"])
         self.assertEqual(len(calls), 2)
         self.assertEqual(result["proposals"], [])
@@ -215,6 +215,51 @@ class TestInvestigationState(unittest.TestCase):
         self.assertNotIn("update_investigation_steps", names)
         self.assertEqual(json.loads(calls[9]["messages"][-1]["content"])["error"]["code"], "tool_budget_exhausted")
 
+    def test_finish_can_close_pending_step_after_all_update_budget_is_used(self):
+        replies = [f.tool("update_investigation_steps", {"steps": [f.step()]}, "plan")]
+        replies.extend(f.tool("update_questions", {"questions": [f.question("核对", status="in_progress", finding=f"继续核对第{i}项条件")]}, f"q-{i}")
+                       for i in range(7))
+        replies.extend([f.tool("get_evidence", {"info_unit_ids": ["U029"], "step_id": "S1"}, "read"),
+            f.finish("核对", ["U029"], refs=[("U029", 0)], step_updates=[f.step(status="completed", note="已核对陈述来源，不等于独立证实")])])
+        result, calls = self.run_script("核对", replies)
+        self.assertEqual(result["stop_reason"], "finish_investigation")
+        self.assertEqual(result["tool_budget_used"], {"read": 1, "proposal": 0, "question": 8, "finish": 1})
+        self.assertEqual(result["tool_attempt_count"], 10)
+        self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [8])
+        self.assertEqual(result["question_state"]["investigation_steps"][0]["status"], "completed")
+        names = {d["function"]["name"] for d in calls[-1]["definitions"]}
+        self.assertNotIn("update_questions", names)
+        self.assertNotIn("update_investigation_steps", names)
+        self.assertEqual(result["proposals"], [])
+
+    def test_reopening_clears_basis_and_requires_new_read_or_explicit_material(self):
+        result, calls = self.run_script("核对", [
+            f.tool("update_investigation_steps", {"steps": [f.step()]}, "plan"),
+            f.tool("get_evidence", {"info_unit_ids": ["U029"], "step_id": "S1"}, "read"),
+            f.tool("update_investigation_steps", {"steps": [f.step(status="completed", note="已核对", basis=["U029"])]}, "handled"),
+            f.tool("update_investigation_steps", {"steps": [f.step(status="in_progress", note="重新核查条件")]}, "reopen"),
+            f.finish("核对", ["U029"], refs=[("U029", 0)], call_id="old-read-not-enough", step_updates=[f.step(status="completed", note="已处理")]),
+            f.tool("get_evidence", {"info_unit_ids": ["U029"], "step_id": "S1"}, "access-again"),
+            f.finish("核对", ["U029"], refs=[("U029", 0)], step_updates=[f.step(status="completed", note="重新检查已提供的来源")])])
+        recovery = json.loads(calls[5]["messages"][-1]["content"])["error"]
+        self.assertIn("step_completion_without_basis", {e["code"] for e in recovery["validation_details"]["errors"]})
+        self.assertFalse(recovery["validation_details"]["step_updates_applied"])
+        self.assertFalse(recovery["validation_details"]["question_updates_applied"])
+        state = json.loads(calls[5]["messages"][1]["content"])
+        reopened = state["investigation_steps"]["details"]["items"][0]
+        self.assertEqual(reopened["basis_info_unit_ids"], [])
+        self.assertEqual(reopened["activity_indices"], [1])
+        self.assertEqual(reopened["activity_start_index"], 3)
+        self.assertEqual(state["question_state"]["progress"][0]["status"], "pending")
+        step = result["question_state"]["investigation_steps"][0]
+        self.assertEqual(step["activity_indices"], [1, 5])
+        self.assertEqual(step["activity_start_index"], 3)
+        activity = self.audits()[0]["knowledge_state"]["activities"][5]
+        self.assertTrue(activity["cached"])
+        self.assertFalse(activity["executed"])
+        old_completion = self.audits()[0]["knowledge_state"]["activities"][2]["arguments"]["steps"][0]
+        self.assertEqual(old_completion["basis_info_unit_ids"], ["U029"])
+
     def test_question_reference_block_reason_and_answer_basis_are_checked_atomically(self):
         for bad in (f.question("核对", status="blocked"), f.question("核对", status="answered", finding="已核实"),
                     f.question("核对", status="answered", units=["foreign"], finding="已核实")):
@@ -231,7 +276,7 @@ class TestInvestigationState(unittest.TestCase):
             memory.source_refs[str(i)] = {"info_unit_id": str(i), "source_ref_index": 0, "source_ref": {"quote": "原文"*3000}}
         before = memory.dump()
         questions = QuestionState("核对")
-        questions.update_steps([f.step(f"S{i}", objective="核对材料陈述" * 100) for i in range(20)], memory)
+        questions.update_steps([f.step(f"S{i}", objective="核对材料陈述" * 100) for i in range(20)], self.case, memory)
         before_questions = questions.dump()
         view = model_context(initial, memory, questions, {"total": 10}, None)
         self.assertLessEqual(len(json.dumps(view, ensure_ascii=False)), MAX_CONTEXT_CHARS)

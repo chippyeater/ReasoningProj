@@ -32,12 +32,13 @@ def question(goal, qid="Q1", *, status="pending", units=(), refs=(), finding=Non
         "finding": finding, "block_reason": reason, "block_kind": block_kind}
 
 
-def step(ident="S1", qid="Q1", *, status="pending", objective="核查相关陈述及其来源", note=None):
-    return {"id": ident, "question_id": qid, "objective": objective, "status": status, "result_note": note}
+def step(ident="S1", qid="Q1", *, status="pending", objective="核查相关陈述及其来源", note=None, basis=()):
+    return {"id": ident, "question_id": qid, "objective": objective, "status": status, "result_note": note,
+            "basis_info_unit_ids": list(basis)}
 
 
 def finish(goal, units=(), relations=(), refs=(), *, status=None, statement=None,
-           questions=(), call_id="finish", answer=None, updates=None):
+           questions=(), call_id="finish", answer=None, updates=None, step_updates=()):
     # A fixture reporting retrieved wording has answered that narrow request;
     # tests about unresolved judgments explicitly choose evidence_insufficient.
     status = status or ("completed" if units or relations or refs else "evidence_insufficient")
@@ -51,7 +52,7 @@ def finish(goal, units=(), relations=(), refs=(), *, status=None, statement=None
         block_kind=("unsupported" if status=="unsupported" else "budget_exhausted" if status=="budget_exhausted" else "evidence_missing") if blocked else None)
     return tool("finish_investigation", {"answer": answer or (text if units else reason),
         "findings": [finding] if units or relations or refs else [],
-        "question_updates": [root] if updates is None else updates, "completion_status": status}, call_id)
+        "question_updates": [root] if updates is None else updates, "step_updates": list(step_updates), "completion_status": status}, call_id)
 
 
 class TestInvestigationAgent(unittest.TestCase):

@@ -44,16 +44,20 @@ class InvestigationStepUpdate(StateModel):
     objective: Text
     status: Literal["pending", "in_progress", "completed", "deferred"]
     result_note: Text | None
+    basis_info_unit_ids: Annotated[list[Text], Field(max_length=80)]
 
     @model_validator(mode="after")
     def terminal_note(self):
         if self.status in {"completed", "deferred"} and self.result_note is None:
             raise ValueError("Completed steps need a result; deferred steps need a specific reason")
+        if self.status != "completed" and self.basis_info_unit_ids:
+            raise ValueError("Completion material belongs only to completed steps; use [] when reopening")
         return self
 
 
 class InvestigationStep(InvestigationStepUpdate):
     activity_indices: list[Annotated[int, Field(ge=0)]] = Field(default_factory=list)
+    activity_start_index: Annotated[int, Field(ge=0)] = 0
 
 
 class Question(StateModel):
@@ -160,11 +164,13 @@ class QuestionState:
         for qid in ids:
             self.activities[qid].append(activity_index)
 
-    def update_steps(self, updates, knowledge):
+    def update_steps(self, updates, case, knowledge):
         """Upsert only supplied IDs atomically; omitted steps always survive."""
         from pydantic import TypeAdapter
         parsed = TypeAdapter(Annotated[list[InvestigationStepUpdate], Field(min_length=1, max_length=20)]).validate_python(updates, strict=True)
         draft, errors, ids = deepcopy(self.steps), [], set()
+        case_ids = {unit.id for unit in case.info_units}
+        obtained_ids = knowledge.info_units.keys() | {r["info_unit_id"] for r in knowledge.source_refs.values()}
 
         def error(index, field, code, message, fix):
             errors.append({"loc": ["steps", index, field], "code": code, "message": message, "fix": fix})
@@ -187,18 +193,31 @@ class QuestionState:
             if old and old.status == "in_progress" and row.status == "pending":
                 error(index, "status", "invalid_step_transition", "Started work cannot return to pending", "Continue it or record its result/deferral")
             indices = list(old.activity_indices) if old else []
+            new_work = not old or row.objective != old.objective or (
+                old.status in {"completed", "deferred"} and row.status == "in_progress")
+            activity_start = len(knowledge.activities) if new_work else old.activity_start_index
+            question = self.items[row.question_id]
+            question_ids = set(question.related_info_unit_ids) | {r.info_unit_id for r in question.evidence_refs}
+            for offset, uid in enumerate(row.basis_info_unit_ids):
+                if uid not in case_ids or uid not in obtained_ids or uid not in question_ids:
+                    error(index, "basis_info_unit_ids", "invalid_step_basis",
+                          f"basis_info_unit_ids[{offset}] must be current-case, obtained and associated with this Question",
+                          "Use explicitly obtained IDs in the owning Question, or perform a valid step-associated read; do not borrow another Question's material")
+            if len(set(row.basis_info_unit_ids)) != len(row.basis_info_unit_ids):
+                error(index, "basis_info_unit_ids", "duplicate_step_basis", "Completion basis IDs must be unique", "List each actual material once")
             if row.status == "completed":
                 # An empty successful search is a real investigation result.
                 # A Proposal, an invented index or prose alone is not execution.
-                read_result = any(knowledge.activities[i]["tool"] in {"search_info_units", "get_relations", "get_evidence"}
-                    and knowledge.activities[i]["status"] in {"ok", "empty", "truncated"} for i in indices)
-                question = self.items[row.question_id]
-                provided_basis = any(uid in knowledge.info_units or any(r["info_unit_id"] == uid for r in knowledge.source_refs.values())
-                                     for uid in question.related_info_unit_ids)
-                if not read_result and not provided_basis:
-                    error(index, "status", "step_completion_without_basis", "No linked read result or obtained Question material supports handling this step",
-                          "Investigate with step_id, use obtained Question material, or defer with a reason; Proposal submission alone does not complete investigation")
-            draft[row.id] = InvestigationStep(**row.model_dump(), activity_indices=indices)
+                read_result = any(activity_start <= i < len(knowledge.activities)
+                    and knowledge.activities[i]["tool"] in {"search_info_units", "get_relations", "get_evidence"}
+                    and knowledge.activities[i]["status"] in {"ok", "empty", "truncated"}
+                    and (knowledge.activities[i]["executed"] or knowledge.activities[i]["cached"])
+                    and knowledge.activities[i]["step_id"] == row.id
+                    and knowledge.activities[i]["question_ids"] == [row.question_id] for i in indices)
+                if not read_result and not row.basis_info_unit_ids:
+                    error(index, "status", "step_completion_without_basis", "No valid linked read for the current objective/opening or explicit completion material",
+                          "Read with step_id or explicitly list obtained, Question-scoped basis_info_unit_ids; otherwise defer with a specific reason")
+            draft[row.id] = InvestigationStep(**row.model_dump(), activity_indices=indices, activity_start_index=activity_start)
         if len(draft) > 20:
             errors.append({"loc": ["steps"], "code": "step_limit", "message": "At most twenty registered investigation steps",
                            "fix": "Update existing steps; registered history cannot be deleted"})
@@ -388,6 +407,7 @@ def model_context(initial, knowledge, questions, budget, recovery):
     result["investigation_steps"] = {
         "progress": [{"id": s.id, "question_id": s.question_id, "status": s.status,
                       "objective": s.objective[:200], "objective_truncated": len(s.objective) > 200,
+                      "activity_start_index": s.activity_start_index,
                       "activity_indices": list(s.activity_indices)} for s in questions.steps.values()],
         "details": section([(s["id"], s) for s in qdump["investigation_steps"]], 8000)}
     result["knowledge_state"] = {
