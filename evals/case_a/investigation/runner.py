@@ -108,7 +108,7 @@ def _mock_reply(config, messages, definitions, schema=None, **kwargs):
         args = {"answer": finding, "findings": [{"statement": finding, "info_unit_ids": ["U004"], "relation_ids": [], "evidence_refs": refs}],
             "completion_status": "completed", "question_updates": [{"id": "Q1", "question": state["goal"], "status": "answered",
                 "related_info_unit_ids": ["U004"], "evidence_refs": refs, "finding": finding,
-                "block_reason": None, "block_kind": None, "planned_actions": []}]}
+                "block_reason": None, "block_kind": None}]}
     call = {"id": uuid4().hex, "type": "function", "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}}
     message = {"role": "assistant", "content": None, "tool_calls": [call]}
     return ToolReply(content="", message=message, response={"model": config.model, "choices": [{"message": message, "finish_reason": "tool_calls"}],

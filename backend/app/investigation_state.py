@@ -37,18 +37,23 @@ class EvidencePointer(StateModel):
     source_ref_index: Annotated[int, Field(ge=0)]
 
 
-class PlannedAction(StateModel):
+class InvestigationStepUpdate(StateModel):
+    """One incremental upsert; execution indices are never model input."""
     id: Identifier
-    kind: Literal["hypothesis", "evidence_link", "evidence_gap", "hypothesis_status"]
-    description: Text
-    proposal_id: Text | None
-    omission_reason: Text | None
+    question_id: Identifier
+    objective: Text
+    status: Literal["pending", "in_progress", "completed", "deferred"]
+    result_note: Text | None
 
     @model_validator(mode="after")
-    def disposition(self):
-        if self.proposal_id is not None and self.omission_reason is not None:
-            raise ValueError("Choose a submitted proposal or an omission reason")
+    def terminal_note(self):
+        if self.status in {"completed", "deferred"} and self.result_note is None:
+            raise ValueError("Completed steps need a result; deferred steps need a specific reason")
         return self
+
+
+class InvestigationStep(InvestigationStepUpdate):
+    activity_indices: list[Annotated[int, Field(ge=0)]] = Field(default_factory=list)
 
 
 class Question(StateModel):
@@ -60,7 +65,6 @@ class Question(StateModel):
     finding: Text | None
     block_reason: Text | None
     block_kind: Literal["evidence_missing", "tool_failure", "unsupported", "budget_exhausted"] | None
-    planned_actions: Annotated[list[PlannedAction], Field(max_length=6)]
 
     @model_validator(mode="after")
     def consistent_status(self):
@@ -71,20 +75,20 @@ class Question(StateModel):
             raise ValueError("Only blocked questions may have blocking fields")
         if self.status == "answered" and (not self.finding or not (self.related_info_unit_ids or self.evidence_refs)):
             raise ValueError("Answered questions require a finding and obtained materials")
-        if len({p.id for p in self.planned_actions}) != len(self.planned_actions):
-            raise ValueError("Duplicate planned action IDs")
         return self
 
 
 class QuestionState:
     def __init__(self, goal):
         self.items = {"Q1": Question(id="Q1", question=goal, status="pending", related_info_unit_ids=[],
-            evidence_refs=[], finding=None, block_reason=None, block_kind=None, planned_actions=[])}
+            evidence_refs=[], finding=None, block_reason=None, block_kind=None)}
         self.activities = {"Q1": []}
+        self.steps: dict[str, InvestigationStep] = {}
 
     def dump(self):
         return {"questions": [q.model_dump(mode="json") for q in self.items.values()],
-                "activities": deepcopy(self.activities), "current_question_ids": self.resolve(None)}
+                "activities": deepcopy(self.activities), "current_question_ids": self.resolve(None),
+                "investigation_steps": [s.model_dump(mode="json") for s in self.steps.values()]}
 
     def resolve(self, ids):
         if ids is None:
@@ -96,7 +100,7 @@ class QuestionState:
             raise AppError("invalid_question_reference", "Question IDs must be unique and already registered")
         return list(ids)
 
-    def review_updates(self, updates, case, seen, context, proposals, knowledge=None):
+    def review_updates(self, updates, case, seen, context):
         """Build a diagnostic draft without accepting any invalid update batch."""
         from app.investigation_actions import artifacts
         draft, errors, parsed = deepcopy(self), [], []
@@ -111,43 +115,14 @@ class QuestionState:
         if len({q.id for q in parsed}) != len(parsed):
             errors.append({"loc": ["questions"], "code": "invalid_questions",
                 "message": "Duplicate Question IDs", "fix": "Submit each Question ID once"})
-        lookup = {p.proposal_id: p for p in proposals}
-        owners = {a["proposal_id"]: set(a["question_ids"]) for a in knowledge.activities
-                  if a.get("proposal_id") and a["status"] == "ok"} if knowledge else {}
-
         def error(loc, code, message, fix):
             errors.append({"loc": loc, "code": code, "message": message, "fix": fix})
 
         for q in parsed:
-            previous = self.items.get(q.id)
             loc = ["questions", q.id]
             if q.id == "Q1" and q.question != self.items["Q1"].question:
                 error([*loc, "question"], "goal_scope_changed", "Q1 must retain the complete original goal",
                       "Restore Q1.question from question_state; add Questions for separate aspects")
-            if previous and not {p.id for p in previous.planned_actions} <= {p.id for p in q.planned_actions}:
-                error([*loc, "planned_actions"], "unresolved_plan", "Do not delete registered planned actions",
-                      "Keep their IDs; link their actual Proposals or record omission_reason")
-            for plan in q.planned_actions:
-                ploc = [*loc, "planned_actions", plan.id]
-                old = next((p for p in previous.planned_actions if p.id == plan.id), None) if previous else None
-                # Descriptions are prose, never an identity or semantic equivalence test.
-                if old and old.kind != plan.kind:
-                    error([*ploc, "kind"], "unresolved_plan", "Registered action kind cannot change",
-                          "Keep its kind; explain omission before adding a different action")
-                if old and old.proposal_id and old.proposal_id != plan.proposal_id:
-                    error([*ploc, "proposal_id"], "invalid_plan_reference", "A validated Proposal binding cannot be replaced or removed",
-                          f"Keep proposal_id={old.proposal_id}")
-                if plan.proposal_id:
-                    proposal = lookup.get(plan.proposal_id)
-                    if not proposal or proposal.kind != plan.kind:
-                        error([*ploc, "proposal_id"], "invalid_plan_reference", "Use an actual same-run Proposal of the matching kind",
-                              "Select the returned proposal_id with this action's kind, or explain omission")
-                    elif q.id not in owners.get(plan.proposal_id, set()):
-                        error([*ploc, "proposal_id"], "invalid_plan_reference", "Proposal was not submitted for this Question",
-                              "Use the Proposal under its recorded question_ids; do not assign another Question's work")
-                    elif q.related_info_unit_ids and proposal.info_unit_ids and not set(q.related_info_unit_ids) & set(proposal.info_unit_ids):
-                        error([*ploc, "proposal_id"], "invalid_plan_reference", "Proposal and Question have disjoint material bases",
-                              "Use the relevant Proposal and retain its obtained material in this Question")
             if q.related_info_unit_ids or q.evidence_refs:
                 try:
                     artifacts(case, seen, context, "Question basis", [], [{"statement": q.finding or q.question[:600],
@@ -163,22 +138,14 @@ class QuestionState:
             draft.items[q.id] = q
         if len(draft.items) > MAX_QUESTIONS:
             error(["questions"], "question_limit", "At most twenty run-local Questions", "Keep the current Question limit")
-        submitted = {}
-        for q in draft.items.values():
-            for plan in q.planned_actions:
-                if plan.proposal_id in submitted:
-                    error(["questions", q.id, "planned_actions", plan.id, "proposal_id"], "invalid_plan_reference",
-                          "One Proposal cannot discharge multiple planned actions", "Keep a single binding; explain redundant action omission")
-                if plan.proposal_id:
-                    submitted[plan.proposal_id] = (q.id, plan.id)
         for q in parsed:
             draft.activities.setdefault(q.id, [])
         return draft, errors
 
-    def update(self, updates, case, seen, context, proposals, knowledge=None):
+    def update(self, updates, case, seen, context):
         if not updates:
             raise AppError("invalid_questions", "Submit one to twenty unique Questions per batch")
-        draft, errors = self.review_updates(updates, case, seen, context, proposals, knowledge)
+        draft, errors = self.review_updates(updates, case, seen, context)
         if errors:
             raise AppError(errors[0]["code"], "Question updates were not accepted; fix all listed fields",
                            details={"category": "questions", "errors": errors})
@@ -192,6 +159,72 @@ class QuestionState:
     def record(self, activity_index, ids):
         for qid in ids:
             self.activities[qid].append(activity_index)
+
+    def update_steps(self, updates, knowledge):
+        """Upsert only supplied IDs atomically; omitted steps always survive."""
+        from pydantic import TypeAdapter
+        parsed = TypeAdapter(Annotated[list[InvestigationStepUpdate], Field(min_length=1, max_length=20)]).validate_python(updates, strict=True)
+        draft, errors, ids = deepcopy(self.steps), [], set()
+
+        def error(index, field, code, message, fix):
+            errors.append({"loc": ["steps", index, field], "code": code, "message": message, "fix": fix})
+
+        for index, row in enumerate(parsed):
+            old = self.steps.get(row.id)
+            if row.id in ids:
+                error(index, "id", "duplicate_step", "Each step ID may appear only once per update", "Send each changed step once")
+            ids.add(row.id)
+            if row.question_id not in self.items:
+                error(index, "question_id", "invalid_question_reference", "Step needs a registered Question", "Create the Question first")
+                continue
+            if old and row.question_id != old.question_id:
+                error(index, "question_id", "step_scope_changed", "Registered step ownership cannot change", "Keep the original question_id; add a new step for other work")
+            if old and old.status in {"completed", "deferred"}:
+                if row.status not in {old.status, "in_progress"}:
+                    error(index, "status", "invalid_step_transition", "Terminal steps may only retain status or reopen in_progress", "Reopen the same objective before continuing")
+                if row.objective != old.objective:
+                    error(index, "objective", "step_history_changed", "Terminal objective cannot be overwritten", "Reopen with the original objective first, or add a new step")
+            if old and old.status == "in_progress" and row.status == "pending":
+                error(index, "status", "invalid_step_transition", "Started work cannot return to pending", "Continue it or record its result/deferral")
+            indices = list(old.activity_indices) if old else []
+            if row.status == "completed":
+                # An empty successful search is a real investigation result.
+                # A Proposal, an invented index or prose alone is not execution.
+                read_result = any(knowledge.activities[i]["tool"] in {"search_info_units", "get_relations", "get_evidence"}
+                    and knowledge.activities[i]["status"] in {"ok", "empty", "truncated"} for i in indices)
+                question = self.items[row.question_id]
+                provided_basis = any(uid in knowledge.info_units or any(r["info_unit_id"] == uid for r in knowledge.source_refs.values())
+                                     for uid in question.related_info_unit_ids)
+                if not read_result and not provided_basis:
+                    error(index, "status", "step_completion_without_basis", "No linked read result or obtained Question material supports handling this step",
+                          "Investigate with step_id, use obtained Question material, or defer with a reason; Proposal submission alone does not complete investigation")
+            draft[row.id] = InvestigationStep(**row.model_dump(), activity_indices=indices)
+        if len(draft) > 20:
+            errors.append({"loc": ["steps"], "code": "step_limit", "message": "At most twenty registered investigation steps",
+                           "fix": "Update existing steps; registered history cannot be deleted"})
+        if errors:
+            raise AppError(errors[0]["code"], "Step updates were not accepted; fix all listed fields",
+                           details={"category": "steps", "errors": errors})
+        self.steps = draft
+        return {"status": "ok", "updated_step_ids": [s.id for s in parsed]}
+
+    def resolve_step(self, step_id, question_ids):
+        if step_id is None:
+            return None
+        if not isinstance(step_id, str) or step_id not in self.steps:
+            raise AppError("invalid_step_reference", "step_id must be registered in this run")
+        step = self.steps[step_id]
+        if question_ids != [step.question_id]:
+            raise AppError("step_question_mismatch", "A step-associated read must target only its owning Question")
+        if step.status in {"completed", "deferred"}:
+            raise AppError("step_not_active", "Reopen a terminal step in_progress before another associated read")
+        return step
+
+    def record_step(self, step, activity_index):
+        if step is not None:
+            step.activity_indices.append(activity_index)
+            if step.status == "pending":
+                step.status = "in_progress"
 
 
 class KnowledgeState:
@@ -212,7 +245,7 @@ class KnowledgeState:
     def ref_key(row):
         return f"{row['info_unit_id']}:{row['source_ref_index']}"
 
-    def merge(self, name, args, response, question_ids):
+    def merge(self, name, args, response, question_ids, *, step_id=None, executed=True):
         """Only successful read projections grant knowledge; failures remain explicit."""
         if response["status"] not in {"invalid_request", "error"}:
             for row in response.get("items", []):
@@ -225,7 +258,9 @@ class KnowledgeState:
                         self.info_units[unit["id"]] = deepcopy(unit)
                 elif name == "get_evidence":
                     self.source_refs[self.ref_key(row)] = deepcopy(row)
-        activity = {"tool": name, "arguments": deepcopy(args), "question_ids": list(question_ids),
+        activity = {"activity_index": len(self.activities), "tool": name, "arguments": deepcopy(args),
+            "question_ids": list(question_ids), "step_id": step_id, "executed": executed,
+            "cached": bool(response.get("cached")),
             "status": response["status"], "has_more": response.get("has_more", False),
             "error": deepcopy(response.get("error")),
             "obtained": [row.get("id") or row.get("relation", {}).get("id") or self.ref_key(row)
@@ -265,8 +300,7 @@ class KnowledgeState:
             neighbors = {uid for r in case.relations if {r.source_id, r.target_id} & anchors
                          for uid in [r.source_id, r.target_id, *r.evidence_unit_ids]} - anchors
             # Generic language matching, not case-specific terms or a truth test.
-            text = " ".join([q.question, q.finding or "", q.block_reason or "",
-                             *(p.description for p in q.planned_actions)])
+            text = " ".join([q.question, q.finding or "", q.block_reason or ""])
             terms = set(re.findall(r"[^\W_]+", tools._normalized(text)))
             for part in re.findall(r"[\u3400-\u9fff]+", text):
                 terms.update(part[i:i+2] for i in range(len(part)-1))
@@ -348,10 +382,14 @@ def model_context(initial, knowledge, questions, budget, recovery):
     result["question_state"] = {"current_question_ids": current,
         "progress": [{"id": q.id, "question": q.question[:200], "status": q.status,
             "question_truncated": len(q.question) > 200,
-            "block_kind": q.block_kind, "block_reason": _preview(q.block_reason, 240),
-            "pending_action_ids": [p.id for p in q.planned_actions if not p.proposal_id and not p.omission_reason]}
+            "block_kind": q.block_kind, "block_reason": _preview(q.block_reason, 240)}
             for q in questions.items.values()],
         "details": section(sorted([(q["id"], q) for q in qdump["questions"]], key=lambda row: row[0] not in current), 12000)}
+    result["investigation_steps"] = {
+        "progress": [{"id": s.id, "question_id": s.question_id, "status": s.status,
+                      "objective": s.objective[:200], "objective_truncated": len(s.objective) > 200,
+                      "activity_indices": list(s.activity_indices)} for s in questions.steps.values()],
+        "details": section([(s["id"], s) for s in qdump["investigation_steps"]], 8000)}
     result["knowledge_state"] = {
         "info_units": section(sorted(knowledge.info_units.items(), key=lambda r: r[0] not in preferred), 6000),
         "relations": section(sorted(knowledge.relations.items(), key=lambda row:
@@ -363,7 +401,7 @@ def model_context(initial, knowledge, questions, budget, recovery):
         "findings": section([(str(i), f) for i, f in enumerate(knowledge.findings)], 3000),
         "proposals": section([(p["proposal_id"], p) for p in knowledge.proposals], 5000)}
     # Global cap: trim the largest detailed section; progress/budget/recovery stay visible.
-    candidates = [result["question_state"]["details"], *[v for v in result["knowledge_state"].values()
+    candidates = [result["question_state"]["details"], result["investigation_steps"]["details"], *[v for v in result["knowledge_state"].values()
                   if isinstance(v, dict) and "omitted_ids" in v]]
     while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and any(s["items"] for s in candidates):
         target = max((s for s in candidates if s["items"]), key=lambda s: len(json.dumps(s, ensure_ascii=False)))

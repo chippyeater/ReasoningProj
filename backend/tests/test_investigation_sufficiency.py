@@ -101,7 +101,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         case, knowledge, questions, seen = self.state()
         answered = f.question("核对", status="answered", units=["U029"], finding="双方陈述有分歧，不能确定")
         with self.assertRaises(AppError) as caught:
-            actions.finish_investigation(case, seen, None, "核对", [], questions, knowledge=knowledge,
+            actions.finish_investigation(case, seen, None, "核对", [], questions,
                 **self.finish_args(updates=[answered]))
         self.assertEqual(caught.exception.details["errors"][0]["code"], "insufficiency_without_unresolved_question")
         # The Question basis is valid working memory; the inconsistent final
@@ -111,12 +111,12 @@ class TestInvestigationSufficiency(unittest.TestCase):
     def test_multi_goal_rollup_requires_each_requested_aspect_to_be_resolved(self):
         goal = "有无损失，以及损失金额是多少"
         case, knowledge, questions, seen = self.state(goal)
-        questions.update([f.question("有无损失", "existence"), f.question("损失金额", "amount")], case, seen, None, [])
+        questions.update([f.question("有无损失", "existence"), f.question("损失金额", "amount")], case, seen, None)
         updates = [f.question(goal, status="answered", units=["U029"], finding="已处理存在性"),
             f.question("有无损失", "existence", status="answered", units=["U029"], finding="材料仅为单方判断"),
             f.question("损失金额", "amount", status="blocked", reason="未提供净额计算条件", block_kind="evidence_missing")]
         with self.assertRaises(AppError) as caught:
-            actions.finish_investigation(case, seen, None, goal, [], questions, knowledge=knowledge,
+            actions.finish_investigation(case, seen, None, goal, [], questions,
                 **self.finish_args(goal, updates=updates))
         self.assertEqual(caught.exception.details["errors"][0]["code"], "goal_scope_incomplete")
         self.assertEqual(questions.items["amount"].status, "pending")
@@ -125,7 +125,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         goal = "核对日期，并查明金额"
         case, _knowledge, questions, seen = self.state(goal)
         with self.assertRaises(AppError) as caught:
-            questions.update([f.question("只核对日期")], case, seen, None, [])
+            questions.update([f.question("只核对日期")], case, seen, None)
         self.assertEqual(caught.exception.code, "goal_scope_changed")
         self.assertEqual(questions.items["Q1"].question, goal)
 
@@ -134,7 +134,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         blocked = f.question("核对", status="blocked", reason="缺独立佐证", block_kind="evidence_missing")
         with patch.object(knowledge, "available_work", side_effect=AssertionError("Advice is not a completion dependency")):
             result, updated, _answer = actions.finish_investigation(case, seen, None, "核对", [], questions,
-                knowledge=knowledge, **self.finish_args(updates=[blocked]))
+                **self.finish_args(updates=[blocked]))
         self.assertEqual(result.completion_status, "evidence_insufficient")
         self.assertEqual(updated.items["Q1"].status, "blocked")
         self.assertNotIn("U036", seen["units"])
@@ -147,7 +147,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         self.assertNotIn("skipped_leads", questions.items["Q1"].model_fields)
         update = {**f.question("核对", status="blocked", reason="缺佐证", block_kind="evidence_missing"), "skipped_leads": []}
         with self.assertRaises(AppError) as caught:
-            questions.update([update], case, seen, None, [], knowledge)
+            questions.update([update], case, seen, None)
         self.assertTrue(any(e["code"] == "extra_forbidden" and e["loc"][-1] == "skipped_leads"
                             for e in caught.exception.details["errors"]))
         self.assertEqual(questions.items["Q1"].status, "pending")
@@ -167,7 +167,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         self.assertEqual(knowledge.dump(), before)
         self.assertNotIn(("U036", 0), seen["evidence"])
         result, _, _ = actions.finish_investigation(case, seen, None, "核对", [], questions,
-            knowledge=knowledge, **self.finish_args())
+            **self.finish_args())
         self.assertEqual(result.completion_status, "evidence_insufficient")
         self.assertEqual(knowledge.dump(), before)
 
@@ -178,11 +178,11 @@ class TestInvestigationSufficiency(unittest.TestCase):
             args["completion_status"] = completion
             with self.subTest(completion=completion), self.assertRaises(AppError) as caught:
                 actions.finish_investigation(case, seen, None, "核对", [], questions,
-                    knowledge=knowledge, **args)
+                    **args)
             self.assertIn("budget_available", {e["code"] for e in caught.exception.details["errors"]})
         args = self.finish_args(status="budget_exhausted")
         result, _, _ = actions.finish_investigation(case, seen, None, "核对", [], questions,
-            knowledge=knowledge, budget_exhausted=True, **args)
+            budget_exhausted=True, **args)
         self.assertEqual(result.completion_status, "budget_exhausted")
 
     def test_advisory_candidates_do_not_authorize_unread_finding_references(self):
@@ -191,7 +191,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         args = agent._arguments("finish_investigation", f.finish("核对", ["U036"], refs=[("U036", 0)],
             status="evidence_insufficient").message["tool_calls"][0]["function"]["arguments"])
         with self.assertRaises(AppError) as caught:
-            actions.finish_investigation(case, seen, None, "核对", [], questions, knowledge=knowledge,
+            actions.finish_investigation(case, seen, None, "核对", [], questions,
                 **args)
         self.assertIn("reference_not_obtained", {e["code"] for e in caught.exception.details["errors"]})
         self.assertNotIn("U036", seen["units"])
@@ -201,7 +201,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         case, knowledge, questions, seen = self.state(ids=("U029",))
         blocked = f.question("核对", status="blocked", reason="缺独立佐证", block_kind="evidence_missing")
         with self.assertRaises(AppError) as caught:
-            actions.finish_investigation(case, seen, None, "核对", [], questions, knowledge=knowledge,
+            actions.finish_investigation(case, seen, None, "核对", [], questions,
                 **self.finish_args(status="completed", updates=[blocked]))
         self.assertIn("blocked_questions", {e["code"] for e in caught.exception.details["errors"]})
 

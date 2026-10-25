@@ -42,6 +42,33 @@ class TestAgentAPI(unittest.TestCase):
         ref = next(unit for unit in self.case.info_units if unit.id == "U029").source_refs[0]
         self.assertEqual(response.json()["evidence"][0]["quote"], ref.quote)
         self.assertEqual(response.json()["evidence"][0]["start"], ref.start)
+        self.assertNotIn("planned_actions", json.dumps(response.json()))
+        definitions = {d["function"]["name"]: d["function"] for d in requests[0]["tools"]}
+        self.assertIn("update_investigation_steps", definitions)
+        self.assertNotIn("PlannedAction", json.dumps(definitions))
+        self.assertNotIn("pending_action_ids", json.dumps(initial))
+        step_fields = definitions["update_investigation_steps"]["parameters"]["properties"]["steps"]["items"]["properties"]
+        self.assertNotIn("activity_indices", step_fields)
+        self.assertEqual(response.json()["question_state"]["investigation_steps"], [])
+
+    def test_http_step_plan_uses_same_model_loop_and_returns_server_activity(self):
+        replies = [fixtures.tool("update_investigation_steps", {"steps": [fixtures.step()]}, "plan"),
+            fixtures.tool("get_evidence", {"info_unit_ids": ["U029"], "step_id": "S1"}, "read"),
+            fixtures.tool("update_investigation_steps", {"steps": [fixtures.step(status="completed", note="已核对来源，仍需独立佐证")]}, "handled"),
+            fixtures.finish("核对", ["U029"], refs=[("U029", 0)])]
+        requests = []
+        def model(request):
+            requests.append(json.loads(request.content))
+            return httpx.Response(200, json=replies[len(requests) - 1].response)
+        real_client = httpx.AsyncClient
+        with patch.object(main, "require_case", return_value=self.case), patch.object(llm_client.httpx, "AsyncClient",
+                side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(model), **kwargs)):
+            response = TestClient(main.app).post(f"/api/cases/{self.case.case_id}/agent/run", json={"goal": "核对"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["question_state"]["investigation_steps"][0]["activity_indices"], [1])
+        self.assertEqual(response.json()["proposals"], [])
+        state = json.loads(requests[2]["messages"][1]["content"])
+        self.assertEqual(state["investigation_steps"]["progress"][0]["status"], "in_progress")
 
     def test_http_unsupported_is_explicit_and_does_not_read_or_modify_case(self):
         goal = "删除这个节点"

@@ -26,10 +26,14 @@ def final(text):
     return llm_client.ToolReply(text, {"model": "mock-model", "choices": [{"finish_reason": "stop", "message": message}]}, message)
 
 
-def question(goal, qid="Q1", *, status="pending", units=(), refs=(), finding=None, reason=None, block_kind=None, plans=()):
+def question(goal, qid="Q1", *, status="pending", units=(), refs=(), finding=None, reason=None, block_kind=None):
     return {"id": qid, "question": goal, "status": status, "related_info_unit_ids": list(units),
         "evidence_refs": [{"info_unit_id": uid, "source_ref_index": index} for uid,index in refs],
-        "finding": finding, "block_reason": reason, "block_kind": block_kind, "planned_actions": list(plans)}
+        "finding": finding, "block_reason": reason, "block_kind": block_kind}
+
+
+def step(ident="S1", qid="Q1", *, status="pending", objective="核查相关陈述及其来源", note=None):
+    return {"id": ident, "question_id": qid, "objective": objective, "status": status, "result_note": note}
 
 
 def finish(goal, units=(), relations=(), refs=(), *, status=None, statement=None,

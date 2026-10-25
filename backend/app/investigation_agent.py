@@ -19,7 +19,7 @@ from app.observability import RunTrace
 from app.prompt_loader import load_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
 from app.reasoning_models import ReasoningProposal
-from app.investigation_state import EvidencePointer, KnowledgeState, Question, QuestionState, model_context, _preview
+from app.investigation_state import EvidencePointer, InvestigationStepUpdate, KnowledgeState, Question, QuestionState, model_context, _preview
 
 MAX_TOOL_CALLS = 8  # Read attempts, reserved independently from artifact submissions.
 MAX_PROPOSAL_CALLS = 6
@@ -122,9 +122,19 @@ def tool_definitions() -> list[dict]:
     question_schema = Question.model_json_schema()
     question_defs = question_schema.pop("$defs")
     update_schema = {"type": "array", "items": question_schema, "maxItems": 20}
-    definition = _function("update_questions", "Batch create/adjust run-local Questions. Q1 retains the full original goal. Track independently requested answers/conditions as distinct Questions. Only mark answered when resolved; otherwise block with specific missing condition/kind. Preserve plan IDs/kinds and validated Proposal bindings; descriptions may be rephrased. Link only actual same-run proposal_id of matching kind, submitted under this Question's question_ids with related materials/dependencies. No canvas writes.", {"questions": update_schema})
+    definition = _function("update_questions", "Batch create/adjust run-local Questions. Q1 retains the full original goal. Track independently requested answers/conditions as distinct Questions. Only mark answered when resolved; otherwise block with specific missing condition/kind. Omitted Questions remain registered. No canvas writes.", {"questions": update_schema})
     definition["function"]["parameters"]["$defs"] = question_defs
     definitions.append(definition)
+    step_schema = InvestigationStepUpdate.model_json_schema()
+    definitions.append(_function("update_investigation_steps", (
+        "Incrementally upsert changed run-local investigation steps, not Proposals; omitted IDs remain registered. "
+        "Use stable id and registered question_id, a specific objective, pending/in_progress/completed/deferred status and result_note. "
+        "Completed/deferred require a result/specific reason. Completed means handled, not proven; it needs an actual linked read result "
+        "or already obtained Question material. Proposal submission alone is not investigation. "
+        "Backend owns activity_indices; never submit them. Reads may use step_id and its owning question_ids; success only starts work. "
+        "Terminal steps retain history, may reopen in_progress with the same objective; ownership cannot change. "
+        "Simple tasks need no plan. Shares update_questions budget; no canvas writes."
+    ), {"steps": {"type": "array", "items": step_schema, "minItems": 1, "maxItems": 20}}))
     finding_schema = Finding.model_json_schema()
     finding_defs = finding_schema.pop("$defs")
     definition = _function("finish_investigation", finish_investigation.__doc__, {
@@ -141,6 +151,11 @@ def tool_definitions() -> list[dict]:
             properties["question_ids"] = {"type": ["array", "null"], "items": {"type": "string"}, "maxItems": 20,
                 "description": "Existing Question IDs; null associates the current Questions automatically"}
             definition["function"]["parameters"]["required"].append("question_ids")
+        if definition["function"]["name"] in READ_TOOLS:
+            properties = definition["function"]["parameters"]["properties"]
+            properties["step_id"] = {"type": ["string", "null"], "minLength": 1, "maxLength": 80,
+                "description": "Optional registered active investigation step; null means no step. It must belong to the sole associated Question; omitted question_ids use its owner."}
+            definition["function"]["parameters"]["required"].append("step_id")
     return definitions
 
 
@@ -160,7 +175,7 @@ def _strict_json(raw: str) -> object:
 
 
 def _arguments(name: str, raw: str) -> dict:
-    if len(raw) > (4000 if name in READ_TOOLS else 64000 if name in {"update_questions", "finish_investigation"} else 12000):
+    if len(raw) > (4000 if name in READ_TOOLS else 64000 if name in {"update_questions", "update_investigation_steps", "finish_investigation"} else 12000):
         raise AppError("invalid_tool_arguments", "Tool arguments exceed their bounded size")
     try:
         args = _strict_json(raw)
@@ -174,6 +189,8 @@ def _arguments(name: str, raw: str) -> dict:
     fields["get_relations"] = ({"info_unit_ids"}, fields["get_relations"][1])
     for tool_name in READ_TOOLS.keys() | {"propose_hypothesis", "propose_evidence_link", "propose_evidence_gap", "propose_hypothesis_status"}:
         fields[tool_name] = (fields[tool_name][0] - {"question_ids"}, fields[tool_name][1])
+    for tool_name in READ_TOOLS:
+        fields[tool_name] = (fields[tool_name][0] - {"step_id"}, fields[tool_name][1])
     # Existing formal-Hypothesis calls remain valid; native schemas ask for an explicit empty list.
     fields["propose_evidence_link"] = (fields["propose_evidence_link"][0] - {"hypothesis_proposal_ids"}, fields["propose_evidence_link"][1])
     if name not in fields:
@@ -199,6 +216,7 @@ def _arguments(name: str, raw: str) -> dict:
 def _fingerprint(name: str, args: dict) -> str:
     normalized = deepcopy(args)
     normalized.pop("question_ids", None)
+    normalized.pop("step_id", None)
     if name == "search_info_units" and isinstance(args.get("query"), str):
         normalized["query"] = sorted(set(re.findall(r"\w+", tools._normalized(args["query"]))))
     if name == "search_info_units" and normalized.get("types") is None:
@@ -352,7 +370,9 @@ def _tool_recovery(response, name):
         if item["code"] == "reference_not_obtained" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_id"]):
             item["code"] = "invalid_hypothesis_target"
     codes = {item["code"] for item in details["errors"]}
-    if codes & {"goal_scope_changed", "goal_scope_incomplete", "insufficiency_without_unresolved_question"}:
+    if codes & {"step_unresolved", "all_steps_deferred", "step_completion_without_basis", "invalid_step_reference", "step_question_mismatch", "step_not_active"}:
+        hint = "根据 investigation_steps 和真实活动记录继续调查，或用 update_investigation_steps 记录具体结果/延期理由；来源已有可直接使用。全部延期不代表问题已回答，不要为结束而形式化延期或伪造执行。"
+    elif codes & {"goal_scope_changed", "goal_scope_incomplete", "insufficiency_without_unresolved_question"}:
         hint = "保留 Q1 原始目标，逐项跟踪用户要求；尚未解决的方面应 blocked 并说明缺失条件，不能用 answered 和证据不足同时结束。"
     elif codes & {"invalid_hypothesis_proposal_target", "invalid_hypothesis_target"}:
         hint = "仅使用本轮成功返回的 Hypothesis proposal_id，或上下文中的正式 Hypothesis ID；不能使用其他运行或其他建议类型。"
@@ -371,7 +391,7 @@ def _tool_recovery(response, name):
         if details.get("question_updates_applied"):
             hint += " 合法 Question 更新已保存为工作记忆；question_updates=[] 可复用，只提交需修改的问题。最终答复和 Findings 尚未接受。"
         else:
-            hint += " 本次 Question 更新未接受；保留已登记计划 ID 并一次修正所有字段。"
+            hint += " 本次 Question 更新未接受；根据当前 Question 状态一次修正所有字段。"
     error["recovery_hint"] = hint
     error["recoverable"] = True
 
@@ -451,13 +471,20 @@ async def run_investigation(case: CaseData, goal: str,
 
     def bucket(name):
         return ("read" if name in READ_TOOLS else "proposal" if name in actions.PROPOSAL_TOOLS
-                else "question" if name == "update_questions" else "finish" if name == "finish_investigation" else None)
+                else "question" if name in {"update_questions", "update_investigation_steps"} else "finish" if name == "finish_investigation" else None)
+
+    def working_signature():
+        # Appending an activity index alone is not substantive progress.
+        return json.dumps({"questions": [q.model_dump() for q in questions.items.values()],
+            "steps": [s.model_dump(exclude={"activity_indices"}) for s in questions.steps.values()]}, sort_keys=True)
 
     def snapshot(answer=None, summary_status="pending"):
         result = actions.artifacts(bound_case, seen, work_context, goal, proposals, findings,
                                    questions.open_questions(), completion)
+        step_limits = ["本轮已登记的调查行动全部延期，不能据此视为事实问题已解决；延期理由与实际工具记录见工作状态。"] if (
+            questions.steps and all(s.status == "deferred" for s in questions.steps.values())) else []
         return {**result.model_dump(mode="json"), "answer": answer, "summary_status": summary_status,
-            "question_state": questions.dump(), "limitations": list(dict.fromkeys(limitations)), "run_id": run_id,
+            "question_state": questions.dump(), "limitations": list(dict.fromkeys([*limitations, *step_limits])), "run_id": run_id,
             "stop_reason": stop_reason or "running", "tool_call_count": executed,
             "tool_attempt_count": attempts, "tool_budget_used": dict(used), "model_call_count": len(audit["model_calls"])}
 
@@ -559,9 +586,10 @@ async def run_investigation(case: CaseData, goal: str,
                 used[category] += 1
             tool_audit = {"call_id": call["id"], "name": name, "raw_arguments": raw, "executed": False}
             audit["tool_calls"].append(tool_audit)
-            args, qids, finished, fingerprint = {}, [], None, None
+            args, qids, finished, fingerprint, step = {}, [], None, None, None
             signature = (frozenset(seen["units"]), frozenset(seen["relations"]), frozenset(seen["evidence"]),
-                json.dumps(questions.dump()["questions"], sort_keys=True), tuple(p.proposal_id for p in proposals))
+                working_signature(),
+                tuple(p.proposal_id for p in proposals))
             with trace.observation("Investigation Agent · tool call", as_type="tool", input={"name": name, "arguments": raw},
                     metadata={"tool_name": name if category else "unsupported_tool", "attempt": attempts}) as tool_span:
                 try:
@@ -570,7 +598,14 @@ async def run_investigation(case: CaseData, goal: str,
                     tool_audit["arguments"] = deepcopy(args)
                     if not permitted:
                         raise AppError("tool_budget_exhausted", "This tool budget is exhausted; choose a remaining tool or finish")
-                    qids = questions.resolve(args.pop("question_ids", None))
+                    requested_qids = args.pop("question_ids", None)
+                    step_id = args.pop("step_id", None) if name in READ_TOOLS else None
+                    if step_id is not None and requested_qids is None:
+                        if not isinstance(step_id, str) or step_id not in questions.steps:
+                            raise AppError("invalid_step_reference", "step_id must be registered in this run")
+                        requested_qids = [questions.steps[step_id].question_id]
+                    qids = questions.resolve(requested_qids)
+                    step = questions.resolve_step(step_id, qids)
                     prior = fingerprints.get(fingerprint)
                     if prior and prior["successful"] and name in READ_TOOLS:
                         response = {**deepcopy(prior["result"]), "cached": True}
@@ -589,10 +624,13 @@ async def run_investigation(case: CaseData, goal: str,
                             actions.artifacts(bound_case, seen, work_context, goal, draft, findings, questions.open_questions(), completion)
                             proposals = draft
                         elif name == "update_questions":
-                            response = questions.update(args["questions"], bound_case, seen, work_context, proposals, knowledge)
+                            response = questions.update(args["questions"], bound_case, seen, work_context)
+                        elif name == "update_investigation_steps":
+                            response = questions.update_steps(args["steps"], knowledge)
+                            qids = list(dict.fromkeys(questions.steps[sid].question_id for sid in response["updated_step_ids"]))
                         else:
                             finished = actions.finish_investigation(bound_case, seen, work_context, goal, proposals, questions,
-                                **args, knowledge=knowledge,
+                                **args,
                                 budget_exhausted=used["read"] >= limits["read"] or used["proposal"] >= limits["proposal"])
                             result, final_questions, answer = finished
                             findings = [f.model_dump(mode="json") for f in result.findings]
@@ -618,8 +656,11 @@ async def run_investigation(case: CaseData, goal: str,
                 if response.get("has_more"):
                     limitations.append(f"{name} 返回 truncated；仍有可继续检索的范围，详见工作记忆。")
                 # Merge before retiring any protocol messages, including empty/error/truncated activity.
-                index = knowledge.merge(name, args, response, qids)
+                associated_step = step if step is not None and (tool_audit["executed"] or response.get("cached")) else None
+                index = knowledge.merge(name, args, response, qids,
+                    step_id=associated_step.id if associated_step else None, executed=tool_audit["executed"])
                 questions.record(index, qids)
+                questions.record_step(associated_step, index)
                 if not failed and name in READ_TOOLS:
                     obtained_units = list(args.get("info_unit_ids", []))
                     for row in response["items"]:
@@ -637,9 +678,10 @@ async def run_investigation(case: CaseData, goal: str,
                                 pointer = EvidencePointer(info_unit_id=row["info_unit_id"], source_ref_index=row["source_ref_index"])
                                 if pointer not in q.evidence_refs:
                                     q.evidence_refs.append(pointer)
-                    if response.get("cached") and json.dumps(questions.dump()["questions"], sort_keys=True) != signature[3]:
+                    if response.get("cached") and working_signature() != signature[3]:
                         no_progress = 0  # Reusing a source for a new Question is useful progress.
                 tool_audit["question_ids"] = qids
+                tool_audit["step_id"] = associated_step.id if associated_step else None
                 tool_audit["result"] = deepcopy(response)
                 tool_span.update(output=response)
             persist()

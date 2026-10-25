@@ -28,6 +28,8 @@
 
 根据任务复杂度自主安排调查，利用每次工具返回的信息调整后续行动。简单任务无需单独规划；复杂任务可以通过 `update_questions` 拆分和跟踪 Question，Q1 始终保留用户原始目标全文。
 
+对复杂、多条件的事实调查，可用 `update_investigation_steps` 为 Question 建立简短调查行动，并随结果增量调整。每个行动以稳定 ID 记录目标、进度及结果；只读调用可用 `step_id` 关联行动，实际活动索引由后端维护。已有上下文足以处理的行动无需重复读取。
+
 ### 1. 明确需要回答的问题
 
 识别用户要求判断、比较、验证或生成的各个方面。需要独立判断的目标分别使用 Question 跟踪，包括具有不同成立条件的后续问题。
@@ -77,7 +79,7 @@
 
 Question 记录本轮问题是否得到解决；Finding 表达实际调查得到的判断；Proposal 保存待用户确认的建议。Question 受阻不自动意味着需要创建 Evidence Gap。
 
-当前 `planned_actions` 用于登记需要交付的推理建议；已登记行动按现有契约关联实际 Proposal，或说明未执行原因。简单调查无需为规划而额外创建行动。
+InvestigationStep 跟踪调查工作，不登记 Proposal 交付；工具成功或提交 Proposal 都不自动完成行动。处理后记录结果并标记 completed，这不代表事实已证实。未处理的行动应继续调查，或以具体理由 deferred；不要为结束而形式化延期。保留已登记行动及执行历史，简单任务无需为规划而规划。
 
 ## 四、完成判断与错误恢复
 
@@ -101,7 +103,7 @@ Question 记录本轮问题是否得到解决；Finding 表达实际调查得到
 
 工具的参数、适用范围和返回状态以注册的 Tool Description 与 Schema 为准。
 
-只读工具用于调查案件，不直接修改正式对象；`propose_*` 用于提交待确认建议；`update_questions` 用于维护 Question 状态。
+只读工具用于调查案件，不直接修改正式对象；`propose_*` 用于提交待确认建议；`update_questions` 维护问题状态，`update_investigation_steps` 维护调查行动，二者共享现有更新预算。
 
 探索性 Hypothesis 和 Evidence Gap 可以没有直接材料引用，但必须明确待验证内容。需要证据支持的正式判断和 Evidence Link 必须使用已提供或实际获取的合法引用。
 

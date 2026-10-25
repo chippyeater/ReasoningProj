@@ -74,18 +74,18 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
 
 
 def finish_investigation(case, seen, context, goal, proposals, questions, *, answer, findings,
-                         question_updates, completion_status, knowledge, budget_exhausted=False):
-    """Finish with answer, cited findings and changed Questions; question_updates=[] reuses validated working state. Failures list independent field errors with fix hints and report whether Question updates were retained; failed answer/findings are never accepted. Plans use actual same-run proposal_id, matching kind, recorded Question scope and material/dependency links, not identical prose; preserve validated bindings. Q1 retains the full goal; unresolved aspects must be specifically blocked. Resolve planned actions; Runtime derives open_questions/Proposals. No minimum read/Proposal count or extra summary call."""
+                         question_updates, completion_status, budget_exhausted=False):
+    """Finish with answer, grounded findings and changed Questions; question_updates=[] reuses validated working state. Every registered InvestigationStep must be completed or deferred with a specific result/reason via update_investigation_steps; pending/in_progress work cannot be hidden as evidence_missing. All-deferred work cannot establish an answered Question. Failures aggregate independent field errors and report retained Question updates; failed findings/answer are never published. Q1 retains the full goal; unresolved aspects must be specifically blocked. Runtime derives open_questions/Proposals. No mandatory plan, minimum read/Proposal count or extra summary call."""
     from pydantic import ValidationError
     from app.investigation_agent import Finding, _validate_summary
     from app.investigation_state import validation_issues
 
-    draft, errors = questions.review_updates(question_updates, case, seen, context, proposals, knowledge)
+    draft, errors = questions.review_updates(question_updates, case, seen, context)
     question_errors = bool(errors)
-    # A diagnostic draft can contain invalid bindings. Never accept that batch.
+    # A diagnostic draft can contain invalid Questions. Never accept that batch.
     for issue in errors:
         issue.setdefault("error_code", issue["code"] if issue["code"] in {
-            "invalid_plan_reference", "unresolved_plan", "goal_scope_changed", "invalid_questions",
+            "goal_scope_changed", "invalid_questions",
             "question_limit", "invalid_investigation_reference"} else "invalid_tool_arguments")
 
     def error(loc, code, message, fix, *, error_code="investigation_incomplete"):
@@ -96,10 +96,15 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
         if q.status in {"pending", "in_progress"}:
             error(["questions", q.id], "question_unresolved", q.question,
                   "Answer this Question with an obtained basis, or block it with the specific missing condition/kind")
-        for plan in q.planned_actions:
-            if not plan.proposal_id and not plan.omission_reason:
-                error(["questions", q.id, "planned_actions", plan.id], "unresolved_plan", plan.description,
-                      "Use its actual same-run Proposal ID or record omission_reason; retain registered action IDs")
+        steps = [s for s in draft.steps.values() if s.question_id == q.id]
+        for step in steps:
+            if step.status in {"pending", "in_progress"}:
+                error(["investigation_steps", step.id, "status"], "step_unresolved", step.objective,
+                      "Continue the registered step or use update_investigation_steps to record its result or specific deferral reason; do not replace uninvestigated work with evidence_missing")
+        if steps and all(s.status == "deferred" for s in steps) and q.status == "answered":
+            question_errors = True
+            error(["questions", q.id, "status"], "all_steps_deferred", "Deferring all registered work does not establish that this Question is answered",
+                  "Keep this Question blocked with the actual unresolved condition, or reopen and handle relevant work")
     blocked = [q for q in draft.items.values() if q.status == "blocked"]
     if draft.items["Q1"].status == "answered" and any(q.id != "Q1" and q.status != "answered" for q in draft.items.values()):
         question_errors = True
@@ -202,10 +207,10 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
                 qid = path[1] if len(path) > 1 else None
                 mapped = (["question_updates", *path[1:]] if isinstance(qid, int) else
                           ["question_updates", indices[qid], *path[2:]] if qid in indices else ["question_updates"])
-                if len(mapped) > 3 and mapped[2] == "planned_actions" and isinstance(mapped[3], str):
-                    plans = question_updates[mapped[1]].get("planned_actions", [])
-                    mapped[3] = next((i for i, p in enumerate(plans) if isinstance(p, dict) and p.get("id") == mapped[3]), mapped[3])
                 issue["argument_loc"] = mapped
+            if path[:1] == ["investigation_steps"]:
+                issue["repair_tool"] = "update_investigation_steps"
+                issue["argument_loc"] = ["steps", path[1], *path[2:]]
         raise AppError(errors[0].get("error_code", "investigation_incomplete"), "Finish rejected; address all listed issues before retrying",
             details={"category": errors[0].get("category", "completion"), "errors": errors,
                      "question_updates_applied": not question_errors,
