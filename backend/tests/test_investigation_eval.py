@@ -227,13 +227,17 @@ class TestInvestigationEval(unittest.TestCase):
         self.assertTrue(all(i["metrics"]["model_call_count"] == 2 for i in report["items"]))
 
     def test_single_task_dry_run_invokes_full_agent_exactly_once(self):
-        with patch.object(runner.agent, "run_investigation", wraps=runner.agent.run_investigation) as run:
+        with patch.object(runner.agent, "run_investigation", wraps=runner.agent.run_investigation) as run, \
+                patch.object(runner, "_mock_reply", wraps=runner._mock_reply) as model:
             report = runner.dry_run(task_id="A1")
         self.assertEqual([item["task_id"] for item in report["items"]], ["A1"])
         self.assertEqual(len(report["trace_ids"]), 1)
         self.assertEqual(report["maximum_live_model_calls"], 28)
         self.assertEqual(report["paid_model_calls"], 0)
         self.assertEqual(run.await_count, 1)
+        self.assertEqual(model.call_count, 2)
+        for call in model.call_args_list:
+            self.assertNotIn("investigation_opportunities", json.dumps(call.args[1:]))
 
     def test_selector_and_cli_reject_unknown_tasks_and_non_run_operations(self):
         dataset = NS(items=[NS(input=row["input"]) for row in data.dataset_items()])

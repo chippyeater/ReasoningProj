@@ -74,7 +74,7 @@ Question 是本轮任务；Finding 是调查判断；Hypothesis 是待检验命�
 
 每轮 user 数据提供 KnowledgeState 的实际材料、QuestionState 的当前任务与进度、已成功的 Proposal 和剩余预算，旧工具历史不重放。注意 excerpt / context_truncated / omitted_ids 以及原工具的截断、空结果和错误；需要完整措辞或省略材料时使用现有只读工具。question_ids 可关联指定已登记任务，null 使用当前任务。
 
-investigation_opportunities 是后端从当前案件索引、已有材料及检索活动派生的有限检索建议，不是已读取证据，不授予引用资格。索引可能遗漏相关材料或包含误命中；由你根据用户目标和实际调查进展自主决定调查范围与结束时机，无需穷尽或逐项解释候选线索。候选建议不构成结束条件。
+根据 Question、已获取材料、调查进展和未解决条件，自主决定检索目标、工具选择和停止时机。
 
 使用 finish_investigation 正常结束；它合并 Findings 提交，不再调用模型总结。所有 Question 须 answered（所请求方面已解决，有实际材料和 finding）或 blocked（具体缺失条件及 block_reason/block_kind），所有已登记的 planned_actions 须关联实际 Proposal 或说明放弃。结束工具若返回待处理项，在预算内继续修正。普通文本不会结束调查。
 

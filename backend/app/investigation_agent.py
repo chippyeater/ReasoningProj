@@ -113,7 +113,7 @@ def tool_definitions() -> list[dict]:
     question_schema = Question.model_json_schema()
     question_defs = question_schema.pop("$defs")
     update_schema = {"type": "array", "items": question_schema, "maxItems": 20}
-    definition = _function("update_questions", "Batch create/adjust run-local Questions. Q1 retains the full original goal. Track independently requested answers/conditions as distinct Questions. Only mark answered when resolved; otherwise block with specific missing condition/kind. investigation_opportunities provides optional retrieval suggestions; the Agent decides investigation scope. Preserve plan IDs/kinds and validated Proposal bindings; descriptions may be rephrased. Link only actual same-run proposal_id of matching kind, submitted under this Question's question_ids with related materials/dependencies. No canvas writes.", {"questions": update_schema})
+    definition = _function("update_questions", "Batch create/adjust run-local Questions. Q1 retains the full original goal. Track independently requested answers/conditions as distinct Questions. Only mark answered when resolved; otherwise block with specific missing condition/kind. Preserve plan IDs/kinds and validated Proposal bindings; descriptions may be rephrased. Link only actual same-run proposal_id of matching kind, submitted under this Question's question_ids with related materials/dependencies. No canvas writes.", {"questions": update_schema})
     definition["function"]["parameters"]["$defs"] = question_defs
     definitions.append(definition)
     finding_schema = Finding.model_json_schema()
@@ -512,8 +512,7 @@ async def run_investigation(case: CaseData, goal: str,
             remaining = {key: limits[key] - used[key] for key in limits}
             remaining["total"] = MAX_TOTAL_CALLS - attempts
             remaining["model"] = MAX_MODEL_CALLS - len(audit["model_calls"])
-            state = model_context(initial_input, knowledge, questions, remaining, recovery,
-                                  knowledge.available_work(bound_case, questions))
+            state = model_context(initial_input, knowledge, questions, remaining, recovery)
             request_messages = [{"role": "system", "content": prompt.content},
                                 {"role": "user", "content": json.dumps(state, ensure_ascii=False)}, *recent]
             # 'required' is supported by the existing native client; no fabricated tool call/ID for premature prose.

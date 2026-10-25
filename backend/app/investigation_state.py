@@ -318,7 +318,7 @@ def _preview(value, text_limit=500):
     return value
 
 
-def model_context(initial, knowledge, questions, budget, recovery, opportunities=None):
+def model_context(initial, knowledge, questions, budget, recovery):
     """Bound each section and disclose omitted records; no summarization model."""
     # Work context is already bounded by the Issue service, retained as user data.
     result = {**deepcopy(initial), "question_state": {}, "knowledge_state": {},
@@ -362,9 +362,8 @@ def model_context(initial, knowledge, questions, budget, recovery, opportunities
         "activities": section([(str(i), a) for i, a in enumerate(knowledge.activities)], 4500),
         "findings": section([(str(i), f) for i, f in enumerate(knowledge.findings)], 3000),
         "proposals": section([(p["proposal_id"], p) for p in knowledge.proposals], 5000)}
-    result["investigation_opportunities"] = section(sorted((opportunities or {}).items(), key=lambda row: row[0] not in current), 6500)
     # Global cap: trim the largest detailed section; progress/budget/recovery stay visible.
-    candidates = [result["question_state"]["details"], result["investigation_opportunities"], *[v for v in result["knowledge_state"].values()
+    candidates = [result["question_state"]["details"], *[v for v in result["knowledge_state"].values()
                   if isinstance(v, dict) and "omitted_ids" in v]]
     while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and any(s["items"] for s in candidates):
         target = max((s for s in candidates if s["items"]), key=lambda s: len(json.dumps(s, ensure_ascii=False)))

@@ -1,4 +1,4 @@
-"""Completion contracts and advisory retrieval suggestions, never read quotas."""
+"""Completion contracts and audit-only discovery hints, never read quotas."""
 import json
 import unittest
 from unittest.mock import patch
@@ -42,8 +42,7 @@ class TestInvestigationSufficiency(unittest.TestCase):
         result, calls = self.run_script(goal, [f.finish(goal, ["U029"], refs=[("U029", 0)],
             status="evidence_insufficient", questions=["缺少独立佐证"])], selected=["U029"], case=self.claims_case())
         state = json.loads(calls[0]["messages"][1]["content"])
-        leads = state["investigation_opportunities"]["items"][0]["items"]
-        self.assertIn("U036", {lead["info_unit_id"] for lead in leads})
+        self.assertNotIn("investigation_opportunities", state)
         self.assertEqual(len(calls), 1)
         self.assertEqual(result["stop_reason"], "finish_investigation")
         self.assertEqual(result["completion_status"], "evidence_insufficient")
@@ -53,6 +52,23 @@ class TestInvestigationSufficiency(unittest.TestCase):
         self.assertEqual(audit["tool_calls"][0]["result"]["status"], "ok")
         self.assertNotIn("U036", audit["knowledge_state"]["info_units"])
         self.assertTrue(audit["investigation_opportunities"]["Q1"]["items"])
+
+    def test_audit_candidates_never_enter_model_requests_including_error_recovery(self):
+        marker = "AUDIT_ONLY_CANDIDATE_NEVER_SENT_TO_MODEL"
+        with patch.object(KnowledgeState, "available_work", return_value={"Q1": {"items": [marker]}}):
+            result, calls = self.run_script("核对", [
+                f.tool("propose_hypothesis", {"content": "待检验解释", "rationale": "待核实",
+                    "info_unit_ids": ["U036"], "evidence_refs": []}, "invalid"),
+                f.tool("get_evidence", {"info_unit_ids": ["U036"]}, "read"),
+                f.finish("核对", ["U029", "U036"], refs=[("U029", 0), ("U036", 0)],
+                    status="evidence_insufficient")], selected=["U029"], case=self.claims_case())
+        self.assertEqual(result["stop_reason"], "finish_investigation")
+        for call in calls:
+            request = json.dumps({"messages": call["messages"], "tools": call["definitions"]})
+            self.assertNotIn("investigation_opportunities", request)
+            self.assertNotIn(marker, request)
+        self.assertEqual(json.loads(calls[1]["messages"][-1]["content"])["status"], "invalid_request")
+        self.assertEqual(self.audits()[0]["investigation_opportunities"]["Q1"]["items"], [marker])
 
     def test_actual_insufficiency_can_finish_from_complete_initial_material_without_reads(self):
         result, calls = self.run_script("核对", [f.finish("核对", ["U029", "U036"], refs=[("U029", 0), ("U036", 0)],
@@ -144,8 +160,10 @@ class TestInvestigationSufficiency(unittest.TestCase):
         opportunities = knowledge.available_work(case, questions)
         ids = {item["lead_id"] for item in opportunities["Q1"]["items"]}
         self.assertTrue({"source:U029", "query:0"} <= ids)
-        view = model_context({"goal": "核对", "selected_info_units": []}, knowledge, questions, {}, None, opportunities)
-        self.assertTrue(view["investigation_opportunities"]["items"])
+        view = model_context({"goal": "核对", "selected_info_units": []}, knowledge, questions, {}, None)
+        self.assertNotIn("investigation_opportunities", view)
+        self.assertTrue(view["knowledge_state"]["source_refs"]["items"][0]["quote_truncated"])
+        self.assertTrue(view["knowledge_state"]["activities"]["items"][0]["has_more"])
         self.assertEqual(knowledge.dump(), before)
         self.assertNotIn(("U036", 0), seen["evidence"])
         result, _, _ = actions.finish_investigation(case, seen, None, "核对", [], questions,
