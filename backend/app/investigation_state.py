@@ -51,11 +51,6 @@ class PlannedAction(StateModel):
         return self
 
 
-class LeadAssessment(StateModel):
-    lead_id: Annotated[str, Field(min_length=1, max_length=700, pattern=r"\S")]
-    reason: Text
-
-
 class Question(StateModel):
     id: Identifier
     question: Annotated[str, Field(min_length=1, max_length=2000, pattern=r"\S")]
@@ -66,7 +61,6 @@ class Question(StateModel):
     block_reason: Text | None
     block_kind: Literal["evidence_missing", "tool_failure", "unsupported", "budget_exhausted"] | None
     planned_actions: Annotated[list[PlannedAction], Field(max_length=6)]
-    skipped_leads: Annotated[list[LeadAssessment], Field(max_length=80)]
 
     @model_validator(mode="after")
     def consistent_status(self):
@@ -79,15 +73,13 @@ class Question(StateModel):
             raise ValueError("Answered questions require a finding and obtained materials")
         if len({p.id for p in self.planned_actions}) != len(self.planned_actions):
             raise ValueError("Duplicate planned action IDs")
-        if len({p.lead_id for p in self.skipped_leads}) != len(self.skipped_leads):
-            raise ValueError("Duplicate skipped lead IDs")
         return self
 
 
 class QuestionState:
     def __init__(self, goal):
         self.items = {"Q1": Question(id="Q1", question=goal, status="pending", related_info_unit_ids=[],
-            evidence_refs=[], finding=None, block_reason=None, block_kind=None, planned_actions=[], skipped_leads=[])}
+            evidence_refs=[], finding=None, block_reason=None, block_kind=None, planned_actions=[])}
         self.activities = {"Q1": []}
 
     def dump(self):
@@ -122,9 +114,6 @@ class QuestionState:
         lookup = {p.proposal_id: p for p in proposals}
         owners = {a["proposal_id"]: set(a["question_ids"]) for a in knowledge.activities
                   if a.get("proposal_id") and a["status"] == "ok"} if knowledge else {}
-        known_leads = {prefix + u.id for u in case.info_units for prefix in ("unit:", "source:")}
-        if knowledge:
-            known_leads.update(f"query:{i}" for i, a in enumerate(knowledge.activities) if a["has_more"])
 
         def error(loc, code, message, fix):
             errors.append({"loc": loc, "code": code, "message": message, "fix": fix})
@@ -138,11 +127,6 @@ class QuestionState:
             if previous and not {p.id for p in previous.planned_actions} <= {p.id for p in q.planned_actions}:
                 error([*loc, "planned_actions"], "unresolved_plan", "Do not delete registered planned actions",
                       "Keep their IDs; link their actual Proposals or record omission_reason")
-            for index, assessment in enumerate(q.skipped_leads):
-                if assessment.lead_id not in known_leads:
-                    error([*loc, "skipped_leads", index, "lead_id"], "invalid_investigation_reference",
-                          "Skipped lead is not current-case material or an actual truncated query",
-                          "Use lead_id from investigation_opportunities")
             for plan in q.planned_actions:
                 ploc = [*loc, "planned_actions", plan.id]
                 old = next((p for p in previous.planned_actions if p.id == plan.id), None) if previous else None

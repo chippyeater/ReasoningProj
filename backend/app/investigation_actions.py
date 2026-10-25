@@ -74,8 +74,8 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
 
 
 def finish_investigation(case, seen, context, goal, proposals, questions, *, answer, findings,
-                         question_updates, completion_status, knowledge, budget_exhausted=False, read_budget_exhausted=False):
-    """Finish with answer, cited findings and changed Questions; question_updates=[] reuses validated working state. Failures list independent field errors with fix hints and report whether Question updates were retained; failed answer/findings are never accepted. Plans use actual same-run proposal_id, matching kind, recorded Question scope and material/dependency links, not identical prose; preserve validated bindings. Q1 retains the full goal; unresolved aspects must be specifically blocked. Before insufficiency inspect useful investigation_opportunities or record skipped_leads {lead_id, reason} explaining why each cannot help. Relevance is a model judgment, not proof. Resolve planned actions; Runtime derives open_questions/Proposals. No read quota, Proposal count or extra summary call."""
+                         question_updates, completion_status, knowledge, budget_exhausted=False):
+    """Finish with answer, cited findings and changed Questions; question_updates=[] reuses validated working state. Failures list independent field errors with fix hints and report whether Question updates were retained; failed answer/findings are never accepted. Plans use actual same-run proposal_id, matching kind, recorded Question scope and material/dependency links, not identical prose; preserve validated bindings. Q1 retains the full goal; unresolved aspects must be specifically blocked. investigation_opportunities provides optional retrieval suggestions, never a completion requirement; the Agent decides investigation scope and when to finish. Resolve planned actions; Runtime derives open_questions/Proposals. No minimum read/Proposal count or extra summary call."""
     from pydantic import ValidationError
     from app.investigation_agent import Finding, _validate_summary
     from app.investigation_state import validation_issues
@@ -88,9 +88,9 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
             "invalid_plan_reference", "unresolved_plan", "goal_scope_changed", "invalid_questions",
             "question_limit", "invalid_investigation_reference"} else "invalid_tool_arguments")
 
-    def error(loc, code, message, fix, *, error_code="investigation_incomplete", **extra):
+    def error(loc, code, message, fix, *, error_code="investigation_incomplete"):
         errors.append({"loc": loc, "code": code, "message": message, "fix": fix,
-                       "error_code": error_code, **extra})
+                       "error_code": error_code})
 
     for q in draft.items.values():
         if q.status in {"pending", "in_progress"}:
@@ -124,18 +124,6 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
     if completion_status == "completed" and not findings:
         error(["findings"], "invalid_findings", "Completed investigation requires a grounded finding",
               "Include a finding with its obtained material and source pointers", error_code="invalid_findings")
-    opportunities = knowledge.available_work(case, draft)
-    for q in draft.items.values():
-        assessed = {assessment.lead_id for assessment in q.skipped_leads}
-        if q.status != "blocked" or q.block_kind == "unsupported":
-            continue
-        for lead in opportunities[q.id]["items"]:
-            if lead["lead_id"] in assessed or (read_budget_exhausted and q.block_kind == "budget_exhausted"):
-                continue
-            error(["questions", q.id, "skipped_leads"], "uninvestigated_lead",
-                  "Relevant material may still resolve the missing condition",
-                  "Use the opportunity's read tool, or record lead_id/reason explaining why it cannot help; exhausted reads require budget blocking",
-                  opportunity=lead)
 
     # Validate independent finding rows even when a different row is malformed.
     parsed_findings = []

@@ -26,14 +26,14 @@ def final(text):
     return llm_client.ToolReply(text, {"model": "mock-model", "choices": [{"finish_reason": "stop", "message": message}]}, message)
 
 
-def question(goal, qid="Q1", *, status="pending", units=(), refs=(), finding=None, reason=None, block_kind=None, plans=(), skipped_leads=()):
+def question(goal, qid="Q1", *, status="pending", units=(), refs=(), finding=None, reason=None, block_kind=None, plans=()):
     return {"id": qid, "question": goal, "status": status, "related_info_unit_ids": list(units),
         "evidence_refs": [{"info_unit_id": uid, "source_ref_index": index} for uid,index in refs],
-        "finding": finding, "block_reason": reason, "block_kind": block_kind, "planned_actions": list(plans), "skipped_leads": list(skipped_leads)}
+        "finding": finding, "block_reason": reason, "block_kind": block_kind, "planned_actions": list(plans)}
 
 
 def finish(goal, units=(), relations=(), refs=(), *, status=None, statement=None,
-           questions=(), call_id="finish", answer=None, updates=None, skipped_leads=()):
+           questions=(), call_id="finish", answer=None, updates=None):
     # A fixture reporting retrieved wording has answered that narrow request;
     # tests about unresolved judgments explicitly choose evidence_insufficient.
     status = status or ("completed" if units or relations or refs else "evidence_insufficient")
@@ -44,8 +44,7 @@ def finish(goal, units=(), relations=(), refs=(), *, status=None, statement=None
     reason = "；".join(questions) or "仍需独立材料核实，当前材料不足。"
     root = question(goal, status="blocked" if blocked else "answered", units=units, refs=refs,
         finding=text if units else None, reason=reason if blocked else None,
-        block_kind=("unsupported" if status=="unsupported" else "budget_exhausted" if status=="budget_exhausted" else "evidence_missing") if blocked else None,
-        skipped_leads=skipped_leads)
+        block_kind=("unsupported" if status=="unsupported" else "budget_exhausted" if status=="budget_exhausted" else "evidence_missing") if blocked else None)
     return tool("finish_investigation", {"answer": answer or (text if units else reason),
         "findings": [finding] if units or relations or refs else [],
         "question_updates": [root] if updates is None else updates, "completion_status": status}, call_id)

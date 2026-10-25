@@ -113,7 +113,7 @@ def tool_definitions() -> list[dict]:
     question_schema = Question.model_json_schema()
     question_defs = question_schema.pop("$defs")
     update_schema = {"type": "array", "items": question_schema, "maxItems": 20}
-    definition = _function("update_questions", "Batch create/adjust run-local Questions. Q1 retains the full original goal. Track independently requested answers/conditions as distinct Questions. Only mark answered when resolved; otherwise block with specific missing condition/kind. Review useful investigation_opportunities before insufficiency; skipped_leads records each declined lead_id/reason. Preserve plan IDs/kinds and validated Proposal bindings; descriptions may be rephrased. Link only actual same-run proposal_id of matching kind, submitted under this Question's question_ids with related materials/dependencies. No canvas writes.", {"questions": update_schema})
+    definition = _function("update_questions", "Batch create/adjust run-local Questions. Q1 retains the full original goal. Track independently requested answers/conditions as distinct Questions. Only mark answered when resolved; otherwise block with specific missing condition/kind. investigation_opportunities provides optional retrieval suggestions; the Agent decides investigation scope. Preserve plan IDs/kinds and validated Proposal bindings; descriptions may be rephrased. Link only actual same-run proposal_id of matching kind, submitted under this Question's question_ids with related materials/dependencies. No canvas writes.", {"questions": update_schema})
     definition["function"]["parameters"]["$defs"] = question_defs
     definitions.append(definition)
     finding_schema = Finding.model_json_schema()
@@ -343,9 +343,7 @@ def _tool_recovery(response, name):
         if item["code"] == "reference_not_obtained" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_id"]):
             item["code"] = "invalid_hypothesis_target"
     codes = {item["code"] for item in details["errors"]}
-    if "uninvestigated_lead" in codes:
-        hint = "检查 opportunity 中可继续取得的材料；有判断价值则用所列只读工具调查，否则在对应 Question.skipped_leads 逐项说明不能补足缺失条件的原因。预算阻止继续时明确报告预算限制。"
-    elif codes & {"goal_scope_changed", "goal_scope_incomplete", "insufficiency_without_unresolved_question"}:
+    if codes & {"goal_scope_changed", "goal_scope_incomplete", "insufficiency_without_unresolved_question"}:
         hint = "保留 Q1 原始目标，逐项跟踪用户要求；尚未解决的方面应 blocked 并说明缺失条件，不能用 answered 和证据不足同时结束。"
     elif codes & {"invalid_hypothesis_proposal_target", "invalid_hypothesis_target"}:
         hint = "仅使用本轮成功返回的 Hypothesis proposal_id，或上下文中的正式 Hypothesis ID；不能使用其他运行或其他建议类型。"
@@ -360,7 +358,7 @@ def _tool_recovery(response, name):
     else:
         hint = "对照工具 Schema 和错误字段修正参数；来源不可用时可换用其他材料或明确报告限制，不要反复原样重试。"
     if name == "finish_investigation":
-        hint = "逐项处理 validation_details.errors 的 argument_loc、message 和 fix（材料问题见 opportunity）；" + hint
+        hint = "逐项处理 validation_details.errors 的 argument_loc、message 和 fix；" + hint
         if details.get("question_updates_applied"):
             hint += " 合法 Question 更新已保存为工作记忆；question_updates=[] 可复用，只提交需修改的问题。最终答复和 Findings 尚未接受。"
         else:
@@ -586,7 +584,7 @@ async def run_investigation(case: CaseData, goal: str,
                             response = questions.update(args["questions"], bound_case, seen, work_context, proposals, knowledge)
                         else:
                             finished = actions.finish_investigation(bound_case, seen, work_context, goal, proposals, questions,
-                                **args, knowledge=knowledge, read_budget_exhausted=used["read"] >= limits["read"],
+                                **args, knowledge=knowledge,
                                 budget_exhausted=used["read"] >= limits["read"] or used["proposal"] >= limits["proposal"])
                             result, final_questions, answer = finished
                             findings = [f.model_dump(mode="json") for f in result.findings]

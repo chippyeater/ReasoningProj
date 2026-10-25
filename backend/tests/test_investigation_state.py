@@ -52,8 +52,8 @@ class TestInvestigationState(unittest.TestCase):
         result, calls = self.run_script(goal, [f.tool("update_questions", {"questions": [pending]}, "add"),
             f.finish(goal, ["U029"], refs=[("U029", 0)], status="completed", call_id="premature"),
             f.finish(goal, ["U029"], refs=[("U029", 0)], status="evidence_insufficient", updates=[
-                f.question(goal, status="blocked", units=["U029"], reason="另一项请求仍缺独立佐证", block_kind="evidence_missing", skipped_leads=[{"lead_id":"unit:U036", "reason":"需要独立佐证，另一份单方陈述不能满足这个缺失条件"}, {"lead_id":"source:U029", "reason":"同一当事人的聊天不能补足独立佐证"}, {"lead_id":"unit:U026", "reason":"当事人对入住的陈述不是独立佐证"}, {"lead_id":"unit:U022", "reason":"当事人对搬离的自述不是独立佐证"}]),
-                f.question(pending["question"], "Q2", status="blocked", reason="缺少独立核查材料", block_kind="evidence_missing", skipped_leads=[{"lead_id":"unit:U036", "reason":"独立佐证需由非当事人材料补充，另一方笔录无法满足"}])])], selected=["U029"])
+                f.question(goal, status="blocked", units=["U029"], reason="另一项请求仍缺独立佐证", block_kind="evidence_missing"),
+                f.question(pending["question"], "Q2", status="blocked", reason="缺少独立核查材料", block_kind="evidence_missing")])], selected=["U029"])
         error = json.loads(calls[2]["messages"][-1]["content"])["error"]
         self.assertEqual(error["code"], "investigation_incomplete")
         self.assertEqual(error["validation_details"]["errors"][0]["loc"], ["questions", "Q2"])
@@ -80,7 +80,7 @@ class TestInvestigationState(unittest.TestCase):
                 self.assertEqual(error["validation_details"]["errors"][0]["code"], "unresolved_plan")
                 updated[1]["omission_reason"] = "与当前已采纳解释重复；不新增同义假设。"
             return f.finish(goal, ["U029"], refs=[("U029", 0)], status="evidence_insufficient", call_id=f"finish-{turn}", updates=[
-                f.question(goal, status="blocked", units=["U029"], reason="缺收款证据", block_kind="evidence_missing", plans=updated, skipped_leads=[{"lead_id":"source:U029", "reason":"同一当事人的聊天不能替代实际收款凭据。"}])])
+                f.question(goal, status="blocked", units=["U029"], reason="缺收款证据", block_kind="evidence_missing", plans=updated)])
         case = self.case.model_copy(deep=True)
         case.info_units = [u for u in case.info_units if u.id == "U029"]
         case.relations = []

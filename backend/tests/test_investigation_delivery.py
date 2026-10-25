@@ -33,9 +33,9 @@ class TestInvestigationDelivery(unittest.TestCase):
     def plan(self, pid, kind="hypothesis", ident="H", description="登记可检验的租金损失解释"):
         return {"id": ident, "kind": kind, "description": description, "proposal_id": pid, "omission_reason": None}
 
-    def blocked(self, plans=(), units=("U029",), skipped=()):
+    def blocked(self, plans=(), units=("U029",)):
         return f.question("核对", status="blocked", units=list(units), reason="缺独立收款凭证", block_kind="evidence_missing",
-                          plans=list(plans), skipped_leads=list(skipped))
+                          plans=list(plans))
 
     def test_paraphrased_plans_link_hypothesis_and_gap_by_ids_and_provenance(self):
         case, knowledge, questions, seen = self.state()
@@ -87,7 +87,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         questions.update([self.blocked([self.plan(gid, "evidence_gap", "G")])], case, seen, self.context, proposals, knowledge)
         self.assertEqual(questions.items["Q1"].planned_actions[0].proposal_id, gid)
 
-    def test_first_finish_reports_plan_coverage_relation_source_and_summary_errors(self):
+    def test_first_finish_reports_plan_relation_source_and_summary_errors(self):
         case, knowledge, questions, seen = self.state(ids=("U029",))
         proposals = []
         hid = self.proposal(case, knowledge, seen, proposals)
@@ -101,7 +101,7 @@ class TestInvestigationDelivery(unittest.TestCase):
             actions.finish_investigation(case, seen, self.context, "核对", proposals, questions, knowledge=knowledge, **args)
         details = caught.exception.details
         codes = {e["code"] for e in details["errors"]}
-        self.assertTrue({"invalid_plan_reference", "uninvestigated_lead", "reference_not_obtained", "reference_out_of_range", "summary_too_long"} <= codes)
+        self.assertTrue({"invalid_plan_reference", "reference_not_obtained", "reference_out_of_range", "summary_too_long"} <= codes)
         self.assertEqual(details["errors"][0]["argument_loc"], ["question_updates", 0, "planned_actions", 0, "proposal_id"])
         self.assertTrue(any(e.get("argument_loc") == ["findings", 0, "relation_ids", 0] for e in details["errors"]))
         self.assertTrue(any(e.get("argument_loc") == ["findings", 0, "evidence_refs", 0] for e in details["errors"]))
@@ -117,7 +117,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         with self.assertRaises(AppError) as caught:
             actions.finish_investigation(case, seen, self.context, "核对", [], questions, knowledge=knowledge, **args)
         codes = {e["code"] for e in caught.exception.details["errors"]}
-        self.assertTrue({"missing", "model_type", "uninvestigated_lead", "reference_not_found", "summary_too_long"} <= codes)
+        self.assertTrue({"missing", "model_type", "reference_not_found", "summary_too_long"} <= codes)
         self.assertTrue(any(e.get("argument_loc") == ["question_updates", 1, "question"] for e in caught.exception.details["errors"]))
         self.assertEqual(questions.items["Q1"].status, "pending")
 
@@ -149,7 +149,7 @@ class TestInvestigationDelivery(unittest.TestCase):
             if turn == 5:
                 error = json.loads(call["messages"][-1]["content"])["error"]
                 codes = {e["code"] for e in error["validation_details"]["errors"]}
-                self.assertTrue({"uninvestigated_lead", "reference_not_obtained"} <= codes)
+                self.assertIn("reference_not_obtained", codes)
                 self.assertNotIn("invalid_plan_reference", codes)
                 self.assertTrue(error["validation_details"]["question_updates_applied"])
                 self.assertEqual(state["question_state"]["details"]["items"][0]["planned_actions"][0]["proposal_id"], ids[0])

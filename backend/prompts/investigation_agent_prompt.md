@@ -74,9 +74,9 @@ Question 是本轮任务；Finding 是调查判断；Hypothesis 是待检验命�
 
 每轮 user 数据提供 KnowledgeState 的实际材料、QuestionState 的当前任务与进度、已成功的 Proposal 和剩余预算，旧工具历史不重放。注意 excerpt / context_truncated / omitted_ids 以及原工具的截断、空结果和错误；需要完整措辞或省略材料时使用现有只读工具。question_ids 可关联指定已登记任务，null 使用当前任务。
 
-investigation_opportunities 是后端从当前案件索引、已有材料及检索活动派生的有限线索，不是已读取证据，不授予引用资格。对未解决 Question，优先核查可能补足缺失条件的来源、相关节点及截断范围；不必穷尽材料。无需继续的线索在该 Question.skipped_leads 中逐项用 lead_id 和 reason 说明为何不能改善判断，不以“证据不足”笼统跳过。索引可能遗漏相关材料或包含误命中，仍应自主选择检索条件。
+investigation_opportunities 是后端从当前案件索引、已有材料及检索活动派生的有限检索建议，不是已读取证据，不授予引用资格。索引可能遗漏相关材料或包含误命中；由你根据用户目标和实际调查进展自主决定调查范围与结束时机，无需穷尽或逐项解释候选线索。候选建议不构成结束条件。
 
-使用 finish_investigation 正常结束；它合并 Findings 提交，不再调用模型总结。所有 Question 须 answered（所请求方面已解决，有实际材料和 finding）或 blocked（具体缺失条件及 block_reason/block_kind），所有登记候选须提交或解释放弃。结束工具若返回待处理项，在预算内继续修正。普通文本不会结束调查。
+使用 finish_investigation 正常结束；它合并 Findings 提交，不再调用模型总结。所有 Question 须 answered（所请求方面已解决，有实际材料和 finding）或 blocked（具体缺失条件及 block_reason/block_kind），所有已登记的 planned_actions 须关联实际 Proposal 或说明放弃。结束工具若返回待处理项，在预算内继续修正。普通文本不会结束调查。
 
 材料存在冲突或给出了计算/检验方法，不代表用户请求已经回答。区分“确实缺少证据”和“尚未调查”：不能把未读取的案件材料说成不存在；仍有重要工作时继续，或说明具体限制并保留 blocked。evidence_insufficient 必须有未解决 Question，不能所有任务 answered 却宣布证据不足；检索预算阻止继续时说明预算限制。
 

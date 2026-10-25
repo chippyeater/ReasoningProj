@@ -1,6 +1,7 @@
-"""Completion is about requested work and available material, never call quotas."""
+"""Completion contracts and advisory retrieval suggestions, never read quotas."""
 import json
 import unittest
+from unittest.mock import patch
 
 import test_investigation_agent as f
 from app import investigation_actions as actions, investigation_agent as agent, investigation_tools as tools
@@ -36,23 +37,22 @@ class TestInvestigationSufficiency(unittest.TestCase):
     def finish_args(self, goal="核对", *, status="evidence_insufficient", updates=None):
         return agent._arguments("finish_investigation", f.finish(goal, status=status, updates=updates).message["tool_calls"][0]["function"]["arguments"])
 
-    def test_related_unread_material_prevents_early_insufficiency_and_model_can_continue(self):
+    def test_unread_suggestions_do_not_block_valid_insufficient_finish(self):
         goal = "核对"
-        result, calls = self.run_script(goal, [
-            f.finish(goal, ["U029"], refs=[("U029", 0)], status="evidence_insufficient", questions=["缺少独立佐证"], call_id="early"),
-            f.tool("get_evidence", {"info_unit_ids": ["U036"]}, "other-side"),
-            f.finish(goal, ["U029", "U036"], refs=[("U029", 0), ("U036", 0)],
-                status="evidence_insufficient", questions=["两方陈述有分歧，缺少独立佐证"])
-        ], selected=["U029"], case=self.claims_case())
-        error = json.loads(calls[1]["messages"][-1]["content"])["error"]
-        self.assertEqual(error["validation_details"]["errors"][0]["code"], "uninvestigated_lead")
-        self.assertIn("opportunity", error["recovery_hint"])
-        lead = error["validation_details"]["errors"][0]["opportunity"]
-        self.assertEqual(lead["info_unit_id"], "U036")
-        self.assertEqual(lead["next_tool"], "get_evidence")
+        result, calls = self.run_script(goal, [f.finish(goal, ["U029"], refs=[("U029", 0)],
+            status="evidence_insufficient", questions=["缺少独立佐证"])], selected=["U029"], case=self.claims_case())
+        state = json.loads(calls[0]["messages"][1]["content"])
+        leads = state["investigation_opportunities"]["items"][0]["items"]
+        self.assertIn("U036", {lead["info_unit_id"] for lead in leads})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result["stop_reason"], "finish_investigation")
         self.assertEqual(result["completion_status"], "evidence_insufficient")
         self.assertTrue(result["open_questions"])
-        self.assertEqual(self.audits()[0]["tool_calls"][0]["result"]["status"], "invalid_request")
+        self.assertEqual(result["tool_budget_used"]["read"], 0)
+        audit = self.audits()[0]
+        self.assertEqual(audit["tool_calls"][0]["result"]["status"], "ok")
+        self.assertNotIn("U036", audit["knowledge_state"]["info_units"])
+        self.assertTrue(audit["investigation_opportunities"]["Q1"]["items"])
 
     def test_actual_insufficiency_can_finish_from_complete_initial_material_without_reads(self):
         result, calls = self.run_script("核对", [f.finish("核对", ["U029", "U036"], refs=[("U029", 0), ("U036", 0)],
@@ -113,16 +113,28 @@ class TestInvestigationSufficiency(unittest.TestCase):
         self.assertEqual(caught.exception.code, "goal_scope_changed")
         self.assertEqual(questions.items["Q1"].question, goal)
 
-    def test_valuable_looking_lead_can_be_explicitly_declined_without_exhausting_material(self):
+    def test_finish_does_not_consult_the_discovery_index(self):
         case, knowledge, questions, seen = self.state(ids=("U029",))
-        blocked = f.question("核对", status="blocked", reason="缺独立佐证", block_kind="evidence_missing",
-            skipped_leads=[{"lead_id": "unit:U036", "reason": "该线索是另一方笔录；本问缺的是独立第三方记录，不能由另一份单方陈述替代。"}])
-        result, updated, _answer = actions.finish_investigation(case, seen, None, "核对", [], questions,
-            knowledge=knowledge, **self.finish_args(updates=[blocked]))
+        blocked = f.question("核对", status="blocked", reason="缺独立佐证", block_kind="evidence_missing")
+        with patch.object(knowledge, "available_work", side_effect=AssertionError("Advice is not a completion dependency")):
+            result, updated, _answer = actions.finish_investigation(case, seen, None, "核对", [], questions,
+                knowledge=knowledge, **self.finish_args(updates=[blocked]))
         self.assertEqual(result.completion_status, "evidence_insufficient")
-        self.assertEqual(updated.items["Q1"].skipped_leads[0].lead_id, "unit:U036")
+        self.assertEqual(updated.items["Q1"].status, "blocked")
         self.assertNotIn("U036", seen["units"])
         self.assertEqual(knowledge.activities, [])
+
+    def test_removed_skip_field_is_absent_from_schema_and_not_accepted(self):
+        case, knowledge, questions, seen = self.state(ids=("U029",))
+        self.assertNotIn("skipped_leads", json.dumps(agent.tool_definitions()))
+        self.assertNotIn("LeadAssessment", json.dumps(agent.tool_definitions()))
+        self.assertNotIn("skipped_leads", questions.items["Q1"].model_fields)
+        update = {**f.question("核对", status="blocked", reason="缺佐证", block_kind="evidence_missing"), "skipped_leads": []}
+        with self.assertRaises(AppError) as caught:
+            questions.update([update], case, seen, None, [], knowledge)
+        self.assertTrue(any(e["code"] == "extra_forbidden" and e["loc"][-1] == "skipped_leads"
+                            for e in caught.exception.details["errors"]))
+        self.assertEqual(questions.items["Q1"].status, "pending")
 
     def test_unread_source_and_truncated_query_remain_explicit_after_compaction(self):
         case, knowledge, questions, seen = self.state(ids=("U029",))
@@ -136,25 +148,44 @@ class TestInvestigationSufficiency(unittest.TestCase):
         self.assertTrue(view["investigation_opportunities"]["items"])
         self.assertEqual(knowledge.dump(), before)
         self.assertNotIn(("U036", 0), seen["evidence"])
+        result, _, _ = actions.finish_investigation(case, seen, None, "核对", [], questions,
+            knowledge=knowledge, **self.finish_args())
+        self.assertEqual(result.completion_status, "evidence_insufficient")
+        self.assertEqual(knowledge.dump(), before)
 
-    def test_budget_limit_does_not_silently_become_missing_evidence(self):
+    def test_budget_completion_and_block_kind_still_require_exhausted_budget(self):
         case, knowledge, questions, seen = self.state(ids=("U029",))
-        with self.assertRaises(AppError) as caught:
-            actions.finish_investigation(case, seen, None, "核对", [], questions, knowledge=knowledge,
-                read_budget_exhausted=True, budget_exhausted=True, **self.finish_args())
-        self.assertEqual(caught.exception.details["errors"][0]["code"], "uninvestigated_lead")
+        for completion in ("budget_exhausted", "evidence_insufficient"):
+            args = self.finish_args(status="budget_exhausted")
+            args["completion_status"] = completion
+            with self.subTest(completion=completion), self.assertRaises(AppError) as caught:
+                actions.finish_investigation(case, seen, None, "核对", [], questions,
+                    knowledge=knowledge, **args)
+            self.assertIn("budget_available", {e["code"] for e in caught.exception.details["errors"]})
         args = self.finish_args(status="budget_exhausted")
         result, _, _ = actions.finish_investigation(case, seen, None, "核对", [], questions,
-            knowledge=knowledge, read_budget_exhausted=True, budget_exhausted=True, **args)
+            knowledge=knowledge, budget_exhausted=True, **args)
         self.assertEqual(result.completion_status, "budget_exhausted")
 
-    def test_erasing_question_material_ids_does_not_hide_previously_obtained_leads(self):
+    def test_advisory_candidates_do_not_authorize_unread_finding_references(self):
         case, knowledge, questions, seen = self.state(ids=("U029",))
-        blocked = f.question("核对", status="blocked", reason="缺佐证", block_kind="evidence_missing")
+        self.assertTrue(knowledge.available_work(case, questions)["Q1"]["items"])
+        args = agent._arguments("finish_investigation", f.finish("核对", ["U036"], refs=[("U036", 0)],
+            status="evidence_insufficient").message["tool_calls"][0]["function"]["arguments"])
         with self.assertRaises(AppError) as caught:
             actions.finish_investigation(case, seen, None, "核对", [], questions, knowledge=knowledge,
-                **self.finish_args(updates=[blocked]))
-        self.assertEqual(caught.exception.details["errors"][0]["opportunity"]["info_unit_id"], "U036")
+                **args)
+        self.assertIn("reference_not_obtained", {e["code"] for e in caught.exception.details["errors"]})
+        self.assertNotIn("U036", seen["units"])
+        self.assertEqual(questions.items["Q1"].status, "pending")
+
+    def test_unread_suggestions_do_not_relax_blocked_completed_consistency(self):
+        case, knowledge, questions, seen = self.state(ids=("U029",))
+        blocked = f.question("核对", status="blocked", reason="缺独立佐证", block_kind="evidence_missing")
+        with self.assertRaises(AppError) as caught:
+            actions.finish_investigation(case, seen, None, "核对", [], questions, knowledge=knowledge,
+                **self.finish_args(status="completed", updates=[blocked]))
+        self.assertIn("blocked_questions", {e["code"] for e in caught.exception.details["errors"]})
 
     def test_discovery_index_does_not_authorize_unread_proposal_references(self):
         case, knowledge, questions, seen = self.state(ids=("U029",))
