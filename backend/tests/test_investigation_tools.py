@@ -86,7 +86,7 @@ class TestInvestigationTools(unittest.TestCase):
         result = search_info_units(self.case, "押金", types=["rule"])
         self.assert_result(result, "ok")
         self.assertEqual([row["id"] for row in result["items"]], ["U008"])
-        for query, types in (("不存在的关键字", None), ("押金", ["entity"])):
+        for query, types in (("保险赔付", None), ("押金", ["entity"])):
             with self.subTest(query=query, types=types):
                 empty = search_info_units(self.case, query, types=types)
                 self.assert_result(empty, "empty")
@@ -111,9 +111,16 @@ class TestInvestigationTools(unittest.TestCase):
         case.info_units[0].content = "材料记载ＡＢＣ付款事项。"
         result = search_info_units(case, "abc")
         self.assertEqual([row["id"] for row in result["items"]], [case.info_units[0].id])
+        number = search_info_units(self.case, "３０００", types=["state"])
+        self.assert_result(number, "ok")
+        self.assertEqual([row["id"] for row in number["items"]], ["U004"])
+        self.assertEqual(number, search_info_units(self.case, "3000", types=["state"]))
 
     def test_search_does_not_match_unrelated_source_quote_or_metadata(self):
         # Literal quote wording occurs only in SourceRef, not the node preview.
+        unit = next(unit for unit in self.case.info_units if unit.id == "U019")
+        self.assertTrue(any("你是提前退租" in ref.quote for ref in unit.source_refs))
+        self.assertNotIn("你是提前退租", unit.title + unit.content)
         for query in ("你是提前退租", self.case.case_title, "file-e256bb1ee8"):
             with self.subTest(query=query):
                 self.assert_result(search_info_units(self.case, query), "empty")
@@ -132,7 +139,7 @@ class TestInvestigationTools(unittest.TestCase):
         self.assertEqual((reported["subtype"], reported["speaker"]), ("reported", "张某"))
 
     def test_invalid_search_queries_and_limits(self):
-        for query in (None, 12, "", "   ", "*?!", "词" * 201, ["押金"]):
+        for query in (None, 12, "", "  ", "*?!", "？！", "词" * 201, ["押金"]):
             with self.subTest(query=query):
                 self.assert_result(search_info_units(self.case, query), "invalid_request", "invalid_query")
         for limit in (0, -1, 9, True, 2.0, "5", None):

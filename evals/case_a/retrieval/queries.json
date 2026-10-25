@@ -1,8 +1,8 @@
 {
-  "version": "case-a-retrieval-diagnostic-2",
+  "version": "case-a-retrieval-diagnostic-3",
   "snapshot_sha256": "73ccf4d6795a42d2eaa2bb9cf6d36e86688c0e3efdd9658a3dbf9eb1d5419e37",
   "annotation_status": "requires_human_review",
-  "annotation_basis": "Existing Gold supplies node content and provenance, not query relevance. All need-specific relevant_ids/context_ids and manual focused_query choices below are new diagnostic judgments pending human review. context_ids are useful background but not binary positives for the stated need.",
+  "annotation_basis": "Gold提供节点记载与来源；信息需求、相关节点和人工聚焦查询是本评测新增的相关性草标，均待人工复核。背景节点不计入该需求的检索正例。",
   "original_call": {
     "trace_id": "03dd99adb171745e2a88f9a0faf75674",
     "run_id": "investigation-78cef306f2634e9ab15797b35206677b",
@@ -10,25 +10,29 @@
     "query": "押金 提前 退租 损失 房东 租赁 物业 退还 押金 违约 卖场",
     "types": null,
     "limit": 6,
-    "returned_ids": ["U008", "U019", "U006", "U030", "U015", "U027"],
+    "returned_ids": [
+      "U008",
+      "U019",
+      "U006",
+      "U030",
+      "U015",
+      "U027"
+    ],
     "status": "truncated",
     "has_more": true
   },
   "needs": {
-    "a1": {"description": "Locate the main material categories needed for both actual loss and quantification in A1", "relevant_ids": ["U004", "U022", "U026", "U027", "U029", "U035", "U036"], "context_ids": ["U008", "U030"], "basis": "Investigation A1 objectives and necessary evidence; query relevance is newly annotated"},
-    "loss": {"description": "Compare the two parties' direct claims about whether economic loss occurred", "relevant_ids": ["U029", "U036"], "context_ids": ["U030", "U035"], "basis": "Gold U029/U036 describe opposing claims, not verified loss"},
-    "rent": {"description": "Find the original contract monthly rent amount and term", "relevant_ids": ["U004"], "context_ids": [], "basis": "Gold U004 contract terms; no inference about actual rent receipts"},
-    "departure": {"description": "Find the claimed actual departure date and its source boundary", "relevant_ids": ["U022"], "context_ids": ["U012"], "basis": "Gold distinguishes intention U012 from actual-date self-report U022"},
-    "arrival": {"description": "Find the claimed replacement tenant arrival date", "relevant_ids": ["U026"], "context_ids": ["U016", "U027"], "basis": "Gold U026 arrival self-report is separate from finding a replacement and signing a lease"},
-    "lease": {"description": "Find the report that the replacement tenant later signed a new lease", "relevant_ids": ["U027"], "context_ids": ["U026"], "basis": "Gold U027; no original new lease or exact signing date"},
-    "vacancy": {"description": "Find direct claims about vacancy or near-continuous occupancy", "relevant_ids": ["U029", "U035"], "context_ids": ["U036"], "basis": "Gold U029/U035 describe opposing continuity/vacancy claims"},
-    "deposit": {"description": "Find contract deposit amount and refund/early-termination rule", "relevant_ids": ["U006", "U008"], "context_ids": ["U010", "U019"], "basis": "Contract conditions differ from payment record and party position"},
-    "deposit_rule": {"description": "Find the contract rule about deposit refund", "relevant_ids": ["U008"], "context_ids": ["U019"], "basis": "Gold U008 is a rule; U019 is a party position"},
-    "quote_origin": {"description": "Locate the node whose source contains the quoted party statement", "relevant_ids": ["U019"], "context_ids": ["U008"], "basis": "Gold U019 SourceRef contains the phrase; production only searches title/content. Corrected boundary-query need, excluded from primary metrics."},
-    "empty": {"description": "Diagnostic query with no relevant indexed node under the stated scope", "relevant_ids": [], "context_ids": [], "basis": "New negative-control judgment, pending review"}
+    "a1": {"description": "定位判断实际损失及量化条件所需的关键材料。", "relevant_ids": ["U004", "U022", "U026", "U027", "U029", "U035", "U036"], "context_ids": ["U008", "U030"], "basis": "参照Investigation A1的目标和必要证据；这是综合调查目标，独立统计。"},
+    "loss": {"description": "比较双方关于是否发生经济损失的直接陈述。", "relevant_ids": ["U029", "U036"], "context_ids": ["U030", "U035"], "basis": "U029与U036记载相反主张，不代表实际损失已获证实。"},
+    "rent": {"description": "查找原合同约定的月租金额及租期。", "relevant_ids": ["U004"], "context_ids": [], "basis": "U004记载合同条件，不能据此推定实际收租情况。"},
+    "departure": {"description": "查找承租人实际搬离日期的说法及其来源边界。", "relevant_ids": ["U022"], "context_ids": ["U012"], "basis": "U022记载搬离日期自述；U012仅记载此前的搬离意向。"},
+    "arrival": {"description": "查找接续租客入住日期的说法。", "relevant_ids": ["U026"], "context_ids": ["U016", "U027"], "basis": "U026是入住日期自述，与寻找接租者及另签租约分别核查。"},
+    "lease": {"description": "查找接续租客后来另签租约的说法。", "relevant_ids": ["U027"], "context_ids": ["U026"], "basis": "U027未提供新合同原件或确切签署日。"},
+    "vacancy": {"description": "比较房屋空置或前后租住基本衔接的直接陈述。", "relevant_ids": ["U029", "U035"], "context_ids": ["U036"], "basis": "U029与U035分别记载衔接及空置主张，尚待事实核查。"},
+    "deposit": {"description": "查找合同约定的押金金额、返还条件及提前退租规则。", "relevant_ids": ["U006", "U008"], "context_ids": ["U010", "U019"], "basis": "U006与U008共同回答合同押金条件；U010是付款记录，U019是当事人立场。"}
   },
   "queries": [
-    {"id": "v15", "need": "a1", "kind": "recorded_broad", "query": "押金 提前 退租 损失 房东 租赁 物业 退还 押金 违约 卖场", "types": null, "focused_query": "损失", "aggregate": true, "expected_status": "truncated"},
+    {"id": "v15", "need": "a1", "kind": "recorded_broad", "query": "押金 提前 退租 损失 房东 租赁 物业 退还 押金 违约 卖场", "types": null, "focused_query": "损失", "aggregate": false},
     {"id": "loss_broad", "need": "loss", "kind": "broad", "query": "押金 提前 退租 损失 房东", "types": null, "focused_query": "损失", "aggregate": true},
     {"id": "loss_focus", "need": "loss", "kind": "focused", "query": "实际 损失", "types": null, "focused_query": "损失", "aggregate": true},
     {"id": "loss_sentence", "need": "loss", "kind": "natural_language", "query": "房东到底有没有受到经济损失", "types": null, "focused_query": "损失", "aggregate": true},
@@ -53,15 +57,7 @@
     {"id": "vacancy_sentence", "need": "vacancy", "kind": "natural_language", "query": "房子到底空了多久", "types": null, "focused_query": "空置", "aggregate": true},
     {"id": "vacancy_synonym", "need": "vacancy", "kind": "synonym", "query": "空房", "types": null, "focused_query": "空置", "aggregate": true},
     {"id": "deposit_and", "need": "deposit", "kind": "conjunction", "query": "合同 押金", "types": null, "focused_query": "合同 押金", "aggregate": true},
-    {"id": "deposit_sentence", "need": "deposit", "kind": "natural_language", "query": "合同中押金数额和退还规则", "types": null, "focused_query": "合同 押金", "aggregate": true},
-    {"id": "rule_filter", "need": "deposit_rule", "kind": "type_filter", "query": "押金", "types": ["rule"], "focused_query": "押金", "aggregate": true},
-    {"id": "duplicate_terms", "need": "loss", "kind": "boundary", "query": "实际 实际，损失", "types": null, "focused_query": null, "aggregate": false},
-    {"id": "nfkc_number", "need": "rent", "kind": "boundary", "query": "３０００", "types": ["state"], "focused_query": null, "aggregate": false},
-    {"id": "source_only", "need": "quote_origin", "kind": "boundary", "query": "你是提前退租", "types": null, "focused_query": null, "aggregate": false, "expected_status": "empty"},
-    {"id": "negative", "need": "empty", "kind": "boundary", "query": "保险赔付", "types": null, "focused_query": null, "aggregate": false, "expected_status": "empty"},
-    {"id": "wrong_type_empty", "need": "empty", "kind": "boundary", "query": "押金", "types": ["entity"], "focused_query": null, "aggregate": false, "expected_status": "empty"},
-    {"id": "punctuation", "need": "empty", "kind": "boundary", "query": "？！", "types": null, "focused_query": null, "aggregate": false, "expected_status": "invalid_request"},
-    {"id": "blank", "need": "empty", "kind": "boundary", "query": "  ", "types": null, "focused_query": null, "aggregate": false, "expected_status": "invalid_request"}
+    {"id": "deposit_sentence", "need": "deposit", "kind": "natural_language", "query": "合同中押金数额和退还规则", "types": null, "focused_query": "合同 押金", "aggregate": true}
   ],
-  "manual_a1_plan": {"queries": ["损失", "月租", "搬离", "入住", "另签", "空置"], "note": "Human-designed six-call coverage probe, not an observed Agent path or a one-call ranking comparison; relevance remains the a1 need."}
+  "manual_a1_plan": {"queries": ["损失", "月租", "搬离", "入住", "另签", "空置"], "note": "人工设计的六次查询覆盖实验，不是模型实际路径，也不计入单次检索或主指标。"}
 }

@@ -16,6 +16,7 @@ from evals.case_a.investigation.data import ROOT, build_case, digest, load_snaps
 QUERIES = Path(__file__).with_name("queries.json")
 STRATEGIES = ("production", "manual_focus", "literal_and", "bigram_coverage", "bigram_bm25")
 KEY_IDS = ("U004", "U022", "U026", "U027", "U029", "U035", "U036")
+PRIMARY_NEEDS = ("loss", "rent", "departure", "arrival", "lease", "vacancy", "deposit")
 
 
 def load_queries(path=QUERIES):
@@ -24,18 +25,27 @@ def load_queries(path=QUERIES):
         raise ValueError("These diagnostic labels have not been human reviewed")
     if data["snapshot_sha256"] != load_snapshot()["sha256"]:
         raise ValueError("Query relevance labels belong to a different Case A snapshot")
+    if set(data["needs"]) != {"a1", *PRIMARY_NEEDS}:
+        raise ValueError("Quality evaluation requires seven primary needs and the separate A1 goal")
     ids = {u.id for u in build_case().info_units}
     for need in data["needs"].values():
         relevant, context = need["relevant_ids"], need["context_ids"]
-        if (len(set(relevant)) != len(relevant) or len(set(context)) != len(context)
+        if (not relevant or len(set(relevant)) != len(relevant) or len(set(context)) != len(context)
                 or set(relevant) & set(context) or not set(relevant + context) <= ids):
             raise ValueError("Need labels must be unique, disjoint, current-snapshot IDs")
     if len({q["id"] for q in data["queries"]}) != len(data["queries"]):
         raise ValueError("Duplicate query IDs")
     for query in data["queries"]:
-        need = data["needs"][query["need"]]
-        if query["aggregate"] and (not need["relevant_ids"] or not query["focused_query"]):
-            raise ValueError("Aggregate queries require positive labels and a manual focus input")
+        if query["need"] not in data["needs"]:
+            raise ValueError("Unknown information need")
+        if not query["focused_query"] or query["aggregate"] != (query["need"] in PRIMARY_NEEDS):
+            raise ValueError("Only single information needs enter the primary average; A1 is separate")
+    if {q["need"] for q in data["queries"] if q["aggregate"]} != set(PRIMARY_NEEDS):
+        raise ValueError("Each primary need requires at least one query")
+    a1 = [q for q in data["queries"] if q["need"] == "a1"]
+    if len(a1) != 1 or a1[0]["id"] != "v15" or any(
+            a1[0][key] != data["original_call"][key] for key in ("query", "types")):
+        raise ValueError("A1 must retain the original v15 query")
     return data
 
 
@@ -194,15 +204,12 @@ def evaluate(definition=None, audit_path=None):
         relevant = definition["needs"][query["need"]]["relevant_ids"]
         variants = {}
         for strategy in STRATEGIES:
-            if strategy == "manual_focus" and query["focused_query"] is None:
-                continue
             text = query["focused_query"] if strategy == "manual_focus" else query["query"]
             response = rank(case, text, query["types"], strategy)
             variants[strategy] = {"query": text, **response, "metrics": metrics(response["ranking"], relevant)}
         production = tools.search_info_units(case, query["query"], types=query["types"], limit=5)
-        if query.get("expected_status") and production["status"] != query["expected_status"]:
-            raise ValueError(f"Boundary query changed: {query['id']}")
         results.append({**query, "relevant_ids": relevant, "production_status_at_5": production["status"], "variants": variants})
+    a1 = next(query for query in results if query["need"] == "a1")
     summaries = {}
     for strategy in STRATEGIES:
         groups, kinds = defaultdict(list), defaultdict(list)
@@ -215,7 +222,9 @@ def evaluate(definition=None, audit_path=None):
         primary = {name: sum(row[name] for row in by_need.values()) / len(by_need)
                    for name in ("recall_at_5", "recall_at_8", "precision_at_5", "precision_at_8", "query_coverage")}
         summaries[strategy] = {"primary_need_macro": primary, "query_macro": aggregate([r for rows in groups.values() for r in rows]),
-                               "by_need": by_need, "by_kind": {kind: aggregate(rows) for kind, rows in kinds.items()}}
+                               "by_need": by_need, "by_kind": {kind: aggregate(rows) for kind, rows in kinds.items()},
+                               "a1": {"query_id": a1["id"], "query": a1["variants"][strategy]["query"],
+                                      **a1["variants"][strategy]["metrics"]}}
     union, plan_calls = set(), []
     for text in definition["manual_a1_plan"]["queries"]:
         response = tools.search_info_units(case, text, limit=5)
@@ -238,33 +247,45 @@ def evaluate(definition=None, audit_path=None):
             "production_code_sha256": hashlib.sha256(Path(tools.__file__).read_bytes()).hexdigest(),
             "evaluation_code_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "code_git_commit": commit, "worktree_dirty": dirty, "python_version": sys.version.split()[0]},
-        "metric_policy": "R@k=hits/need positives; P@k=hits/k even for short results. Empty positives have undefined R; excluded with all diagnostic rows from primary macro. Primary is equal-weight mean of need means. All labels and manual focus inputs pending human review.",
+        "metric_policy": "R@k=命中正例数/该need正例数；P@k=命中正例数/k，短结果仍固定分母。主指标先按need平均，再对7项单项信息需求等权平均；A1综合目标独立统计，契约边界仅由单元测试覆盖。相关性标签及人工改写均待复核。统计范围已调整，新旧总体指标不可直接比较。",
         "recorded_v15": recorded, "summary": summaries, "manual_a1_plan": plan_metrics, "queries": results}
 
 
 def render_report(result):
-    lines = ["# Case A offline retrieval diagnostic", "", "All relevance judgments require human review; no LLM or remote writes.",
-        "No production Prompt/tool/Gold changes. Offline access metrics do not establish investigation quality.", "",
-        f"Primary: equal-weight mean of {len(result['summary']['production']['by_need'])} information needs "
-        f"({sum(q['aggregate'] for q in result['queries'])} positive queries); "
-        f"{sum(not q['aggregate'] for q in result['queries'])} diagnostic queries excluded.",
-        result["metric_policy"], "", "| Strategy | R@5 | R@8 | P@5 | P@8 | Full lexical coverage |", "|---|---:|---:|---:|---:|---:|"]
+    lines = ["# Case A 离线检索质量评测", "", "相关性标签均待人工复核；无LLM调用或远端写入。离线指标不代表调查质量。", "",
+        f"主指标覆盖{len(result['summary']['production']['by_need'])}项单项信息需求、"
+        f"{sum(q['aggregate'] for q in result['queries'])}条Query；A1综合目标独立统计。工具契约边界仅保留在单元测试中。",
+        result["metric_policy"], "", "## A. 单项信息需求主指标", "",
+        "| Strategy | R@5 | R@8 | P@5 | P@8 | 全匹配覆盖 |", "|---|---:|---:|---:|---:|---:|"]
     for strategy, summary in result["summary"].items():
         row = summary["primary_need_macro"]
         lines.append("| " + strategy + " | " + " | ".join(f"{row[k]:.4f}" for k in ("recall_at_5", "recall_at_8", "precision_at_5", "precision_at_8", "query_coverage")) + " |")
-    lines += ["", "manual_focus is human-designed input substitution, NOT tested Tool Description compliance. It may narrow a multi-goal need.",
-        "Pagination changes later accessibility, not first-page R@5/R@8; exhaustive coverage is the lexical upper bound, with per-query page costs in JSON.",
-        "Bigram prototypes use no synonym dictionary. BM25(k1=1.2,b=.75) is not tuned/held-out. AND is an explicit literal-token experiment, not a default recommendation.",
-        "", "## Recorded v15 ranking", "", "| Rank | ID | Coverage | Weighted | Matched terms |", "|---:|---|---:|---:|---|"]
+    lines += ["", "manual_focus是人工设计的输入替换，不是已验证的Tool Description效果。分页不改变首屏指标；二元字词不扩展同义词，BM25未调参，AND不是默认建议。",
+        "", "## B. A1综合调查目标（不计入主平均）", "",
+        "| Strategy | R@5 | R@8 | 全匹配覆盖 | 完全漏检ID |", "|---|---:|---:|---:|---|"]
+    for strategy, summary in result["summary"].items():
+        row = summary["a1"]
+        lines.append(f"| {strategy} | {row['recall_at_5']:.4f} | {row['recall_at_8']:.4f} | {row['query_coverage']:.4f} | {','.join(row['missed_ids'])} |")
+    original = result["summary"]["production"]["a1"]
+    lines += ["", "生产原查询：`" + original["query"] + "`。相关节点全排名（超过k与完全未匹配分开）：",
+        "", "| 相关ID | 首次排名 |", "|---|---:|"]
+    for uid, position in original["relevant_ranks"].items():
+        lines.append(f"| {uid} | {position if position is not None else '未匹配'} |")
+    plan = result["manual_a1_plan"]
+    lines += ["", f"人工A1计划：{plan['calls']}次查询覆盖{len(plan['relevant_ids_found'])}/{len(original['relevant_ranks'])}个相关节点；"
+        "这是人工多次查询实验，不是模型实际路径，不与单次R@k或主指标混算。",
+        "", "## v15原始查询完整排序", "", "| Rank | ID | Coverage | Weighted | 命中词 |", "|---:|---|---:|---:|---|"]
     for row in result["recorded_v15"]["full_ranking"]["ranking"]:
         lines.append(f"| {row['rank']} | {row['id']} | {row['coverage']} | {row['weighted']} | {' / '.join(row['matched_terms'])} |")
-    lines += ["", "## All query baseline metrics", "", "| Query | Need | R@5 | R@8 | P@5 | P@8 | Full coverage | Matches | More@5/8 | First relevant | Missed IDs |", "|---|---|---:|---:|---:|---:|---:|---:|---|---:|---|"]
+    lines += ["", "## 单项Query基线明细", "", "| Query | Need | R@5 | R@8 | P@5 | P@8 | 全匹配覆盖 | 命中数 | More@5/8 | 首个相关排名 | 完全漏检ID |", "|---|---|---:|---:|---:|---:|---:|---:|---|---:|---|"]
     for query in result["queries"]:
+        if not query["aggregate"]:
+            continue
         row = query["variants"]["production"]["metrics"]
         fmt = lambda value: "NA" if value is None else f"{value:.3f}"
         lines.append(f"| {query['id']} | {query['need']} | " + " | ".join(fmt(row[k]) for k in ("recall_at_5", "recall_at_8", "precision_at_5", "precision_at_8", "query_coverage"))
             + f" | {row['matched_count']} | {row['has_more_at_5']}/{row['has_more_at_8']} | {row['first_relevant_rank']} | {','.join(row['missed_ids'])} |")
-    lines += ["", "Full candidate rankings/scores, per-query metrics, first relevant and individual ID ranks, missed IDs, page costs, query/type diagnostics and hashes are in the paired JSON.", ""]
+    lines += ["", "完整候选排序/分数、逐Query逐策略指标、节点排名、漏检、分页成本及版本/哈希见相邻JSON。统计范围已变，新旧总体指标不可直接比较。", ""]
     return "\n".join(lines)
 
 
@@ -284,4 +305,6 @@ def main(argv=None):
         file.write(render_report(result))
     print(json.dumps({"output": str(args.output), "paid_model_calls": 0,
         "local_audit_verified": result["recorded_v15"]["audit"]["local_audit_verified"],
-        "summary": {s: row["primary_need_macro"] for s, row in result["summary"].items()}}, ensure_ascii=False, indent=2))
+        "summary": {s: row["primary_need_macro"] for s, row in result["summary"].items()},
+        "a1": {s: {key: row["a1"][key] for key in ("recall_at_5", "recall_at_8", "relevant_ranks", "missed_ids")}
+               for s, row in result["summary"].items()}}, ensure_ascii=False, indent=2))

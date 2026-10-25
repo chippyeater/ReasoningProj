@@ -22,8 +22,13 @@ class TestRetrievalEval(unittest.TestCase):
 
     def test_new_labels_are_separate_pending_and_case_scoped(self):
         self.assertEqual(self.definition["annotation_status"], "requires_human_review")
-        self.assertEqual(len(self.definition["queries"]), 34)
-        self.assertEqual(sum(q["aggregate"] for q in self.definition["queries"]), 27)
+        self.assertEqual(len(self.definition["queries"]), 26)
+        self.assertEqual(sum(q["aggregate"] for q in self.definition["queries"]), 25)
+        self.assertEqual(set(self.definition["needs"]), {"a1", "loss", "rent", "departure", "arrival", "lease", "vacancy", "deposit"})
+        self.assertEqual(self.definition["needs"]["deposit"]["relevant_ids"], ["U006", "U008"])
+        self.assertEqual(self.definition["needs"]["deposit"]["context_ids"], ["U010", "U019"])
+        self.assertFalse({"rule_filter", "source_only", "negative", "wrong_type_empty", "punctuation", "blank", "duplicate_terms", "nfkc_number"}
+                         & {q["id"] for q in self.definition["queries"]})
         for need in self.definition["needs"].values():
             self.assertLess(len(need["relevant_ids"]), len(self.case.info_units))
         bad = deepcopy(self.definition)
@@ -90,14 +95,8 @@ class TestRetrievalEval(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "differ"):
                 ev.verify_recorded_call(self.case, self.definition, path)
 
-    def test_tokenization_duplicate_nfkc_phrase_and_source_only_boundaries(self):
-        self.assertEqual(ev.literal_terms("实际 实际，损失"), ["实际", "损失"])
-        self.assertEqual(ev.literal_terms("合同租金是多少"), ["合同租金是多少"])
-        self.assertEqual(ev.literal_terms("３０００"), ["3000"])
-        self.assertEqual(ev.rank(self.case, "你是提前退租")["ranking"], [])
-        self.assertTrue(any("你是提前退租" in ref.quote for unit in self.case.info_units for ref in unit.source_refs))
-
     def test_bigram_parser_is_generic_and_cannot_solve_pure_synonyms(self):
+        self.assertEqual(ev.literal_terms("合同租金是多少"), ["合同租金是多少"])
         self.assertEqual(ev.bigrams("月租是多少"), ["月租", "租是", "是多", "多少"])
         self.assertEqual(ev.bigrams("ＡＢＣ ３０００"), ["abc", "3000"])
         self.assertFalse(ev.rank(self.case, "合同约定每个月要交多少租金")["ranking"])
@@ -136,7 +135,43 @@ class TestRetrievalEval(unittest.TestCase):
         self.assertEqual(digest(self.definition), before)
         self.assertEqual(one["paid_model_calls"], 0)
         self.assertFalse(one["manual_a1_plan"]["missed_ids"])
-        self.assertTrue(all(v["query_macro"]["query_count"] == 27 for v in one["summary"].values()))
+        self.assertTrue(all(v["query_macro"]["query_count"] == 25 for v in one["summary"].values()))
+
+    def test_primary_weights_seven_needs_once_and_reports_a1_separately(self):
+        result = ev.evaluate()
+        for strategy, summary in result["summary"].items():
+            with self.subTest(strategy=strategy):
+                self.assertEqual(set(summary["by_need"]), {"loss", "rent", "departure", "arrival", "lease", "vacancy", "deposit"})
+                self.assertEqual(summary["by_need"]["deposit"]["query_count"], 2)
+                self.assertEqual(summary["query_macro"]["query_count"], 25)
+                self.assertNotIn("recorded_broad", summary["by_kind"])
+                for name in ("recall_at_5", "recall_at_8", "precision_at_5", "precision_at_8", "query_coverage"):
+                    self.assertAlmostEqual(summary["primary_need_macro"][name], sum(v[name] for v in summary["by_need"].values()) / 7)
+        production = result["summary"]["production"]
+        self.assertNotAlmostEqual(production["primary_need_macro"]["recall_at_5"], production["query_macro"]["recall_at_5"])
+        self.assertEqual(production["a1"]["query_id"], "v15")
+        self.assertEqual(production["a1"]["recall_at_5"], 0)
+        self.assertEqual(production["a1"]["recall_at_8"], 1 / 7)
+        self.assertEqual(production["a1"]["missed_ids"], ["U022", "U026"])
+        report = ev.render_report(result)
+        self.assertIn("7项单项信息需求、25条Query", report)
+        self.assertIn("A1综合调查目标（不计入主平均）", report)
+        self.assertIn("新旧总体指标不可直接比较", report)
+
+    def test_a1_label_change_does_not_affect_primary_metrics_or_enter_aggregate(self):
+        baseline = ev.evaluate()
+        changed = deepcopy(self.definition)
+        changed["needs"]["a1"]["relevant_ids"] = ["U004"]
+        altered = ev.evaluate(changed)
+        self.assertNotEqual(baseline["summary"]["production"]["a1"]["recall_at_8"], altered["summary"]["production"]["a1"]["recall_at_8"])
+        for strategy in ev.STRATEGIES:
+            self.assertEqual(baseline["summary"][strategy]["primary_need_macro"], altered["summary"][strategy]["primary_need_macro"])
+        changed["queries"][0]["aggregate"] = True
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mixed.json"
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "A1 is separate"):
+                ev.load_queries(path)
 
     def test_cli_refuses_to_overwrite_existing_outputs_before_evaluating(self):
         with TemporaryDirectory() as tmp:
