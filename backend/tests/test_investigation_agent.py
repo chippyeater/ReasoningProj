@@ -126,6 +126,12 @@ class TestInvestigationAgent(unittest.TestCase):
         self.assertIn("update_questions", names)
         self.assertNotIn("present_findings", names)
         self.assertNotIn("case_id", json.dumps(calls[0]["definitions"]))
+        payload = llm_client.tool_request_payload(CONFIG, calls[0]["messages"], calls[0]["definitions"])
+        search = next(d["function"] for d in payload["tools"] if d["function"]["name"] == "search_info_units")
+        self.assertEqual(search, agent.tool_definitions()[0]["function"])
+        for boundary in ("title/content", "字面关键词", "OR 匹配", "不自动扩展同义词", "不搜索 SourceRef 原文",
+                         "一个具体信息需求", "按需", "并非语义相关性排序", "has_more=true", "更有针对性的关键词"):
+            self.assertIn(boundary, search["description"])
 
     def test_invalid_initial_inputs_never_call_model(self):
         with patch.object(llm_client, "call_tools") as model:

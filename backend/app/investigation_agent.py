@@ -73,7 +73,16 @@ def tool_definitions() -> list[dict]:
     ids = {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": tools.MAX_NODE_IDS}
     limit = {"type": ["integer", "null"], "minimum": 1, "maximum": tools.MAX_LIMIT}
     definitions = [
-        _function("search_info_units", "按关键词检索节点摘要；empty 只表示此次未命中，truncated 表示仍有未返回结果。", {
+        _function("search_info_units", (
+            "在当前案件 InfoUnit 的 title/content 中检索节点摘要。query 使用空格或标点分隔的字面关键词，"
+            "多个词项按 OR 匹配，不自动扩展同义词，也不搜索 SourceRef 原文。"
+            "每次查询尽量聚焦一个具体信息需求，使用简短、有区分度的关键词；"
+            "不同措辞可能造成漏检时，可按需加入少量指向同一需求的近义或互补表达。"
+            "避免将合同、时间、损失等不同调查目标的大量关键词混入同一次查询。"
+            "结果按命中词项数量、标题权重依次排序，并非语义相关性排序。"
+            "empty 只表示当前查询未命中，has_more=true 表示还有未返回的匹配结果。"
+            "当前结果未覆盖所需信息时，可改用更有针对性的关键词继续检索。"
+        ), {
             "query": {"type": "string", "minLength": 1, "maxLength": tools.MAX_QUERY_CHARS},
             "types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in InfoUnitType]}},
             "limit": limit,
