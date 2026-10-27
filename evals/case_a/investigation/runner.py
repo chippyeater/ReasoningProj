@@ -12,7 +12,6 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from app import investigation_agent as agent, llm_client, observability
-from app.prompt_loader import load_prompt
 from .data import ROOT, TaskInput, build_case, dataset_items, digest, isolated_case, load_definition, load_snapshot, work_context
 from .scoring import automatic_metrics, evaluator
 from . import remote
@@ -36,15 +35,17 @@ def select_dataset_items(dataset, task_id=None):
 
 
 def run_metadata(model, task_id=None):
-    prompt = load_prompt(agent.PROMPT_PATH, "investigation_agent")
+    prompts = {phase: agent.load_composed_prompt(name) for phase, name in agent.PROMPT_NAMES.items()}
+    prompt = prompts["execution"]
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, check=True).stdout.strip()
     dirty = bool(subprocess.run(["git", "status", "--porcelain=v1"], cwd=REPO, capture_output=True, text=True, check=True).stdout)
-    return {**prompt.metadata(model), "code_git_commit": commit, "worktree_dirty": dirty,
+    return {**prompt.metadata(model), "prompt_manifest": {phase: {"phase": phase, **p.metadata(model)} for phase, p in prompts.items()},
+            "code_git_commit": commit, "worktree_dirty": dirty,
             "dataset_version": load_definition()["version"], "dataset_content_sha256": digest(dataset_items()),
             "case_snapshot_id": load_snapshot()["snapshot_id"], "case_snapshot_sha256": load_snapshot()["sha256"],
             "case_data_sha256": digest(build_case().model_dump(mode="json")),
             "initial_state_sha256": digest(load_definition()["initial_state"]),
-            "tool_contract_sha256": digest(agent.tool_definitions()), "langfuse_sdk_version": version("langfuse"),
+            "tool_contract_sha256": digest({phase: agent.tool_definitions(phase) for phase in agent.PROMPT_NAMES}), "langfuse_sdk_version": version("langfuse"),
             "max_model_calls_per_item": agent.MAX_MODEL_CALLS, "max_model_calls_three_items": 3 * agent.MAX_MODEL_CALLS,
             "selected_task_ids": selected_task_ids(task_id),
             "max_model_calls_this_run": len(selected_task_ids(task_id)) * agent.MAX_MODEL_CALLS,
@@ -99,14 +100,21 @@ def _mock_reply(config, messages, definitions, schema=None, **kwargs):
     """Offline protocol exercise, explicitly NOT a simulated semantic benchmark."""
     from app.llm_client import ToolReply
     state = json.loads(messages[1]["content"])
-    if state["remaining_budget"]["read"] == agent.MAX_TOOL_CALLS:
-        name, args = "get_evidence", {"info_unit_ids": ["U004"], "question_ids": ["Q1"]}
+    question = {"id": "wording", "question": "离线协议：核对来源记载", "status": "pending",
+        "related_info_unit_ids": [], "evidence_refs": [], "finding": None, "block_reason": None, "block_kind": None}
+    step = {"id": "read-source", "question_id": "wording", "objective": "核对可定位来源记载",
+        "status": "pending", "result_note": None, "basis_info_unit_ids": []}
+    if state["phase"] == "entry":
+        name, args = "update_investigation_steps", {"questions": [question], "steps": [step]}
+    elif state["remaining_budget"]["read"] == agent.MAX_TOOL_CALLS:
+        name, args = "get_evidence", {"info_unit_ids": ["U004"], "question_ids": ["wording"], "step_id": "read-source"}
     else:
         name = "finish_investigation"
         refs = [{"info_unit_id": "U004", "source_ref_index": i} for i in (0, 1)]
         finding = "离线协议样例，仅核对可定位来源，不代表完成真实调查。"
         args = {"answer": finding, "findings": [{"statement": finding, "info_unit_ids": ["U004"], "relation_ids": [], "evidence_refs": refs}],
-            "completion_status": "completed", "step_updates": [], "question_updates": [{"id": "Q1", "question": state["goal"], "status": "answered",
+            "completion_status": "completed", "step_updates": [{**step, "status": "completed", "result_note": finding}],
+            "question_updates": [{**question, "status": "answered",
                 "related_info_unit_ids": ["U004"], "evidence_refs": refs, "finding": finding,
                 "block_reason": None, "block_kind": None}]}
     call = {"id": uuid4().hex, "type": "function", "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}}

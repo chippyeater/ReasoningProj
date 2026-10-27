@@ -31,7 +31,8 @@ class TestInvestigationContext(unittest.TestCase):
         self.edit(gap={"content": "实际计租和收款如何", "hypothesis_ids": [h], "info_unit_ids": ["U036"], "status": "open"})
         self.canvas(["U029", "U036", h], ["U029"], h)
         requests = []
-        responses = [replies.finish("核查损失", ["U029", "U036"], ["R010"], [("U029", 0), ("U036", 0)], statement="双方陈述存在分歧，仍需独立核实。")]
+        responses = [replies.plan(), replies.finish("核查损失", ["U029", "U036"], ["R010"], [("U029", 0), ("U036", 0)],
+            statement="双方陈述存在分歧，仍需独立核实。", step_updates=[replies.step(status="completed", note="已核对上下文陈述", basis=["U029", "U036"])])]
         def model(request):
             requests.append(json.loads(request.content))
             return httpx.Response(200, json=responses[len(requests) - 1].response)

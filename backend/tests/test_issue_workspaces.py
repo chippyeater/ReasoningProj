@@ -71,8 +71,9 @@ class TestIssueWorkspaces(unittest.TestCase):
     def test_wire_context_has_status_and_bounded_semantics_without_display_state_or_sources(self):
         issue = self.case.issue_set[1]
         requests = []
-        replies = [fixtures.tool("get_evidence", {"info_unit_ids": ["U029"]}),
-                   fixtures.finish("核对来源", ["U029"], refs=[("U029", 0)], status="completed")]
+        replies = [fixtures.plan(), fixtures.tool("get_evidence", {"info_unit_ids": ["U029"], "step_id": "S1"}),
+                   fixtures.finish("核对来源", ["U029"], refs=[("U029", 0)], status="completed",
+                       step_updates=[fixtures.step(status="completed", note="已核对来源")])]
 
         def model(request):
             requests.append(json.loads(request.content))

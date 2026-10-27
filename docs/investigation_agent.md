@@ -1,4 +1,4 @@
-# Investigation Agent：结构化工作记忆与执行闭环
+# Investigation Agent v18：首轮决策与阶段化执行
 
 入口仍为 `run_investigation(case, goal, selected_info_unit_ids=None, work_context=None, issue_key=None)` 和 `POST /api/cases/{case_id}/agent/run`。本轮绑定当前 CaseData 深拷贝，不提供案件切换或正式对象写入工具。
 
@@ -6,9 +6,13 @@
 
 `investigation_state.py` 仅定义本轮状态，不修改持久化 Schema。`KnowledgeState` 直接保存已有工具投影：InfoUnit 摘要（内容、类型、speaker）、有向 Relation（类型、依据及截断标记）、已核验 SourceRef（索引、原文/片段及文件位置）、初始上下文的遗漏与来源错误、历次检索条件/状态/返回 ID，以及成功 Findings 和 Proposals。选中节点、画布与初始核验来源直接入库；成功只读响应按 ID/来源索引合并，失败和空结果仅记录其实际状态，不创造知识。完整工具响应始终保存在运行审计。
 
-`QuestionState` 以用户目标初始化根任务 Q1，无规划模型调用；最多 20 个 Question。每项包含稳定 `id/question/status/related_info_unit_ids/evidence_refs/finding/block_reason`，以及区分证据缺失、工具故障、不支持和预算限制的 `block_kind`。`update_questions` 可一次新增、拆分或调整多项任务；不会删除已有任务。只读/Proposal 工具的 `question_ids` 可以关联任务，null 自动选择 in_progress 任务或第一个 pending 任务。后端记录活动及取得的材料/来源，**不会因为工具 ok 自动回答问题**。回答/阻塞状态由模型明确更新，并校验材料权限和状态一致性。
+Run 的原始 `goal` 始终完整保留，独立于 Question；层级为 Goal → Question → InvestigationStep。`QuestionState()` 初始为空，不创建特殊根问题。每个 Question 保存稳定 `id/question/status/related_info_unit_ids/evidence_refs/finding/block_reason/block_kind`，最多20项；`update_questions` 增量创建/调整且不删除已登记问题。所有 ID 地位相同，问题文本可以随调查细化，但不能改变 Run 的 Goal。
 
-Q1 的问题全文不可缩减；独立请求和条件性后续问题由模型登记为独立 Question。只要有登记的方面 blocked，汇总 Q1 就不能 answered。`evidence_insufficient` 必须保留具体 blocked 任务，禁止所有任务 answered 却报告不足。代码检查已登记任务的一致性，不能确定自然语言目标是否正确、完整地拆分；简单问题仍可在第一次 finish 中直接完成，无需规划或额外检索。
+Run 初始 `phase=entry`，每次 Entry 请求 `tool_choice=required`，实际只注册 `finish_investigation` 和 `update_investigation_steps`；未开放的读取、Question 更新或 Proposal 工具即使被模型发出也不会执行。Entry 的 `update_investigation_steps(questions, steps)` 在副本上复用 Question 与 Step 校验，整批原子登记；每个 Question 至少关联一个 Step，初态均为 pending/in_progress。失败保持空状态和 Entry，成功才进入 Execution。计划消耗现有 Question/Step 共享更新预算，不增加额外 Agent 或规划循环。
+
+Execution 开放十个现有工具，`update_investigation_steps(steps)` 恢复为行动增量更新；新子问题通过 `update_questions` 登记。`current_question_ids` 优先选择全部 in_progress Question，否则选择第一个 pending Question，无活动任务时为[]。只读/Proposal 的 null question_ids 使用此焦点；显式 ID 可以关联已登记问题。状态正文、节点、关系和来源优先呈现当前焦点的材料；后端记录活动与材料，不因工具 ok 自动回答问题。
+
+简单的能力介绍、准确类型计数及上下文已明确提供的信息可以在 Entry 直接 finish：`completion_status=completed`，`findings/question_updates/step_updates=[]`，不建立调查任务或案件证据 Finding。需要调查或生成推理建议时先提交计划。Execution 的 finish 要求已登记子问题全部 answered 或具体 blocked，所有 Step completed/deferred；completed 必须有依据的 Finding，且没有 blocked Question。`evidence_insufficient` 必须有具体 blocked 条件。代码检查已登记任务及其依据的一致性，不能保证自然语言 Goal 已被完整拆分或答案在语义上充分。
 
 调查行动独立于 Question 的回答字段，以 `QuestionState.steps` 保存，输出在 `question_state.investigation_steps`。最多20项，既不是正式画布对象也不是 Proposal。Question 可以独立存在，简单任务不必建立计划；Question 受阻不要求创建 Gap，Hypothesis 获得支持不自动 verified。
 
@@ -26,8 +30,8 @@ completed 必须有以下至少一种明确依据：当前目标/重新打开后
 
 每轮重新组装以下消息，不累计重放历史：
 
-1. 稳定 System Prompt，仅说明角色、证据标准和实际工具契约。
-2. 一条 user JSON：原始目标、核心/当前 Issue、类型统计与有限画布/人工推理上下文，Question 进度、InvestigationStep 状态/活动指针与有限详情，KnowledgeState 实际材料及成功成果，剩余分类/总工具/模型预算和恢复错误。
+1. 按阶段确定性组合的 System Prompt：Entry 为 Common + Entry，Execution 为 Common + Execution。
+2. 一条 user JSON：phase、完整原始 goal、核心/当前 Issue、类型统计与有限画布/人工推理上下文，Question 进度、InvestigationStep 状态/活动指针与有限详情，KnowledgeState 实际材料及成功成果，剩余分类/总工具/模型预算和恢复错误。
 3. 最近一次完成的 Assistant Tool Call + Tool Result 配对；最多保留一组。只有结果已经入状态并写入审计后才退役；大于 16000 字符的整组消息一并退役，不留下孤立 tool 消息。
 
 状态 JSON 使用 48000 字符预算作为确定性的 Token 规模代理，材料按当前任务优先选择；正文必要时展示 500 字符片段，分区预算控制节点、关系、来源、活动和成果。所有省略通过 `context_truncated/omitted_ids` 表达，完整数据不从审计或内存删除。最近工具结果在 12000 字符内原样展示，超限使用有截断标记的片段；不调用 LLM 总结。成功的重复只读请求返回本轮缓存，支持重新获取被省略来源而不重复执行查询；同状态失败和重复 Proposal 不重执行。
@@ -36,7 +40,7 @@ completed 必须有以下至少一种明确依据：当前目标/重新打开后
 
 ## 结束工具与恢复
 
-注册十个原生工具：三个只读查询、四个原有 `propose_*`、`update_questions`、`update_investigation_steps` 和 `finish_investigation`。继续使用现有 Chat Completions 客户端，strict 参数、关闭并行调用，无 result response_format。
+Entry 只注册两个决策工具；Execution 注册十个原生工具：三个只读查询、四个原有 `propose_*`、`update_questions`、`update_investigation_steps` 和 `finish_investigation`。继续使用现有 Chat Completions 客户端，strict 参数、关闭并行调用，无 result response_format。Entry 始终 required；Execution 默认 auto，普通文本后的恢复请求 required。
 
 `finish_investigation(answer, findings, question_updates, step_updates, completion_status)` 增加必填 step_updates，无更新时传[]。先在副本中审核Question，然后复用同一个 update_steps 对Step增量更新进行案件、归属、转换与依据校验；最后统一检查所有问题 answered 或具体 blocked、登记的Step均completed/deferred、成果/引用/Proposal/Issue/预算一致，并沿用简洁回复校验（默认40–80字，上限240个非空白字符）。pending/in_progress即使被写成evidence_missing也不能结束；错误指向Step及finish.step_updates，仍可在调查过程中使用update_investigation_steps。某Question的行动全部deferred时不能answered；全部延期仍在limitations显式提示。completed需要有依据的Finding且无blocked，证据不足可以空Findings、blocked+evidence_insufficient结束。
 
@@ -54,7 +58,17 @@ Proposal 不再绑定“交付计划”。其 kind/字段约束、当前运行�
 
 引用必须属于当前案件、实际提供的节点/关系/来源；关系依据 ID 不授予未读来源权限。可定位与充分支持不同，保留当事人陈述、推论与事实的边界。探索性 Hypothesis/Gap 仍可无直接材料，Link/判断调整仍需要引用。同轮依赖、过期校验和幂等采纳沿用现有服务，所有正式写入仍需用户逐项采纳。
 
-本轮记忆只写入既有 runs 审计，不写 CaseData、Issue ReasoningState 或画布。审计保留原始模型请求/响应、所有工具参数/结果、最终 KnowledgeState、QuestionState、版本及停止原因；Langfuse 保留 generation/tool 与最终状态观察，继续遵循现有隐私配置。案件材料只进入 user/tool 数据，不变为 System 指令。
+本轮记忆只写入既有 runs 审计，不写 CaseData、Issue ReasoningState 或画布。审计保留原始模型请求/响应、所有工具参数/结果、最终 KnowledgeState、QuestionState、phase、版本及停止原因；Langfuse 保留 generation/tool 与最终状态观察，继续遵循现有隐私配置。案件材料只进入 user/tool 数据，不变为 System 指令。
+
+## Prompt 源版本与组合追踪
+
+`versions.json.prompts` 独立登记 `investigation_common`、`investigation_entry`、`investigation_execution` 的稳定路径、数字版本与 SHA-256；`compositions` 登记 `investigation_agent_entry/execution` 的有序源名称。版本同步脚本校验所有源与组合引用，`--sync` 只递增内容变化的源版本，组合没有独立计数器。其他 Agent 继续使用同一加载器的单文件接口。
+
+通用 `load_composed_prompt` 复用 `load_prompt` 校验组件，将规范化读取的源文本以两个 LF (`\n\n`) 原样连接，不 trim、不调用模型总结。组合 SHA-256 来自实际发送的完整 UTF-8 文本；版本为 `c1:<name>@vN+<name>@vN:<完整组合SHA256>`。规则固定为 concat-v1，组件名称、版本和顺序均进入版本标识。
+
+Run 开始时冻结两种组合，`.input.json.system_prompts` 保存全文与组件元数据，输出审计保存 `prompt_manifest`。每条 model_calls 与 Langfuse Generation 使用同一份 phase、prompt_name/version/sha256、prompt_components、prompt_composition、schema_version、model 和发布状态。组件 Commit 是源文件最后变更 Commit；组合 Commit 在组件及注册表均可由 Git 验证时记录当前 HEAD，否则为 null/uncommitted。工具审计记录调用时 phase 和 phase_after，成功计划明确记录 entry → execution。
+
+旧单文件移到 `backend/prompts/archive/investigation_agent_prompt_v17.md`，不参与当前注册、加载或同步。冻结历史审计及原版本字段不改写。
 
 ## 离线验证与局限
 
@@ -65,6 +79,16 @@ Proposal 不再绑定“交付计划”。其 kind/字段约束、当前运行�
 校验能检查明确登记的任务和计划，不能自动发现模型从未识别的解释，也不能仅凭引用确定结论语义真实或充分。Question 的重要性与是否值得继续调查仍由模型判断；Mock 不代表真实模型质量。字符预算是规模代理，非提供商精确 Token 计数；查询仍无分页，不保证遍历全部截断材料。没有跨会话长期记忆、通用 Agent 框架或额外总结模型。
 
 线索文本匹配及一跳关联可能误命中或漏掉相关材料，因此仅作为检索建议。调查充分性和结束时机属于模型的语义判断；仍需真实模型验证目标拆分、缺失条件识别、检索选择及恢复行为，不能以这套结构校验宣称已证明调查充分。
+
+## v18 离线验收（2026-10-27）
+
+- `backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -q`：358项通过。
+- `backend/.venv/Scripts/python.exe -m unittest discover -s evals/case_a/tests -p 'test_*.py' -q`：21项通过；`evals/case_a/tests/validate_eval.py` 的文件哈希、来源切片、Schema及引用完整性检查通过。
+- `backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py dry-run`：A1/A2/A3各3次Mock模型调用，均通过finish校验、0次工具错误，共36个内存Span；0次付费调用，不代表真实任务语义质量。
+- frontend下 `npm run build` 与 `node --experimental-strip-types --test tests/investigation-presentation.test.mjs tests/investigation-summary.test.mjs`：构建成功，14项通过。
+- `scripts/sync_versions.py --sync/--check`、`git diff --check`通过；其他Agent的Prompt版本/哈希、Schema与Gold保持不变，v17归档文本未改写。
+
+真实模型验收仍需检查：简单能力/计数请求是否正确直接完成；复杂Goal是否进入计划并完整拆分；A1/A2/A3的检索、来源核对与判断是否充分；错误依赖/引用、截断、受阻问题及预算限制后的恢复与结束是否合理。直接回答的语义正确性和计划对自然语言Goal的覆盖不由结构校验保证。
 
 ## 统一前端入口（MVP）
 

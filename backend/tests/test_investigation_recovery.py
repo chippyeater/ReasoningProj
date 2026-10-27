@@ -12,7 +12,7 @@ from app.errors import AppError
 class TestInvestigationRecovery(unittest.TestCase):
     setUp = fixture.TestInvestigationAgent.setUp
     tearDown = fixture.TestInvestigationAgent.tearDown
-    run_script = fixture.TestInvestigationAgent.run_script
+    run_script = fixture.TestInvestigationAgent.run_execution_script
     audits = fixture.TestInvestigationAgent.audits
 
     def test_ordinary_text_requires_finish_without_system_reminder(self):
@@ -42,11 +42,11 @@ class TestInvestigationRecovery(unittest.TestCase):
                 fixture.finish("核对", updates=[fixture.question("核对", status="blocked", block_kind="tool_failure", reason="原文缓存读取失败，无法核验来源")])])
         state = json.loads(calls[-1]["messages"][1]["content"])
         self.assertEqual(state["question_state"]["progress"][0]["status"], "pending")
-        self.assertEqual(state["knowledge_state"]["activities"]["items"][0]["status"], "error")
+        self.assertEqual(state["knowledge_state"]["activities"]["items"][1]["status"], "error")
         self.assertEqual(result["question_state"]["questions"][0]["block_kind"], "tool_failure")
 
     def test_model_budget_stops_even_if_valid_reads_interrupt_premature_text(self):
-        with patch.object(agent, "MAX_MODEL_CALLS", 2):
+        with patch.object(agent, "MAX_MODEL_CALLS", 3):
             result, calls = self.run_script("预算", [fixture.final("已完成"),
                 fixture.tool("search_info_units", {"query": "入住"})])
         self.assertEqual(result["stop_reason"], "model_budget_exhausted")
@@ -64,7 +64,7 @@ class TestInvestigationRecovery(unittest.TestCase):
         self.assertEqual(error["validation_details"]["errors"][0]["argument_loc"], ["info_unit_ids", 0])
         self.assertIn("get_evidence", error["recovery_hint"])
         self.assertEqual(len(result["proposals"]), 1)
-        self.assertEqual(result["tool_attempt_count"], 4)
+        self.assertEqual(result["tool_attempt_count"], 5)
         self.assertEqual(result["summary_status"], "completed")
 
     def test_duplicate_read_reuses_cached_result_and_a_different_action_can_continue(self):
@@ -76,7 +76,7 @@ class TestInvestigationRecovery(unittest.TestCase):
                 fixture.finish("核对并扩展", ["U029"], refs=[("U029", 0)])])
         self.assertEqual(reader.call_count, 1)
         self.assertEqual(result["stop_reason"], "finish_investigation")
-        self.assertTrue(self.audits()[0]["tool_calls"][1]["result"]["cached"])
+        self.assertTrue(self.audits()[0]["tool_calls"][2]["result"]["cached"])
 
     def test_reference_failure_categories_and_parameter_locations(self):
         from app.investigation_actions import artifacts

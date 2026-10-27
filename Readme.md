@@ -125,6 +125,8 @@ Set-Location backend
 `prompt_release_status=uncommitted`。这些字段与 `prompt_name / schema_version / model` 按每次调用分别写入本地审计和 Langfuse Generation。
 StageRun 保持原结构；旧日志中 SHA-256 形式的 `prompt_version` 无需迁移并仍可读取。
 
+Investigation v18 使用同一注册表中的三份源 Prompt 和 `compositions` 有序组合：Entry 为 Common + Entry，Execution 为 Common + Execution。源版本独立递增；组合版本为 `c1:<有序源名称及版本>:<完整组合SHA256>`。每次调用记录 phase、组件版本/哈希、实际组合哈希和可验证的 Git/发布状态；运行输入快照冻结两阶段全文。首次只开放直接 finish 和原子计划工具，成功提交 Question/Step 后才开放调查工具。详见 [Investigation Agent](docs/investigation_agent.md)。
+
 ## LLM Observability（Langfuse）
 
 后端使用 `langfuse==5.0.4` 的 OpenTelemetry API，为 Extraction、Extraction Validation Repair、Relation、Relation Validation Repair 和

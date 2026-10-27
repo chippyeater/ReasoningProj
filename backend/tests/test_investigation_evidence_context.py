@@ -12,7 +12,7 @@ from test_reasoning_proposals import suggestion, proposal_call
 class TestInitialEvidence(unittest.TestCase):
     setUp = fixture.TestInvestigationAgent.setUp
     tearDown = fixture.TestInvestigationAgent.tearDown
-    run_script = fixture.TestInvestigationAgent.run_script
+    run_script = fixture.TestInvestigationAgent.run_execution_script
     audits = fixture.TestInvestigationAgent.audits
 
     def test_initial_sources_allow_findings_and_proposals_without_read_calls(self):
@@ -51,7 +51,7 @@ class TestInitialEvidence(unittest.TestCase):
         self.assertEqual(sources["items"], [])
         self.assertEqual(sources["errors"][0]["code"], "source_quote_mismatch")
         self.assertEqual(result["findings"], [])
-        self.assertEqual(self.audits()[0]["tool_calls"][0]["result"]["status"], "invalid_request")
+        self.assertEqual(self.audits()[0]["tool_calls"][1]["result"]["status"], "invalid_request")
 
     def test_exploratory_hypothesis_and_gap_can_have_no_direct_materials(self):
         h = {**suggestion("hypothesis"), "info_unit_ids": [], "evidence_refs": [], "rationale": "候选解释尚无直接材料支持，需检验。"}

@@ -11,7 +11,7 @@ from support import REPO
 sys.path.insert(0, str(REPO))
 
 from scripts.sync_versions import RegistryError, synchronize
-from app.prompt_loader import load_prompt
+from app.prompt_loader import load_prompt, load_composed_prompt
 from app.schemas import StageRun
 
 
@@ -43,6 +43,7 @@ class RegistryFixture:
 
     def registry(self) -> dict:
         return {
+            "compositions": [],
             "prompts": [
                 {
                     "name": name,
@@ -87,6 +88,48 @@ class RegistryFixture:
 
 
 class TestPromptRegistry(TestCase):
+    def test_compositions_track_sources_order_hash_and_independent_releases(self):
+        with TemporaryDirectory() as temporary:
+            fixture = RegistryFixture(Path(temporary))
+            registry = fixture.read_registry()
+            registry["compositions"] = [{"name": "combined", "components": ["extraction", "evidence_repair"]}]
+            fixture.write_registry(registry)
+            commit = fixture.initialize_git()
+            def load():
+                return load_composed_prompt("combined", repository_root=fixture.root)
+            before = load()
+            self.assertEqual(before.content, "extraction prompt\n\n\nevidence repair prompt\n")
+            self.assertEqual(before.sha256, hashlib.sha256(before.content.encode()).hexdigest())
+            self.assertEqual(before, load())
+            self.assertEqual(before.git_commit, commit)
+            self.assertEqual(before.release_status, "committed")
+            self.assertEqual([p["prompt_version"] for p in before.metadata("test")["prompt_components"]], ["v1", "v1"])
+            fixture.prompts["evidence_repair"].write_text("changed\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "--sync"):
+                load()
+            self.assertEqual(synchronize(fixture.root, fixture.registry_path, write=True), ["evidence_repair"])
+            changed = load()
+            self.assertNotEqual(changed.version, before.version)
+            self.assertEqual([p.version for p in changed.components], ["v1", "v2"])
+            self.assertIsNone(changed.git_commit)
+            registry = fixture.read_registry()
+            registry["compositions"][0]["components"].reverse()
+            fixture.write_registry(registry)
+            self.assertNotEqual(load().sha256, changed.sha256)
+            self.assertEqual(synchronize(fixture.root, fixture.registry_path, write=False), [])
+
+    def test_invalid_composition_registry_is_rejected_atomically(self):
+        for names in (["extraction", "missing"], ["extraction", "extraction"], ["extraction"]):
+            with self.subTest(names=names), TemporaryDirectory() as temporary:
+                fixture = RegistryFixture(Path(temporary))
+                registry = fixture.read_registry()
+                registry["compositions"] = [{"name": "combined", "components": names}]
+                fixture.write_registry(registry)
+                before = fixture.registry_path.read_bytes()
+                with self.assertRaises(RegistryError):
+                    synchronize(fixture.root, fixture.registry_path, write=True)
+                self.assertEqual(fixture.registry_path.read_bytes(), before)
+
     def test_registered_repository_prompts_load_and_match_registry(self):
         registry = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
         registered_paths = {entry["path"] for entry in registry["prompts"]}

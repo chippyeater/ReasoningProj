@@ -14,14 +14,14 @@ from app import investigation_tools as tools
 class TestInvestigationDelivery(unittest.TestCase):
     setUp = f.TestInvestigationAgent.setUp
     tearDown = f.TestInvestigationAgent.tearDown
-    run_script = f.TestInvestigationAgent.run_script
+    run_script = f.TestInvestigationAgent.run_execution_script
     audits = f.TestInvestigationAgent.audits
     claims_case = sufficiency.TestInvestigationSufficiency.claims_case
     state = sufficiency.TestInvestigationSufficiency.state
     finish_args = sufficiency.TestInvestigationSufficiency.finish_args
     context = {"reasoning": {"hypotheses": [], "gaps": []}}
 
-    def proposal(self, case, knowledge, seen, proposals, *, kind="hypothesis", qids=("Q1",), units=("U029",), **extra):
+    def proposal(self, case, knowledge, seen, proposals, *, kind="hypothesis", qids=("facts",), units=("U029",), **extra):
         values = {"content": "待核实是否存在实际空置损失", "rationale": "陈述需要独立收款材料核实",
                   "info_unit_ids": list(units), "evidence_refs": [{"info_unit_id": uid, "source_ref_index": 0} for uid in units], **extra}
         if kind == "evidence_gap":
@@ -80,11 +80,11 @@ class TestInvestigationDelivery(unittest.TestCase):
 
     def test_question_has_no_delivery_plan_and_rejects_removed_field(self):
         case, knowledge, questions, seen = self.state()
-        self.assertNotIn("planned_actions", questions.items["Q1"].model_dump())
+        self.assertNotIn("planned_actions", questions.items["facts"].model_dump())
         with self.assertRaises(AppError) as caught:
             questions.update([{**f.question("核对"), "planned_actions": []}], case, seen, self.context)
         self.assertEqual(caught.exception.details["errors"][0]["code"], "extra_forbidden")
-        self.assertEqual(questions.items["Q1"].status, "pending")
+        self.assertEqual(questions.items["facts"].status, "pending")
 
     def test_shared_hypothesis_dependency_keeps_real_question_scope(self):
         case, knowledge, questions, seen = self.state()
@@ -94,7 +94,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         gid = self.proposal(case, knowledge, seen, proposals, kind="evidence_gap")
         questions.update([self.blocked()], case, seen, self.context)
         self.assertEqual(proposals[1].hypothesis_proposal_ids, [hid])
-        self.assertEqual([(a["proposal_id"], a["question_ids"]) for a in knowledge.activities], [(hid, ["Q2"]), (gid, ["Q1"])])
+        self.assertEqual([(a["proposal_id"], a["question_ids"]) for a in knowledge.activities], [(hid, ["Q2"]), (gid, ["facts"])])
         self.assertEqual(questions.steps, {})
 
     def test_proposal_unknown_question_cannot_create_or_reassign_suggestion(self):
@@ -115,7 +115,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         self.proposal(case, knowledge, seen, proposals)
         self.proposal(case, knowledge, seen, proposals, kind="evidence_gap")
         questions.update_steps([f.step()], case, knowledge)
-        updates = [{**self.blocked(), "question": "非法缩减原始任务"}]
+        updates = [{**self.blocked(), "question": ""}]
         args = self.finish_args(updates=updates)
         args.update(answer="字" * 241, findings=[{"statement": "两方陈述待核实", "info_unit_ids": ["U029"],
             "relation_ids": ["R010"], "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 99}]}])
@@ -124,7 +124,7 @@ class TestInvestigationDelivery(unittest.TestCase):
             actions.finish_investigation(case, seen, self.context, "核对", proposals, questions, knowledge=knowledge, **args)
         details = caught.exception.details
         codes = {e["code"] for e in details["errors"]}
-        self.assertTrue({"step_unresolved", "goal_scope_changed", "reference_not_obtained", "reference_out_of_range", "summary_too_long"} <= codes)
+        self.assertTrue({"step_unresolved", "string_too_short", "reference_not_obtained", "reference_out_of_range", "summary_too_long"} <= codes)
         self.assertEqual(details["errors"][0]["argument_loc"], ["question_updates", 0, "question"])
         self.assertTrue(any(e.get("argument_loc") == ["findings", 0, "relation_ids", 0] for e in details["errors"]))
         self.assertTrue(any(e.get("argument_loc") == ["findings", 0, "evidence_refs", 0] for e in details["errors"]))
@@ -142,11 +142,13 @@ class TestInvestigationDelivery(unittest.TestCase):
         codes = {e["code"] for e in caught.exception.details["errors"]}
         self.assertTrue({"missing", "model_type", "reference_not_found", "summary_too_long"} <= codes)
         self.assertTrue(any(e.get("argument_loc") == ["question_updates", 1, "question"] for e in caught.exception.details["errors"]))
-        self.assertEqual(questions.items["Q1"].status, "pending")
+        self.assertEqual(questions.items["facts"].status, "pending")
 
     def test_validated_question_batch_survives_failed_delivery_and_empty_updates_reuse_it(self):
         def decide(call, turn):
             if turn == 1:
+                return f.tool("update_investigation_steps", {"steps": [f.step(status="completed", note="已核对当前材料", basis=["U029"])]}, "handle")
+            if turn == 2:
                 return f.finish("核对", ["U029"], refs=[("U029", 0)], answer="字" * 241, call_id="bad-answer")
             state = json.loads(call["messages"][1]["content"])
             error = json.loads(call["messages"][-1]["content"])["error"]
@@ -156,7 +158,7 @@ class TestInvestigationDelivery(unittest.TestCase):
             return f.finish("核对", ["U029"], refs=[("U029", 0)], updates=[], answer="已核对陈述，仍需独立核实。")
         result, calls = self.run_script("核对", decide, selected=["U029"])
         self.assertEqual(result["stop_reason"], "finish_investigation")
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
 
     def test_native_error_chain_recovers_without_losing_steps_questions_or_proposals(self):
         goal = "核对"
@@ -177,9 +179,9 @@ class TestInvestigationDelivery(unittest.TestCase):
                 error = json.loads(call["messages"][-1]["content"])["error"]
                 self.assertIn("reference_not_obtained", {e["code"] for e in error["validation_details"]["errors"]})
                 self.assertTrue(error["validation_details"]["question_updates_applied"])
-                self.assertEqual(state["investigation_steps"]["progress"][0]["activity_indices"], [1])
+                self.assertEqual(state["investigation_steps"]["progress"][0]["activity_indices"], [2])
                 self.assertEqual(state["investigation_steps"]["progress"][0]["status"], "completed")
-                return f.tool("get_evidence", {"info_unit_ids": ["U036"]}, "remaining-source")
+                return f.tool("get_evidence", {"info_unit_ids": ["U036"], "question_ids": ["facts"]}, "remaining-source")
             return f.finish(goal, ["U029", "U036"] if turn == 8 else ["U029"],
                 refs=[("U029", 0), ("U036", 0)] if turn == 8 else [("U029", 0)],
                 relations=["R010"] if turn == 6 else [], status="evidence_insufficient", call_id=f"finish-{turn}",
@@ -190,7 +192,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         self.assertEqual(result["summary_status"], "completed")
         self.assertEqual(len(result["proposals"]), 2)
         self.assertEqual(result["tool_budget_used"]["finish"], 2)
-        self.assertEqual(self.audits()[0]["tool_calls"][5]["result"]["status"], "invalid_request")
+        self.assertEqual(self.audits()[0]["tool_calls"][6]["result"]["status"], "invalid_request")
         self.assertTrue(all(len([m for m in c["messages"] if m["role"] == "system"]) == 1 for c in calls))
 
     def test_repeated_invalid_deliveries_never_publish_answer_or_findings(self):
@@ -229,17 +231,17 @@ class TestInvestigationDelivery(unittest.TestCase):
         for mode in ("other_question", "unobtained", "other_case", "duplicate"):
             with self.subTest(mode=mode):
                 case, knowledge, questions, seen = self.state(ids=("U029",) if mode == "unobtained" else ("U029", "U036"))
-                questions.items["Q1"].related_info_unit_ids = ["U029"]
+                questions.items["facts"].related_info_unit_ids = ["U029"]
                 questions.update([f.question("另一方陈述", "Q2", units=["U036"])] if mode != "unobtained" else [f.question("另一方陈述", "Q2")], case, seen, self.context)
                 basis = ["U036"]
                 if mode == "other_case":
                     knowledge.info_units["foreign"] = {"id": "foreign"}
-                    questions.items["Q1"].related_info_unit_ids.append("foreign")
+                    questions.items["facts"].related_info_unit_ids.append("foreign")
                     basis = ["foreign"]
                 elif mode == "duplicate":
                     basis = ["U029", "U029"]
                 elif mode == "unobtained":
-                    questions.items["Q1"].related_info_unit_ids.append("U036")
+                    questions.items["facts"].related_info_unit_ids.append("U036")
                 before = questions.dump()
                 with self.assertRaises(AppError) as caught:
                     questions.update_steps([f.step(status="completed", note="核对指定材料", basis=basis)], case, knowledge)
@@ -263,7 +265,7 @@ class TestInvestigationDelivery(unittest.TestCase):
                 if mode == "failed":
                     result = tools._failure(AppError("source_unavailable", "模拟来源失败"))
                 index = knowledge.merge("search_info_units", {"query": "保险赔付"}, result,
-                    ["Q2"] if mode == "wrong_question" else ["Q1"], step_id="other" if mode == "wrong_step" else "S1",
+                    ["Q2"] if mode == "wrong_question" else ["facts"], step_id="other" if mode == "wrong_step" else "S1",
                     executed=mode != "not_executed")
                 questions.record_step(questions.steps["S1"], index)
                 row = f.step(status="completed", note="本查询未命中，不等于案件不存在该事实")
@@ -279,7 +281,7 @@ class TestInvestigationDelivery(unittest.TestCase):
     def test_changed_objective_excludes_old_reads_but_keeps_history(self):
         case, knowledge, questions, _seen = self.state(ids=("U029",))
         questions.update_steps([f.step()], case, knowledge)
-        index = knowledge.merge("search_info_units", {"query": "损失"}, tools.search_info_units(case, "损失"), ["Q1"], step_id="S1")
+        index = knowledge.merge("search_info_units", {"query": "损失"}, tools.search_info_units(case, "损失"), ["facts"], step_id="S1")
         questions.record_step(questions.steps["S1"], index)
         questions.update_steps([f.step(status="in_progress", objective="核对日期")], case, knowledge)
         with self.assertRaises(AppError):
@@ -324,7 +326,7 @@ class TestInvestigationDelivery(unittest.TestCase):
                 result, draft, _ = actions.finish_investigation(case, seen, self.context, "核对", [], questions, knowledge=knowledge, **args)
                 self.assertEqual(result.completion_status, "evidence_insufficient")
                 self.assertEqual(draft.steps["S1"].status, "completed")
-                self.assertEqual(draft.items["Q1"].status, "blocked")
+                self.assertEqual(draft.items["facts"].status, "blocked")
 
     def test_finish_deferral_cannot_answer_and_does_not_hide_other_pending_steps(self):
         case, knowledge, questions, seen = self.state(ids=("U029",))

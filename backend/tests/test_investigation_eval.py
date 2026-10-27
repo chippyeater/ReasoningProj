@@ -224,7 +224,7 @@ class TestInvestigationEval(unittest.TestCase):
         self.assertEqual(len(set(report["trace_ids"])), 3)
         self.assertEqual(len({i["initial_case_data_sha256"] for i in report["items"]}), 1)
         self.assertEqual(report["maximum_live_model_calls"], 84)
-        self.assertTrue(all(i["metrics"]["model_call_count"] == 2 for i in report["items"]))
+        self.assertTrue(all(i["metrics"]["model_call_count"] == 3 for i in report["items"]))
 
     def test_single_task_dry_run_invokes_full_agent_exactly_once(self):
         with patch.object(runner.agent, "run_investigation", wraps=runner.agent.run_investigation) as run, \
@@ -235,7 +235,7 @@ class TestInvestigationEval(unittest.TestCase):
         self.assertEqual(report["maximum_live_model_calls"], 28)
         self.assertEqual(report["paid_model_calls"], 0)
         self.assertEqual(run.await_count, 1)
-        self.assertEqual(model.call_count, 2)
+        self.assertEqual(model.call_count, 3)
         for call in model.call_args_list:
             self.assertNotIn("investigation_opportunities", json.dumps(call.args[1:]))
 

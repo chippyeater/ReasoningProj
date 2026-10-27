@@ -74,20 +74,31 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
 
 
 def finish_investigation(case, seen, context, goal, proposals, questions, *, answer, findings,
-                         question_updates, step_updates, completion_status, knowledge, budget_exhausted=False):
-    """Finish with grounded findings, changed Questions and step_updates (use [] when unchanged). Step updates use exactly the normal update_investigation_steps rules, including explicit basis_info_unit_ids or valid linked reads, even when the shared update budget is exhausted. A nonempty step_updates batch, Question updates and final delivery commit together only on full success; failure preserves the pre-finish state. With step_updates=[], independently valid Question updates may remain working memory as reported in errors. Every Step must be completed or deferred with a result/reason; all-deferred work cannot establish an answered Question. No mandatory plan or minimum reads/Proposals. Runtime derives open_questions/Proposals; no extra model call."""
+                         question_updates, step_updates, completion_status, knowledge, budget_exhausted=False,
+                         phase="execution"):
+    """Finish investigation of the original Goal with grounded findings, changed Questions and step_updates (use [] when unchanged). Step updates use exactly the execution update_investigation_steps rules, including explicit basis_info_unit_ids or valid linked reads, even when the shared update budget is exhausted. A nonempty step_updates batch, Question updates and final delivery commit together only on full success; failure preserves the pre-finish state. With step_updates=[], independently valid Question updates may remain working memory as reported in errors. Every Question must be answered/blocked and every Step completed/deferred with a result/reason; all-deferred work cannot establish an answered Question. No minimum reads/Proposals. Runtime derives open_questions/Proposals; no extra model call."""
     from pydantic import TypeAdapter, ValidationError
     from typing import Annotated
     from pydantic import Field
     from app.investigation_agent import Finding, _validate_summary
     from app.investigation_state import validation_issues
 
+    if phase == "entry":
+        if (questions.items or questions.steps or proposals or findings != [] or question_updates != []
+                or step_updates != [] or completion_status != "completed"):
+            raise AppError("invalid_entry_finish",
+                "Direct Entry answers require completed and empty findings/question_updates/step_updates; submit a plan for investigation")
+        text = _validate_summary(answer, [])
+        return artifacts(case, seen, context, goal, [], [], [], "completed"), questions, text
+    if phase != "execution":
+        raise AppError("invalid_investigation_phase", "Unknown finish phase")
+
     draft, errors = questions.review_updates(question_updates, case, seen, context)
     question_errors = bool(errors)
     # A diagnostic draft can contain invalid Questions. Never accept that batch.
     for issue in errors:
         issue.setdefault("error_code", issue["code"] if issue["code"] in {
-            "goal_scope_changed", "invalid_questions",
+            "invalid_questions",
             "question_limit", "invalid_investigation_reference"} else "invalid_tool_arguments")
 
     # Reuse normal step validation on a detached Question/Step draft. Never
@@ -122,10 +133,9 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
             error(["questions", q.id, "status"], "all_steps_deferred", "Deferring all registered work does not establish that this Question is answered",
                   "Keep this Question blocked with the actual unresolved condition, or reopen and handle relevant work")
     blocked = [q for q in draft.items.values() if q.status == "blocked"]
-    if draft.items["Q1"].status == "answered" and any(q.id != "Q1" and q.status != "answered" for q in draft.items.values()):
-        question_errors = True
-        error(["questions", "Q1", "status"], "goal_scope_incomplete", "Q1 cannot be answered while a requested aspect is unresolved",
-              "Keep Q1 blocked and report the unresolved aspect")
+    if not draft.items:
+        error(["questions"], "missing_investigation_questions", "Execution needs registered investigation Questions",
+              "Register the independent Questions serving the original Goal")
     if completion_status == "evidence_insufficient" and not blocked:
         error(["completion_status"], "insufficiency_without_unresolved_question", "All-answered is inconsistent with evidence insufficiency",
               "Use completed for resolved work; otherwise identify and block the missing condition")

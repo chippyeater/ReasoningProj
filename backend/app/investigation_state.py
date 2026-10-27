@@ -83,10 +83,9 @@ class Question(StateModel):
 
 
 class QuestionState:
-    def __init__(self, goal):
-        self.items = {"Q1": Question(id="Q1", question=goal, status="pending", related_info_unit_ids=[],
-            evidence_refs=[], finding=None, block_reason=None, block_kind=None)}
-        self.activities = {"Q1": []}
+    def __init__(self):
+        self.items: dict[str, Question] = {}
+        self.activities = {}
         self.steps: dict[str, InvestigationStep] = {}
 
     def dump(self):
@@ -97,7 +96,7 @@ class QuestionState:
     def resolve(self, ids):
         if ids is None:
             ids = [q.id for q in self.items.values() if q.status == "in_progress"]
-            ids = ids or [q.id for q in self.items.values() if q.status == "pending"][:1] or ["Q1"]
+            return ids or [q.id for q in self.items.values() if q.status == "pending"][:1]
         if not isinstance(ids, list) or not ids or len(ids) > MAX_QUESTIONS or any(not isinstance(i, str) for i in ids):
             raise AppError("invalid_question_reference", "Supply a nonempty list of current Question IDs")
         if len(set(ids)) != len(ids) or not set(ids) <= self.items.keys():
@@ -124,9 +123,6 @@ class QuestionState:
 
         for q in parsed:
             loc = ["questions", q.id]
-            if q.id == "Q1" and q.question != self.items["Q1"].question:
-                error([*loc, "question"], "goal_scope_changed", "Q1 must retain the complete original goal",
-                      "Restore Q1.question from question_state; add Questions for separate aspects")
             if q.related_info_unit_ids or q.evidence_refs:
                 try:
                     artifacts(case, seen, context, "Question basis", [], [{"statement": q.finding or q.question[:600],
@@ -155,6 +151,22 @@ class QuestionState:
                            details={"category": "questions", "errors": errors})
         self.items, self.activities = draft.items, draft.activities
         return {"status": "ok", "updated_question_ids": [q["id"] for q in updates]}
+
+    def submit_plan(self, updates, steps, case, seen, context, knowledge):
+        """Accept Entry Questions and their actions as a single validated batch."""
+        if self.items or self.steps:
+            raise AppError("plan_already_registered", "Entry planning requires an empty task state")
+        draft = deepcopy(self)
+        draft.update(updates, case, seen, context)
+        if any(q.status not in {"pending", "in_progress"} for q in draft.items.values()):
+            raise AppError("invalid_plan", "Plan Questions must be pending or in_progress")
+        result = draft.update_steps(steps, case, knowledge)
+        if any(s.status not in {"pending", "in_progress"} for s in draft.steps.values()):
+            raise AppError("invalid_plan", "Plan Steps must be pending or in_progress")
+        if {s.question_id for s in draft.steps.values()} != draft.items.keys():
+            raise AppError("invalid_plan", "Each planned Question needs at least one investigation Step")
+        self.items, self.activities, self.steps = draft.items, draft.activities, draft.steps
+        return {**result, "updated_question_ids": list(self.items)}
 
     def open_questions(self):
         return [(q.question + ("：" + q.block_reason if q.block_reason else ""))[:600]
@@ -308,14 +320,10 @@ class KnowledgeState:
         result = {}
         for q in questions.items.values():
             anchors = set(q.related_info_unit_ids)
-            if q.id == "Q1":
-                anchors.update(self.info_units)
-                anchors.update(row["info_unit_id"] for row in self.source_refs.values())
-            else:
-                for activity in self.activities:
-                    if q.id in activity["question_ids"] and activity["status"] not in {"error", "invalid_request"}:
-                        anchors.update(uid for uid in activity["arguments"].get("info_unit_ids", []) if uid in units)
-                        anchors.update(uid for uid in activity["obtained"] if uid in units)
+            for activity in self.activities:
+                if q.id in activity["question_ids"] and activity["status"] not in {"error", "invalid_request"}:
+                    anchors.update(uid for uid in activity["arguments"].get("info_unit_ids", []) if uid in units)
+                    anchors.update(uid for uid in activity["obtained"] if uid in units)
             neighbors = {uid for r in case.relations if {r.source_id, r.target_id} & anchors
                          for uid in [r.source_id, r.target_id, *r.evidence_unit_ids]} - anchors
             # Generic language matching, not case-specific terms or a truth test.
@@ -371,10 +379,10 @@ def _preview(value, text_limit=500):
     return value
 
 
-def model_context(initial, knowledge, questions, budget, recovery):
+def model_context(initial, knowledge, questions, budget, recovery, *, phase="execution"):
     """Bound each section and disclose omitted records; no summarization model."""
     # Work context is already bounded by the Issue service, retained as user data.
-    result = {**deepcopy(initial), "question_state": {}, "knowledge_state": {},
+    result = {**deepcopy(initial), "phase": phase, "question_state": {}, "knowledge_state": {},
               "remaining_budget": budget, "recovery": recovery}
     result.pop("evidence_context", None)  # Now held in KnowledgeState, not duplicated each turn.
     result.pop("selected_info_units", None)
@@ -409,7 +417,8 @@ def model_context(initial, knowledge, questions, budget, recovery):
                       "objective": s.objective[:200], "objective_truncated": len(s.objective) > 200,
                       "activity_start_index": s.activity_start_index,
                       "activity_indices": list(s.activity_indices)} for s in questions.steps.values()],
-        "details": section([(s["id"], s) for s in qdump["investigation_steps"]], 8000)}
+        "details": section(sorted([(s["id"], s) for s in qdump["investigation_steps"]],
+                                  key=lambda row: row[1]["question_id"] not in current), 8000)}
     result["knowledge_state"] = {
         "info_units": section(sorted(knowledge.info_units.items(), key=lambda r: r[0] not in preferred), 6000),
         "relations": section(sorted(knowledge.relations.items(), key=lambda row:

@@ -1,6 +1,6 @@
 # Case A Investigation × Langfuse v5
 
-使用原生 Dataset、`dataset.run_experiment`、Experiment Trace 和 Scores。没有新调查运行时、评分前端或 LLM-as-a-Judge；Production Prompt、完成规则、Schema v0.3 和原 Extraction/Relation Gold 均不改变。
+使用原生 Dataset、`dataset.run_experiment`、Experiment Trace 和 Scores。没有新调查运行时、评分前端或 LLM-as-a-Judge；运行直接使用当前 Production Prompt 与完成规则；Schema v0.3 和原 Extraction/Relation Gold 保持不变。
 
 ## 三项任务及参考标准
 
@@ -60,6 +60,8 @@ backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py live --task A
 `--task A1|A2|A3` 仅用于 dry-run/live。省略时仍运行三个任务；指定时先核对完整远端 Dataset，再仅在本地筛选原生 Item，不修改 Dataset。运行元数据记录选择范围及本次调用上界，单任务最多 28 次模型调用。Runner 不自动重跑任务；远端核验失败时，可从审计目录的 `execution.json` 找到本次 Experiment/Trace ID，继续只读核查，避免为同步问题重新调用模型。
 
 `init` 使用确定性 Dataset Item ID；已存在且一致的对象不重建。定义、快照、配置或远端 Item 漂移时明确失败，不静默覆盖。远端 unavailable、权限不足、写入拒绝或读回核验失败均返回非零退出码，不冒充同步成功。`live` 缺少授权标志会在加载模型或执行调查前失败；还要求干净且已提交的工作区和开启 Langfuse 内容记录。
+
+当前 v18 的离线协议脚本先提交 Question/Step 计划，再读取来源并完成交付（每项3次 Mock 模型调用）。运行元数据包含两阶段 Prompt manifest 与两组工具契约的整体哈希；不读取旧单文件 Prompt。它只验证阶段切换、来源访问、步骤依据和完成协议，不能代替三项任务的真实语义验收。
 
 `dry-run` 使用内存 Span Exporter 和只接受 Mock API 的 httpx transport。它实际运行 SDK v5 Experiment Runner、三个隔离任务、完整 Agent 工具循环、原生 Evaluator 和 Trace 嵌套；模型回复为明确标注的协议样例。报告中的完成状态只说明协议通过，不是真实调查质量或真实 Experiment 上传成功。
 

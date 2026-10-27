@@ -3,6 +3,7 @@
 export type AgentEvidenceRef = { info_unit_id: string; source_ref_index: number };
 export type AgentResult = {
   goal: string;
+  phase: "entry" | "execution";
   answer?: string | null;
   summary_status?: "pending" | "completed" | "failed";
   limitations?: string[];

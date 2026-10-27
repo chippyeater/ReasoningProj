@@ -37,10 +37,22 @@
       "sha256": "e997749919adb844e0cb16fe7b3d334ea787821cc365ab41491dc12696bfd7d4"
     },
     {
-      "name": "investigation_agent",
-      "path": "backend/prompts/investigation_agent_prompt.md",
-      "version": 17,
-      "sha256": "842f17c669b0b3136681d96a8004306ccfeaf312c7989c2d7a4442bff354768b"
+      "name": "investigation_common",
+      "path": "backend/prompts/investigation_common_prompt.md",
+      "version": 2,
+      "sha256": "906848d0cd8916e00191329bae68487459aee7db333e664b66e57f37d6b6bc7f"
+    },
+    {
+      "name": "investigation_entry",
+      "path": "backend/prompts/investigation_entry_prompt.md",
+      "version": 2,
+      "sha256": "c9e90c1b920af2e000404cea576bc0f133af371a067862d42fd5b4ada6adfb1f"
+    },
+    {
+      "name": "investigation_execution",
+      "path": "backend/prompts/investigation_execution_prompt.md",
+      "version": 2,
+      "sha256": "306c9c2d5ed1612428a3ffd0eaa635758c7d5e8fccf50daf8930dc2a53b3ee34"
     },
     {
       "name": "reasoning_selector",
@@ -76,5 +88,21 @@
       "manifest": "evals/case_a/tests/test_manifest.json",
       "rubric": "evals/case_a/gold/evaluation_rubric.json"
     }
-  }
+  },
+  "compositions": [
+    {
+      "name": "investigation_agent_entry",
+      "components": [
+        "investigation_common",
+        "investigation_entry"
+      ]
+    },
+    {
+      "name": "investigation_agent_execution",
+      "components": [
+        "investigation_common",
+        "investigation_execution"
+      ]
+    }
+  ]
 }

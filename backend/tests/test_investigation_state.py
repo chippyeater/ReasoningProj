@@ -11,7 +11,7 @@ from app.investigation_state import KnowledgeState, QuestionState, MAX_CONTEXT_C
 class TestInvestigationState(unittest.TestCase):
     setUp = f.TestInvestigationAgent.setUp
     tearDown = f.TestInvestigationAgent.tearDown
-    run_script = f.TestInvestigationAgent.run_script
+    run_script = f.TestInvestigationAgent.run_execution_script
     audits = f.TestInvestigationAgent.audits
 
     def test_multi_question_investigation_records_activity_without_automatic_answer(self):
@@ -43,8 +43,8 @@ class TestInvestigationState(unittest.TestCase):
         self.assertEqual([q["status"] for q in result["question_state"]["questions"]], ["blocked", "answered", "blocked"])
         self.assertEqual(len(result["open_questions"]), 2)
         activities = self.audits()[0]["knowledge_state"]["activities"]
-        self.assertEqual(activities[1]["question_ids"], ["date"])
-        self.assertEqual(activities[2]["question_ids"], ["loss"])
+        self.assertEqual(activities[2]["question_ids"], ["date"])
+        self.assertEqual(activities[3]["question_ids"], ["loss"])
 
     def test_unresolved_task_rejects_finish_then_recovers_atomically(self):
         goal = "核对"
@@ -83,7 +83,7 @@ class TestInvestigationState(unittest.TestCase):
                 return f.tool("get_evidence", {"info_unit_ids": ["U029"], "step_id": "S1"}, "read")
             if turn == 3:
                 self.assertEqual(state["investigation_steps"]["progress"][0]["status"], "in_progress")
-                self.assertEqual(state["investigation_steps"]["progress"][0]["activity_indices"], [1])
+                self.assertEqual(state["investigation_steps"]["progress"][0]["activity_indices"], [2])
                 return proposal_call(suggestion("hypothesis"), [], "hyp")
             if turn == 4:
                 return f.tool("update_investigation_steps", {"steps": [f.step(status="completed", note="已核对陈述，尚非独立证实")]}, "handled")
@@ -100,12 +100,12 @@ class TestInvestigationState(unittest.TestCase):
         self.assertEqual(len(calls), 7)
         steps = result["question_state"]["investigation_steps"]
         self.assertEqual([s["status"] for s in steps], ["completed", "deferred"])
-        self.assertEqual(steps[0]["activity_indices"], [1])
+        self.assertEqual(steps[0]["activity_indices"], [2])
         activities = self.audits()[0]["knowledge_state"]["activities"]
-        self.assertEqual(activities[1]["step_id"], "S1")
-        self.assertEqual(activities[2]["tool"], "propose_hypothesis")
-        self.assertIsNone(activities[2]["step_id"])
-        self.assertEqual(result["tool_budget_used"]["question"], 3)
+        self.assertEqual(activities[2]["step_id"], "S1")
+        self.assertEqual(activities[3]["tool"], "propose_hypothesis")
+        self.assertIsNone(activities[3]["step_id"])
+        self.assertEqual(result["tool_budget_used"]["question"], 4)
 
     def test_steps_can_complete_from_initial_material_without_reads_or_proposals(self):
         result, calls = self.run_script("核对", [
@@ -121,7 +121,7 @@ class TestInvestigationState(unittest.TestCase):
             f.tool("update_investigation_steps", {"steps": [f.step(status="completed", note="我已搜索并核验所有证据")]}, "fake"),
             f.finish("核对")])
         self.assertEqual(json.loads(calls[1]["messages"][-1]["content"])["error"]["code"], "step_completion_without_basis")
-        self.assertEqual(result["question_state"]["investigation_steps"], [])
+        self.assertEqual(result["question_state"]["investigation_steps"][0]["status"], "deferred")
 
     def test_all_deferred_cannot_answer_question_and_remains_visible_in_audit(self):
         result, calls = self.run_script("核对", [
@@ -141,13 +141,13 @@ class TestInvestigationState(unittest.TestCase):
             f.tool("update_investigation_steps", {"steps": [f.step(status="completed", note="本查询未命中，不等于全案不存在相关材料")]}, "handled"),
             f.finish("核对")])
         self.assertEqual(result["completion_status"], "evidence_insufficient")
-        self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [1])
-        self.assertEqual(self.audits()[0]["knowledge_state"]["activities"][1]["status"], "empty")
+        self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [2])
+        self.assertEqual(self.audits()[0]["knowledge_state"]["activities"][2]["status"], "empty")
 
     def test_invalid_step_or_question_scope_never_executes_read(self):
         for args, expected in (({"step_id": "foreign"}, "invalid_step_reference"),
                                ({"step_id": ["S1"]}, "invalid_step_reference"),
-                               ({"step_id": "S1", "question_ids": ["Q1", "Q2"]}, "step_question_mismatch"),
+                               ({"step_id": "S1", "question_ids": ["facts", "Q2"]}, "step_question_mismatch"),
                                ({"step_id": "S1", "question_ids": ["unknown"]}, "invalid_question_reference")):
             with self.subTest(args=args):
                 result, calls = self.run_script("核对", [
@@ -159,7 +159,7 @@ class TestInvestigationState(unittest.TestCase):
                         f.question("子问题", "Q2", status="blocked", reason="需独立材料", block_kind="evidence_missing")])])
                 self.assertEqual(json.loads(calls[3]["messages"][-1]["content"])["error"]["code"], expected)
                 self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [])
-                self.assertFalse(self.audits()[-1]["tool_calls"][2]["executed"])
+                self.assertFalse(self.audits()[-1]["tool_calls"][3]["executed"])
 
     def test_cached_reads_keep_real_activity_indices_and_do_not_fake_progress(self):
         result, _ = self.run_script("核对", [
@@ -167,25 +167,25 @@ class TestInvestigationState(unittest.TestCase):
             *[f.tool("search_info_units", {"query": "损失", "step_id": "S1"}, f"read-{i}") for i in range(4)]])
         self.assertEqual(result["stop_reason"], "no_progress_limit")
         activities = self.audits()[0]["knowledge_state"]["activities"]
-        self.assertTrue(activities[1]["executed"])
-        self.assertTrue(all(not a["executed"] and a["cached"] for a in activities[2:]))
-        self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [1, 2, 3, 4])
+        self.assertTrue(activities[2]["executed"])
+        self.assertTrue(all(not a["executed"] and a["cached"] for a in activities[3:]))
+        self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [2, 3, 4, 5])
         self.assertEqual(result["question_state"]["investigation_steps"][0]["status"], "in_progress")
         self.assertIsNone(result["answer"])
 
     def test_step_owner_is_used_when_question_ids_omitted_for_relations(self):
         result, _ = self.run_script("核对", [
             f.tool("update_questions", {"questions": [f.question("核对关系", "Q2")]}, "question"),
-            f.tool("update_investigation_steps", {"steps": [f.step(qid="Q2")]}, "plan"),
-            f.tool("get_relations", {"info_unit_ids": ["U029"], "step_id": "S1"}, "relations"),
-            f.tool("update_investigation_steps", {"steps": [f.step(qid="Q2", status="completed", note="已查看持久化关系，仍缺独立证明")]}, "handled"),
+            f.tool("update_investigation_steps", {"steps": [f.step("S2", qid="Q2")]}, "plan"),
+            f.tool("get_relations", {"info_unit_ids": ["U029"], "step_id": "S2"}, "relations"),
+            f.tool("update_investigation_steps", {"steps": [f.step("S2", qid="Q2", status="completed", note="已查看持久化关系，仍缺独立证明")]}, "handled"),
             f.finish("核对", updates=[f.question("核对", status="blocked", reason="需独立证明", block_kind="evidence_missing"),
                 f.question("核对关系", "Q2", status="blocked", reason="需独立证明", block_kind="evidence_missing")])])
-        activity = self.audits()[0]["knowledge_state"]["activities"][2]
+        activity = self.audits()[0]["knowledge_state"]["activities"][3]
         self.assertEqual(activity["question_ids"], ["Q2"])
-        self.assertEqual(activity["step_id"], "S1")
-        self.assertEqual(self.audits()[0]["knowledge_state"]["activities"][1]["question_ids"], ["Q2"])
-        self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [2])
+        self.assertEqual(activity["step_id"], "S2")
+        self.assertEqual(self.audits()[0]["knowledge_state"]["activities"][2]["question_ids"], ["Q2"])
+        self.assertEqual(result["question_state"]["investigation_steps"][1]["activity_indices"], [3])
 
     def test_tool_error_is_recorded_and_can_be_deferred_without_becoming_evidence(self):
         result, _ = self.run_script("核对", [
@@ -193,11 +193,11 @@ class TestInvestigationState(unittest.TestCase):
             f.tool("get_evidence", {"info_unit_ids": ["foreign"], "step_id": "S1"}, "failed-read"),
             f.tool("update_investigation_steps", {"steps": [f.step(status="deferred", note="来源请求失败，本轮尚未取得所需材料")]}, "defer"),
             f.finish("核对", updates=[f.question("核对", status="blocked", reason="来源请求失败，尚需核查有效材料", block_kind="tool_failure")])])
-        activity = self.audits()[0]["knowledge_state"]["activities"][1]
+        activity = self.audits()[0]["knowledge_state"]["activities"][2]
         self.assertEqual(activity["status"], "invalid_request")
         self.assertTrue(activity["executed"])
         self.assertEqual(activity["obtained"], [])
-        self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [1])
+        self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [2])
 
     def test_step_and_question_updates_share_existing_budget(self):
         replies = []
@@ -224,8 +224,8 @@ class TestInvestigationState(unittest.TestCase):
         result, calls = self.run_script("核对", replies)
         self.assertEqual(result["stop_reason"], "finish_investigation")
         self.assertEqual(result["tool_budget_used"], {"read": 1, "proposal": 0, "question": 8, "finish": 1})
-        self.assertEqual(result["tool_attempt_count"], 10)
-        self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [8])
+        self.assertEqual(result["tool_attempt_count"], 11)
+        self.assertEqual(result["question_state"]["investigation_steps"][0]["activity_indices"], [9])
         self.assertEqual(result["question_state"]["investigation_steps"][0]["status"], "completed")
         names = {d["function"]["name"] for d in calls[-1]["definitions"]}
         self.assertNotIn("update_questions", names)
@@ -248,16 +248,16 @@ class TestInvestigationState(unittest.TestCase):
         state = json.loads(calls[5]["messages"][1]["content"])
         reopened = state["investigation_steps"]["details"]["items"][0]
         self.assertEqual(reopened["basis_info_unit_ids"], [])
-        self.assertEqual(reopened["activity_indices"], [1])
-        self.assertEqual(reopened["activity_start_index"], 3)
+        self.assertEqual(reopened["activity_indices"], [2])
+        self.assertEqual(reopened["activity_start_index"], 4)
         self.assertEqual(state["question_state"]["progress"][0]["status"], "pending")
         step = result["question_state"]["investigation_steps"][0]
-        self.assertEqual(step["activity_indices"], [1, 5])
-        self.assertEqual(step["activity_start_index"], 3)
-        activity = self.audits()[0]["knowledge_state"]["activities"][5]
+        self.assertEqual(step["activity_indices"], [2, 6])
+        self.assertEqual(step["activity_start_index"], 4)
+        activity = self.audits()[0]["knowledge_state"]["activities"][6]
         self.assertTrue(activity["cached"])
         self.assertFalse(activity["executed"])
-        old_completion = self.audits()[0]["knowledge_state"]["activities"][2]["arguments"]["steps"][0]
+        old_completion = self.audits()[0]["knowledge_state"]["activities"][3]["arguments"]["steps"][0]
         self.assertEqual(old_completion["basis_info_unit_ids"], ["U029"])
 
     def test_question_reference_block_reason_and_answer_basis_are_checked_atomically(self):
@@ -275,7 +275,9 @@ class TestInvestigationState(unittest.TestCase):
             memory.info_units[str(i)] = {"id": str(i), "type": "claim", "content": "单方陈述"*2000, "speaker": "某人"}
             memory.source_refs[str(i)] = {"info_unit_id": str(i), "source_ref_index": 0, "source_ref": {"quote": "原文"*3000}}
         before = memory.dump()
-        questions = QuestionState("核对")
+        questions = QuestionState()
+        questions.items["facts"] = f.agent.Question.model_validate(f.question("核对材料"))
+        questions.activities["facts"] = []
         questions.update_steps([f.step(f"S{i}", objective="核对材料陈述" * 100) for i in range(20)], self.case, memory)
         before_questions = questions.dump()
         view = model_context(initial, memory, questions, {"total": 10}, None)

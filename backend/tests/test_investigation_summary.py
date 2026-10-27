@@ -49,7 +49,7 @@ class TestSummaryValidation(unittest.TestCase):
 class TestSummaryHandoff(unittest.TestCase):
     setUp = fixture.TestInvestigationAgent.setUp
     tearDown = fixture.TestInvestigationAgent.tearDown
-    run_script = fixture.TestInvestigationAgent.run_script
+    run_script = fixture.TestInvestigationAgent.run_execution_script
     audits = fixture.TestInvestigationAgent.audits
 
     def test_rejected_answer_is_recoverable_finish_error_without_partial_findings(self):

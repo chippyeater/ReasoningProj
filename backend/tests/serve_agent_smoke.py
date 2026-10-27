@@ -6,7 +6,6 @@ Only the model boundary is mocked; existing CRUD and workspace routes stay real.
 import asyncio
 import json
 import os
-from functools import partial
 from unittest.mock import patch
 
 import test_investigation_tools as fixtures
@@ -19,9 +18,14 @@ import uvicorn
 async def model(config, messages, definitions, schema=None, **kwargs):
     await asyncio.sleep(0.15)
     initial = json.loads(messages[1]["content"])
-    finish = partial(replies.finish, call_id=f"finish-{initial['remaining_budget']['model']}")
+    if initial["phase"] == "entry":
+        return replies.plan()
+    def finish(goal, units=(), *args, **kwargs):
+        kwargs.setdefault("step_updates", [replies.step(status="completed" if units else "deferred", basis=units,
+            note="已检查实际取得的陈述与来源" if units else "当前能力或材料条件不足，保留具体未解条件")])
+        return replies.finish(goal, units, *args, call_id=f"finish-{initial['remaining_budget']['model']}", **kwargs)
     goal = initial["goal"]
-    names = [a["tool"] for a in initial["knowledge_state"]["activities"]["items"]]
+    names = [a["tool"] for a in initial["knowledge_state"]["activities"]["items"] if a["tool"] != "update_investigation_steps"]
     returned = [{**p, "pending": True} for p in initial["knowledge_state"]["proposals"]["items"]]
     # New delivery/recovery scenarios reuse actual initial sources and real tools.
     if any(word in goal for word in ("首轮来源直用", "遗漏来源交付", "恢复参数", "探索无直接证据")):

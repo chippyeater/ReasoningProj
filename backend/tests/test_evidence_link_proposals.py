@@ -66,7 +66,9 @@ class TestEvidenceLinkProposals(unittest.TestCase):
                 self.assertEqual(len(response.json()["proposals"]), 1)
                 run = response.json()["run_id"]
                 audit = json.loads((case_dir(self.case.case_id) / f"runs/{run}.output.json").read_text(encoding="utf-8"))
-                self.assertEqual(audit["tool_calls"][2]["result"]["status"], "invalid_request")
+                rejected = next(call for call in audit["tool_calls"] if call["name"] == "propose_evidence_link")
+                self.assertEqual(rejected["phase"], "execution")
+                self.assertEqual(rejected["result"]["status"], "invalid_request")
         # Formal object cannot be taken from another Issue or fabricated.
         response, _ = self.investigate([fixture.suggestion("evidence_link", "foreign-hypothesis")])
         self.assertEqual(response.json()["proposals"], [])
