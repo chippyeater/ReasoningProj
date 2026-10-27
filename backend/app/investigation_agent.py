@@ -75,25 +75,29 @@ def tool_definitions(phase="execution") -> list[dict]:
     limit = {"type": ["integer", "null"], "minimum": 1, "maximum": tools.MAX_LIMIT}
     definitions = [
         _function("search_info_units", (
-            "在当前案件 InfoUnit 的 title/content 中检索节点摘要。query 使用空格或标点分隔的字面关键词，"
-            "多个词项按 OR 匹配，不自动扩展同义词，也不搜索 SourceRef 原文。"
-            "每次查询尽量聚焦一个具体信息需求，使用简短、有区分度的关键词；"
-            "不同措辞可能造成漏检时，可按需加入少量指向同一需求的近义或互补表达。"
-            "避免将合同、时间、损失等不同调查目标的大量关键词混入同一次查询。"
-            "结果按命中词项数量、标题权重依次排序，并非语义相关性排序。"
-            "empty 只表示当前查询未命中，has_more=true 表示还有未返回的匹配结果。"
-            "当前结果未覆盖所需信息时，可改用更有针对性的关键词继续检索。"
+            "在当前案件的全部 InfoUnit 中按关键词查找相关信息，返回匹配节点的 ID、标题、类型和内容摘要。"
+            "可直接输入查询关键词，从尚未查看过的案件信息中发现相关节点。\n\n"
+            "查询匹配 InfoUnit 的标题和内容，多个关键词采用 OR 匹配。根据返回的节点 ID，"
+            "可以进一步使用 get_relations 探索相关信息，或使用 get_evidence 核对原始来源。"
+            "结果中的 has_more 表示存在更多匹配节点。"
         ), {
             "query": {"type": "string", "minLength": 1, "maxLength": tools.MAX_QUERY_CHARS},
             "types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in InfoUnitType]}},
             "limit": limit,
         }),
-        _function("get_relations", "查询指定节点持久化的一跳入边和出边，保留原始方向；不推导多跳关系。", {
+        _function("get_relations", (
+            "根据已知 InfoUnit ID，获取这些节点在当前案件中的一跳关联关系及相邻 InfoUnit 摘要，"
+            "用于发现相关材料和比较信息之间的联系。节点 ID 可以来自初始上下文或 search_info_units 的检索结果。"
+        ), {
             "info_unit_ids": ids,
             "relation_types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in RelationType]}},
             "limit": limit,
         }),
-        _function("get_evidence", "读取节点精确来源引用与偏移；最多 8 个完整引用、4000 字符，不读取无关内容。", {
+        _function("get_evidence", (
+            "根据已知 InfoUnit ID，读取对应来源材料中的原始引用及其文件位置，"
+            "用于核对具体记载、时间、陈述主体和上下文。节点 ID 可以来自初始上下文、"
+            "search_info_units 或 get_relations 的结果。"
+        ), {
             "info_unit_ids": ids,
         }),
     ]
