@@ -14,6 +14,25 @@ Text = Annotated[str, Field(min_length=1, max_length=600, pattern=r"\S")]
 Identifier = Annotated[str, Field(min_length=1, max_length=80, pattern=r"\S")]
 MAX_QUESTIONS = 20
 MAX_CONTEXT_CHARS = 48000  # Deterministic character proxy, independent of provider tokenizer.
+MAX_DIRECTORY_ITEMS = 80
+MAX_DIRECTORY_CHARS = 6000
+READ_TOOLS = frozenset({"search_info_units", "get_relations", "get_evidence"})
+
+
+def case_info_directory(case):
+    """Discovery metadata only; never grant content or SourceRef permissions."""
+    items, size = [], 0
+    for unit in sorted(case.info_units, key=lambda u: u.id):
+        row = {"id": unit.id, "title": unit.title[:120], "type": unit.type.value,
+               "title_truncated": len(unit.title) > 120}
+        cost = len(json.dumps(row, ensure_ascii=False))
+        if len(items) >= MAX_DIRECTORY_ITEMS or size + cost > MAX_DIRECTORY_CHARS:
+            break
+        items.append(row)
+        size += cost
+    total = len(case.info_units)
+    return {"total_count": total, "items": items, "context_truncated": len(items) < total,
+            "omitted_count": total - len(items)}
 
 
 def validation_issues(exc, prefix=(), fix="Correct the indicated field using the tool schema"):
@@ -307,6 +326,48 @@ class KnowledgeState:
             "work_context": self.work_context,
             "activities": self.activities, "findings": self.findings, "proposals": self.proposals})
 
+    def information_acquisition(self, case, questions, *, read_budget_exhausted=False):
+        """Describe actual access, not semantic sufficiency or an exploration quota.
+
+        An initial selected/canvas content projection, an executed read
+        result (including empty), or a real read failure permits analysis and
+        recovery. Argument/dispatch failures and directory entries do not.
+        """
+        case_ids = {u.id for u in case.info_units}
+        obtained = {uid for uid, row in self.info_units.items()
+                    if uid in case_ids and isinstance(row.get("content"), str) and row["content"].strip()}
+        obtained.update(r["info_unit_id"] for r in self.source_refs.values()
+                        if r["info_unit_id"] in case_ids and (
+                            r.get("source_ref", {}).get("quote") or r.get("quote_excerpt")))
+        associated = {uid for q in questions.items.values()
+                      for uid in [*q.related_info_unit_ids, *(r.info_unit_id for r in q.evidence_refs)]}
+        reads = [a for a in self.activities if a["tool"] in READ_TOOLS
+                 and (a["executed"] or a["cached"]) and set(a["question_ids"]) & questions.items.keys()]
+        successful = [a for a in reads if a["status"] in {"ok", "empty", "truncated"}]
+        failures = [a for a in reads if a["status"] == "error"]
+        if not questions.items:
+            status = "not_planned"
+        elif not case_ids:
+            status = "no_case_material"
+        elif successful:
+            status = "read_obtained" if obtained else "read_empty"
+        elif obtained:
+            status = "initial_material"
+        elif failures:
+            status = "read_failed"
+        elif read_budget_exhausted:
+            status = "read_budget_exhausted"
+        else:
+            status = "required"
+        last = reads[-1] if reads else None
+        return {"status": status, "needs_initial_read": status == "required",
+                "case_info_unit_count": len(case_ids), "obtained_info_unit_count": len(obtained),
+                "obtained_source_count": len(self.source_refs), "associated_info_unit_count": len(obtained & associated),
+                "read_attempt_count": sum(a["executed"] for a in reads), "successful_read_count": len(successful),
+                "read_error_count": len(failures), "read_budget_exhausted": read_budget_exhausted,
+                "last_read": {"tool": last["tool"], "status": last["status"], "has_more": last["has_more"],
+                              "error_code": (last["error"] or {}).get("code")} if last else None}
+
     def available_work(self, case, questions):
         """Discovery hints, NOT obtained evidence or a semantic relevance judgment.
 
@@ -386,6 +447,11 @@ def model_context(initial, knowledge, questions, budget, recovery, *, phase="exe
               "remaining_budget": budget, "recovery": recovery}
     result.pop("evidence_context", None)  # Now held in KnowledgeState, not duplicated each turn.
     result.pop("selected_info_units", None)
+    if "case_info_directory" in result:
+        directory = result["case_info_directory"]
+        obtained = set(knowledge.info_units) | {r["info_unit_id"] for r in knowledge.source_refs.values()}
+        directory["obtained_info_unit_count"] = len(obtained)
+        directory["obtained_source_count"] = len(knowledge.source_refs)
     current = questions.resolve(None)
     preferred = {uid for a in knowledge.activities if set(a["question_ids"]) & set(current)
                  for uid in a["arguments"].get("info_unit_ids", [])}
@@ -437,6 +503,11 @@ def model_context(initial, knowledge, questions, budget, recovery, *, phase="exe
         row = target["items"].pop()
         target["omitted_ids"].append(row.get("id") or row.get("proposal_id") or row.get("info_unit_id") or "record")
         target["context_truncated"] = True
+    directory = result.get("case_info_directory")
+    while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and directory and directory["items"]:
+        directory["items"].pop()
+        directory["context_truncated"] = True
+        directory["omitted_count"] += 1
     if len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS:
         raise AppError("investigation_context_limit", "Required task/Issue metadata exceeds the context budget")
     return result

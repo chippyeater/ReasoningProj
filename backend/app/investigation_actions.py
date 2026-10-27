@@ -75,8 +75,8 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
 
 def finish_investigation(case, seen, context, goal, proposals, questions, *, answer, findings,
                          question_updates, step_updates, completion_status, knowledge, budget_exhausted=False,
-                         phase="execution"):
-    """Finish investigation of the original Goal with grounded findings, changed Questions and step_updates (use [] when unchanged). Step updates use exactly the execution update_investigation_steps rules, including explicit basis_info_unit_ids or valid linked reads, even when the shared update budget is exhausted. A nonempty step_updates batch, Question updates and final delivery commit together only on full success; failure preserves the pre-finish state. With step_updates=[], independently valid Question updates may remain working memory as reported in errors. Every Question must be answered/blocked and every Step completed/deferred with a result/reason; all-deferred work cannot establish an answered Question. No minimum reads/Proposals. Runtime derives open_questions/Proposals; no extra model call."""
+                         phase="execution", read_budget_exhausted=False):
+    """Finish the original Goal with grounded findings and changed Question/step updates (use [] when unchanged). Existing selected/canvas material or actual read results/errors establish initial information acquisition; available case material must be investigated before reporting insufficiency. Empty results and read failures retain their distinct meaning; no fixed retrieval depth or Proposal count. Every Question must be answered/blocked and Step completed/deferred. Completed Steps require actual linked reads or explicit obtained basis_info_unit_ids. Nonempty step_updates commit atomically with delivery; with step_updates=[], valid Question updates may remain working memory on other errors. Runtime derives open_questions/Proposals; no extra model call."""
     from pydantic import TypeAdapter, ValidationError
     from typing import Annotated
     from pydantic import Field
@@ -92,6 +92,17 @@ def finish_investigation(case, seen, context, goal, proposals, questions, *, ans
         return artifacts(case, seen, context, goal, [], [], [], "completed"), questions, text
     if phase != "execution":
         raise AppError("invalid_investigation_phase", "Unknown finish phase")
+
+    # Validate before accepting even Question working memory. State labels and
+    # ungrounded Proposals cannot substitute for access to available material.
+    acquisition = knowledge.information_acquisition(case, questions,
+        read_budget_exhausted=read_budget_exhausted)
+    if acquisition["needs_initial_read"]:
+        raise AppError("initial_information_required", "Available case material has not been investigated",
+            details={"category": "acquisition", "information_acquisition": acquisition, "errors": [{
+                "loc": ["completion_status"], "code": "initial_information_required",
+                "message": "No initial material, actual read result or recorded read failure",
+                "fix": "Search or read material from case_info_directory before claiming evidence insufficiency"}]})
 
     draft, errors = questions.review_updates(question_updates, case, seen, context)
     question_errors = bool(errors)

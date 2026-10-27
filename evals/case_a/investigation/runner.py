@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from app import investigation_agent as agent, llm_client, observability
-from .data import ROOT, TaskInput, build_case, dataset_items, digest, isolated_case, load_definition, load_snapshot, work_context
+from .data import ROOT, TaskInput, build_case, dataset_items, digest, execution_context_config, isolated_case, load_definition, load_snapshot, work_context
 from .scoring import automatic_metrics, evaluator
 from . import remote
 
@@ -35,6 +35,7 @@ def select_dataset_items(dataset, task_id=None):
 
 
 def run_metadata(model, task_id=None):
+    context_config = execution_context_config()
     prompts = {phase: agent.load_composed_prompt(name) for phase, name in agent.PROMPT_NAMES.items()}
     prompt = prompts["execution"]
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, check=True).stdout.strip()
@@ -45,6 +46,8 @@ def run_metadata(model, task_id=None):
             "case_snapshot_id": load_snapshot()["snapshot_id"], "case_snapshot_sha256": load_snapshot()["sha256"],
             "case_data_sha256": digest(build_case().model_dump(mode="json")),
             "initial_state_sha256": digest(load_definition()["initial_state"]),
+            "execution_context_version": context_config["version"],
+            "execution_context_sha256": digest(context_config),
             "tool_contract_sha256": digest({phase: agent.tool_definitions(phase) for phase in agent.PROMPT_NAMES}), "langfuse_sdk_version": version("langfuse"),
             "max_model_calls_per_item": agent.MAX_MODEL_CALLS, "max_model_calls_three_items": 3 * agent.MAX_MODEL_CALLS,
             "selected_task_ids": selected_task_ids(task_id),
@@ -70,8 +73,9 @@ def make_task(client, *, allow_paid=False, offline=False, artifact_dir=None):
         with isolated_case() as (case, case_dir):
             result, error = None, None
             try:
+                context = work_context(case, parsed.task_id)
                 result = await agent.run_investigation(case, parsed.goal, parsed.selected_info_unit_ids,
-                    work_context=work_context(case), issue_key=parsed.core_issue)
+                    work_context=context, issue_key=context["current_issue"])
             except Exception as exc:
                 # Keep the native experiment item and its Scores even on Agent failure.
                 # The real RunTrace already contains the original error/audit.

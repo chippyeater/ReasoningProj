@@ -18,7 +18,7 @@ from app.observability import RunTrace
 from app.prompt_loader import load_composed_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
 from app.reasoning_models import ReasoningProposal
-from app.investigation_state import EvidencePointer, InvestigationStepUpdate, KnowledgeState, Question, QuestionState, model_context, _preview
+from app.investigation_state import EvidencePointer, InvestigationStepUpdate, KnowledgeState, Question, QuestionState, case_info_directory, model_context, _preview
 
 MAX_TOOL_CALLS = 8  # Read attempts, reserved independently from artifact submissions.
 MAX_PROPOSAL_CALLS = 6
@@ -404,7 +404,9 @@ def _tool_recovery(response, name):
         if item["code"] == "reference_not_obtained" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_id"]):
             item["code"] = "invalid_hypothesis_target"
     codes = {item["code"] for item in details["errors"]}
-    if codes & {"step_unresolved", "all_steps_deferred", "step_completion_without_basis", "invalid_step_basis", "invalid_step_reference", "step_question_mismatch", "step_not_active"}:
+    if "initial_information_required" in codes:
+        hint = "案件已有可查询材料。先依据case_info_directory选择search_info_units、get_relations或get_evidence获取相关信息；目录与空工作记忆不代表案件缺证。读取受阻时保留实际错误。"
+    elif codes & {"step_unresolved", "all_steps_deferred", "step_completion_without_basis", "invalid_step_basis", "invalid_step_reference", "step_question_mismatch", "step_not_active"}:
         hint = "继续调查，或用 update_investigation_steps / finish.step_updates 记录结果和依据或具体延期理由；已有材料须明确填写属于该Question且已取得的basis_info_unit_ids，重新打开/改目标不沿用旧读取。全部延期不代表问题已回答，不得伪造执行。"
     elif codes & {"insufficiency_without_unresolved_question", "missing_investigation_questions"}:
         hint = "以完整 goal 为总体任务，登记需要独立判断的子问题；尚未解决的方面应 blocked 并说明缺失条件，不能用全部 answered 和证据不足同时结束。"
@@ -478,6 +480,7 @@ async def run_investigation(case: CaseData, goal: str,
     selected = [] if not selected_info_unit_ids else tools._selected_units(bound_case, selected_info_unit_ids)
     counts = Counter(unit.type.value for unit in bound_case.info_units)
     initial_input = {"goal": goal, "core_issue": bound_case.core_issue[:500] if bound_case.core_issue else None,
+        "case_info_directory": case_info_directory(bound_case),
         "info_unit_type_counts": {kind.value: counts[kind.value] for kind in InfoUnitType},
         "selected_info_units": [tools._summary(unit) for unit in selected]}
     if work_context is not None:
@@ -531,6 +534,8 @@ async def run_investigation(case: CaseData, goal: str,
             knowledge.proposals = [p.model_dump(mode="json") for p in proposals]
             audit["knowledge_state"] = knowledge.dump()
             audit["investigation_opportunities"] = knowledge.available_work(bound_case, questions)
+            audit["information_acquisition"] = knowledge.information_acquisition(bound_case, questions,
+                read_budget_exhausted=used["read"] >= limits["read"])
         audit["question_state"] = questions.dump()
         audit["phase"] = phase
         audit["stop_reason"] = stop_reason
@@ -543,8 +548,10 @@ async def run_investigation(case: CaseData, goal: str,
         with trace.observation("Investigation Agent · final working state", input={
                 "knowledge_state": knowledge.dump() if knowledge else None, "question_state": questions.dump(),
                 "phase": phase, "goal": goal,
+                "information_acquisition": audit.get("information_acquisition"),
                 "investigation_opportunities": audit.get("investigation_opportunities")}) as state_span:
-            state_span.update(output={"stop_reason": stop_reason, "completion_status": completion})
+            state_span.update(output={"stop_reason": stop_reason, "completion_status": completion},
+                metadata={"phase": phase, "information_acquisition": audit.get("information_acquisition")})
 
     def stopped(reason):
         nonlocal stop_reason, completion
@@ -582,16 +589,23 @@ async def run_investigation(case: CaseData, goal: str,
                 return stopped("tool_budget_exhausted")
             if len(audit["model_calls"]) >= MAX_MODEL_CALLS:
                 return stopped("model_budget_exhausted")
-            prompt, metadata = prompts[phase], manifest[phase]
+            acquisition = knowledge.information_acquisition(bound_case, questions,
+                read_budget_exhausted=used["read"] >= limits["read"])
+            policy = "entry_decision" if phase == "entry" else "initial_read" if acquisition["needs_initial_read"] else "execution"
+            prompt = prompts[phase]
+            metadata = {**manifest[phase], "tool_policy": policy, "information_acquisition": acquisition}
             available = [d for d in tool_definitions(phase) if used[bucket(d["function"]["name"])] < limits[bucket(d["function"]["name"])]]
+            if policy == "initial_read":
+                available = [d for d in available if d["function"]["name"] in READ_TOOLS]
             remaining = {key: limits[key] - used[key] for key in limits}
             remaining["total"] = MAX_TOTAL_CALLS - attempts
             remaining["model"] = MAX_MODEL_CALLS - len(audit["model_calls"])
-            state = model_context(initial_input, knowledge, questions, remaining, recovery, phase=phase)
+            state = model_context({**initial_input, "tool_policy": policy, "information_acquisition": acquisition},
+                knowledge, questions, remaining, recovery, phase=phase)
             request_messages = [{"role": "system", "content": prompt.content},
                                 {"role": "user", "content": json.dumps(state, ensure_ascii=False)}, *recent]
             # 'required' is supported by the existing native client; no fabricated tool call/ID for premature prose.
-            choice = "required" if phase == "entry" or recovery and recovery.get("code") == "finish_required" else "auto"
+            choice = "required" if policy in {"entry_decision", "initial_read"} or recovery and recovery.get("code") == "finish_required" else "auto"
             payload = llm_client.tool_request_payload(config, request_messages, available, tool_choice=choice)
             call_audit = {"step": len(audit["model_calls"]) + 1, **metadata, "request": deepcopy(payload)}
             audit["model_calls"].append(call_audit)
@@ -605,7 +619,9 @@ async def run_investigation(case: CaseData, goal: str,
             calls = reply.message.get("tool_calls")
             if not calls:
                 no_progress += 1
-                recovery = {"code": "finish_required", "message": (
+                recovery = {"code": "initial_information_required" if policy == "initial_read" else "finish_required", "message": (
+                    "Read current-case material with search_info_units, get_relations or get_evidence using the case_info_directory."
+                    if policy == "initial_read" else
                     "Ordinary text does not finish Entry. Use finish_investigation for a request already resolved by current input, "
                     "or update_investigation_steps(questions, steps) to plan an investigation."
                     if phase == "entry" else
@@ -624,19 +640,27 @@ async def run_investigation(case: CaseData, goal: str,
             name, raw = call["function"]["name"], call["function"]["arguments"]
             category = bucket(name)
             attempts += 1
-            permitted = category is not None and used[category] < limits[category]
+            permitted = category is not None and used[category] < limits[category] and (
+                policy != "initial_read" or name in READ_TOOLS)
             if permitted:
                 used[category] += 1
-            tool_audit = {"call_id": call["id"], "name": name, "phase": phase, "raw_arguments": raw, "executed": False}
+            tool_audit = {"call_id": call["id"], "name": name, "phase": phase, "tool_policy": policy,
+                          "information_acquisition_before": acquisition, "raw_arguments": raw, "executed": False}
             audit["tool_calls"].append(tool_audit)
             args, qids, finished, fingerprint, step = {}, [], None, None, None
             signature = (frozenset(seen["units"]), frozenset(seen["relations"]), frozenset(seen["evidence"]),
                 working_signature(),
                 tuple(p.proposal_id for p in proposals))
             with trace.observation("Investigation Agent · tool call", as_type="tool", input={"name": name, "arguments": raw},
-                    metadata={"tool_name": name if category else "unsupported_tool", "phase": phase, "attempt": attempts}) as tool_span:
+                    metadata={"tool_name": name if category else "unsupported_tool", "phase": phase, "attempt": attempts,
+                              "tool_policy": policy, "information_acquisition_before": acquisition}) as tool_span:
                 try:
                     args = _arguments(name, raw, phase=phase)
+                    if policy == "initial_read" and name not in READ_TOOLS:
+                        raise AppError("initial_information_required", "Read available case material before analysis or finish",
+                            details={"category": "acquisition", "errors": [{"loc": [], "code": "initial_information_required",
+                                "message": "Only read tools are available until an initial acquisition result exists",
+                                "fix": "Use the case directory to search or read current-case information"}]})
                     fingerprint = _fingerprint(name, args)
                     tool_audit["arguments"] = deepcopy(args)
                     if not permitted:
@@ -681,6 +705,7 @@ async def run_investigation(case: CaseData, goal: str,
                         else:
                             finished = actions.finish_investigation(bound_case, seen, work_context, goal, proposals, questions,
                                 **args, knowledge=knowledge, phase=phase,
+                                read_budget_exhausted=used["read"] >= limits["read"],
                                 budget_exhausted=used["read"] >= limits["read"] or used["proposal"] >= limits["proposal"])
                             result, final_questions, answer = finished
                             findings = [f.model_dump(mode="json") for f in result.findings]
@@ -734,7 +759,10 @@ async def run_investigation(case: CaseData, goal: str,
                 tool_audit["step_id"] = associated_step.id if associated_step else None
                 tool_audit["result"] = deepcopy(response)
                 tool_audit["phase_after"] = phase
-                tool_span.update(output=response, metadata={"phase_after": phase})
+                after = knowledge.information_acquisition(bound_case, questions,
+                    read_budget_exhausted=used["read"] >= limits["read"])
+                tool_audit["information_acquisition_after"] = after
+                tool_span.update(output=response, metadata={"phase_after": phase, "information_acquisition_after": after})
             persist()
             if finished:
                 stop_reason = "finish_investigation"

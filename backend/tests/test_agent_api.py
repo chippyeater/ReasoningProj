@@ -86,7 +86,8 @@ class TestAgentAPI(unittest.TestCase):
         replies = [fixtures.plan(), fixtures.finish(goal, status="unsupported", questions=["当前仅支持只读调查；请使用手动编辑功能。"],
             step_updates=[fixtures.step(status="deferred", note="Agent不提供直接删除节点的操作")])]
         with patch.object(main, "require_case", return_value=self.case), patch.object(llm_client, "call_tools", side_effect=replies):
-            response = TestClient(main.app).post(f"/api/cases/{self.case.case_id}/agent/run", json={"goal": goal})
+            response = TestClient(main.app).post(f"/api/cases/{self.case.case_id}/agent/run", json={
+                "goal": goal, "selected_info_unit_ids": ["U022"]})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["completion_status"], "unsupported")
         self.assertEqual(response.json()["tool_budget_used"]["read"], 0)

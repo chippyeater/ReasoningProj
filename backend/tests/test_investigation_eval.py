@@ -1,5 +1,6 @@
 """Native Langfuse v5 integration, independent Case A tasks, no paid models."""
 from copy import deepcopy
+import asyncio
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -53,6 +54,25 @@ class FakeRemote:
 
 
 class TestInvestigationEval(unittest.TestCase):
+    def test_versioned_task_issue_context_preserves_frozen_dataset_input(self):
+        items = data.dataset_items()
+        before = deepcopy(items)
+        case = data.build_case()
+        config = data.execution_context_config()
+        self.assertEqual(config["version"], "case-a-task-issues-v2")
+        self.assertEqual(data.work_context(case, "A1")["current_issue"], case.issue_set[1])
+        self.assertEqual(data.work_context(case, "A2")["current_issue"], case.core_issue)
+        client = NS(get_current_trace_id=lambda: "new-trace", update_current_span=Mock())
+        with patch.object(runner.agent, "run_investigation", new_callable=AsyncMock, return_value={}) as run:
+            asyncio.run(runner.make_task(client, offline=True)(item=items[0]))
+        args, kwargs = run.await_args
+        self.assertEqual(args[1], "房东是否实际产生损失？如果有，如何量化？")
+        self.assertEqual(args[0].core_issue, case.core_issue)
+        self.assertEqual(kwargs["issue_key"], case.issue_set[1])
+        self.assertEqual(kwargs["work_context"]["current_issue"], case.issue_set[1])
+        self.assertEqual(items, before)
+        self.assertEqual(items[0]["input"]["core_issue"], case.core_issue)
+
     def test_definition_is_three_tasks_with_semantic_gold_and_no_call_quota(self):
         items = data.dataset_items()
         self.assertEqual([r["input"]["task_id"] for r in items], ["A1", "A2", "A3"])

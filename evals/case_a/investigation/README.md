@@ -16,6 +16,8 @@
 
 历史 A1 Trace 是此前另一份实际提取快照，InfoUnit ID 与固定 Gold 不同。它是失败案例来源，不是该固定快照上的新实验或可直接合并的访问覆盖基线。
 
+当前执行使用独立的 `execution_context.json`（`case-a-task-issues-v2`）作为可追踪运行配置：A1 的 `current_issue/issue_key` 选择已有争点“出租人是否存在实际经济损失”；A2/A3 保持押金工作区。`goal` 保留原始任务，`core_issue` 保留案件整体背景；生产 API 的 current_issue 仍来自用户选中的合法工作区，不按 Goal 猜测替换。原 Dataset、初态、Gold、快照和历史 Trace 不改写。Experiment 元数据记录 execution_context_version/SHA-256；比较新旧运行时须同时比较该上下文配置，不能将其冒充完全相同输入的 Prompt 单变量实验。
+
 ## 已初始化的远端对象
 
 - Dataset：`logicweaver/investigation/case-a-v1`

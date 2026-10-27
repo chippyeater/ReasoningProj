@@ -46,6 +46,8 @@ class TestInvestigationEntry(unittest.TestCase):
                     {"finish_investigation", "update_investigation_steps"})
                 state = json.loads(calls[0]["messages"][1]["content"])
                 self.assertEqual(state["question_state"]["current_question_ids"], [])
+                self.assertEqual(state["information_acquisition"]["status"], "not_planned")
+                self.assertFalse(state["information_acquisition"]["needs_initial_read"])
 
     def test_plan_switches_phase_and_preserves_goal_through_investigation(self):
         goal = "核对入住日期，并保留无法确认的实际损失"
@@ -65,7 +67,8 @@ class TestInvestigationEntry(unittest.TestCase):
             self.assertEqual(state["goal"], goal)
             self.assertEqual(state["phase"], "entry" if i == 0 else "execution")
             self.assertEqual(call["messages"][0]["content"], load_composed_prompt(agent.PROMPT_NAMES[state["phase"]]).content)
-        self.assertEqual(len(calls[1]["definitions"]), 10)
+        self.assertEqual(len(calls[1]["definitions"]), 3)
+        self.assertEqual(calls[1]["tool_choice"], "required")
         state = json.loads(calls[1]["messages"][1]["content"])
         self.assertEqual(state["question_state"]["current_question_ids"], ["date"])
         self.assertEqual([s["id"] for s in state["investigation_steps"]["progress"]], ["read", "loss-read"])
@@ -73,6 +76,7 @@ class TestInvestigationEntry(unittest.TestCase):
     def test_invalid_plan_is_atomic_and_remains_entry_until_valid_submission(self):
         bad = [f.step("read", "missing")]
         result, calls = self.run_script("核查", [plan(steps=bad), plan(ident="fixed"),
+            f.tool("search_info_units", {"query": "独立入住记录", "step_id": "read"}, "search"),
             f.finish("核查", status="evidence_insufficient", updates=[f.question("笔录对入住日期如何记载", "date", status="blocked",
                 reason="本次尚未取得有效来源", block_kind="evidence_missing")], step_updates=[
                 f.step("read", "date", status="deferred", objective="核对入住日期来源", note="尚未取得来源，保留待核查")])])
@@ -94,10 +98,11 @@ class TestInvestigationEntry(unittest.TestCase):
 
     def test_failed_direct_finish_can_reconsider_and_submit_an_investigation_plan(self):
         result, calls = self.run_script("核查事实", [direct(completion_status="evidence_insufficient"), plan(),
+            f.tool("search_info_units", {"query": "独立入住记录", "step_id": "read"}, "search"),
             f.finish("核查事实", status="evidence_insufficient", updates=[f.question("笔录对入住日期如何记载", "date", status="blocked",
                 reason="尚未取得可核验来源", block_kind="evidence_missing")], step_updates=[
                     f.step("read", "date", status="deferred", objective="核对入住日期来源", note="尚未取得来源，保留待核查")])])
-        self.assertEqual([json.loads(c["messages"][1]["content"])["phase"] for c in calls], ["entry", "entry", "execution"])
+        self.assertEqual([json.loads(c["messages"][1]["content"])["phase"] for c in calls], ["entry", "entry", "execution", "execution"])
         self.assertEqual(self.audits()[0]["tool_calls"][1]["phase_after"], "execution")
         self.assertEqual(result["phase"], "execution")
 
@@ -131,7 +136,8 @@ class TestInvestigationEntry(unittest.TestCase):
         generation = next(s for s in backend.client.spans if s.start.get("as_type") == "generation")
         self.assertEqual(call["phase"], "entry")
         metadata = {k: call[k] for k in audit["prompt_manifest"]["entry"]}
-        self.assertEqual(metadata, generation.start["metadata"])
+        self.assertEqual(metadata, {k: generation.start["metadata"][k] for k in metadata})
+        self.assertEqual(generation.start["metadata"]["tool_policy"], "entry_decision")
         self.assertEqual(call["prompt_sha256"], hashlib.sha256(call["request"]["messages"][0]["content"].encode()).hexdigest())
         self.assertEqual([p["prompt_name"] for p in metadata["prompt_components"]], ["investigation_common", "investigation_entry"])
         self.assertEqual(audit["tool_calls"][0]["phase"], "entry")

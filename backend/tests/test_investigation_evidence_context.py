@@ -65,7 +65,7 @@ class TestInitialEvidence(unittest.TestCase):
                 return proposal_call({**gap, "hypothesis_proposal_ids": [parent]}, [], "gap")
             return fixture.finish("探索损失解释", questions=["缺计租材料和收款证据"])
         result, _ = self.run_script("探索损失解释", decide,
-            work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])
+            selected=["U022"], work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])
         self.assertEqual(len(result["proposals"]), 2)
         self.assertEqual(result["evidence_refs"], [])
         self.assertTrue(all(c["result"]["evidence_status"] == "not_directly_evidenced" for c in self.audits()[0]["tool_calls"] if c["name"].startswith("propose_")))

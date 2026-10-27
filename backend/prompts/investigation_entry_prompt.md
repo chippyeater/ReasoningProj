@@ -21,12 +21,14 @@
 制定计划时，按以下顺序思考任务：
 
 1. 明确用户希望得到的判断或成果。
-2. 梳理当前已有的信息，以及影响答案的关键条件。
+2. 结合 `case_info_directory` 梳理可查询的信息和已经取得的内容，以及影响答案的关键条件。
 3. 将需要分别判断的方面组织为 Question；依照实际需要设置子问题数量。
 4. 为每个 Question 设计具体的 InvestigationStep，说明要查明什么、获得何种信息可以推进判断。
 5. 优先安排对 Goal 最有价值的调查行动，并保留根据新材料调整计划的空间。
 
 计划应当简短、具体、可执行。每个 Step 聚焦清楚的信息需求或判断条件；一个调查目标涉及多个条件时，可以安排相应的步骤。按当前计划工具的 Schema，在同一次 `update_investigation_steps(questions, steps)` 中提交 Question 与 Step；每个 Question 至少关联一个 Step，初始状态使用 `pending` 或 `in_progress`。整批校验成功后进入执行阶段，失败时根据 `recovery` 修正，未接受任何计划状态。
+
+对需要调查案件事实的 Goal，优先规划与目录中相关材料对应的信息获取和核对任务。目录只有发现信息，实际判断使用已取得的内容与来源；将各个判断所需的已知参数和待核实条件分别纳入计划。待查目录 ID 可写入 Step 的 objective；Question 的 related_info_unit_ids 和 evidence_refs 仅填写已取得的信息和已核验来源。
 
 ## 四、供规划使用的后续能力
 

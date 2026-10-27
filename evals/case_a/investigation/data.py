@@ -124,8 +124,21 @@ def dataset_items():
     return result
 
 
-def work_context(case):
-    return {"current_issue": case.core_issue,
+def execution_context_config():
+    """Versioned runtime context overlay; the frozen Dataset inputs stay intact."""
+    config = json.loads(Path(__file__).with_name("execution_context.json").read_text(encoding="utf-8"))
+    if set(config) != {"version", "current_issues"} or config["version"] != "case-a-task-issues-v2":
+        raise ValueError("Unexpected execution context configuration")
+    case = build_case()
+    if set(config["current_issues"]) != {"A1", "A2", "A3"} or any(
+            issue not in case.issue_set for issue in config["current_issues"].values()):
+        raise ValueError("Execution context must select an existing case Issue for each task")
+    return config
+
+
+def work_context(case, task_id):
+    current = execution_context_config()["current_issues"][task_id]
+    return {"current_issue": current,
             "issues": [{"issue": issue, "status": "pending"} for issue in case.issue_set],
             "reasoning": load_definition()["initial_state"]["reasoning"]}
 

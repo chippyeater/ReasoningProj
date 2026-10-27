@@ -262,7 +262,7 @@ class TestInvestigationAgent(unittest.TestCase):
 
     def test_model_cannot_supply_proposal_ids(self):
         invalid = {"content": "推断", "rationale": "待核实", "info_unit_ids": [], "evidence_refs": [], "proposal_id": "proposal-" + "a"*32}
-        result, _ = self.run_execution_script("参数权限", [tool("propose_hypothesis", invalid), finish("参数权限")])
+        result, _ = self.run_execution_script("参数权限", [tool("propose_hypothesis", invalid), finish("参数权限")], selected=["U022"])
         self.assertEqual(result["proposals"], [])
         self.assertEqual(self.audits()[0]["tool_calls"][1]["result"]["error"]["code"], "invalid_tool_arguments")
 

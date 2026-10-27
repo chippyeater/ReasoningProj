@@ -58,7 +58,7 @@ class TestInvestigationRecovery(unittest.TestCase):
         result, calls = self.run_script("核查损失并建立假设", [proposal_call(proposal, [], "missing"),
             fixture.tool("get_evidence", {"info_unit_ids": ["U029"]}, "read"), proposal_call(proposal, [], "corrected"),
             fixture.finish("核查损失并建立假设", ["U029"], refs=[("U029", 0)])],
-            work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])
+            selected=["U022"], work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])
         error = json.loads(calls[1]["messages"][-1]["content"])["error"]
         self.assertEqual(error["validation_details"]["errors"][0]["code"], "reference_not_obtained")
         self.assertEqual(error["validation_details"]["errors"][0]["argument_loc"], ["info_unit_ids", 0])

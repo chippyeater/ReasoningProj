@@ -10,7 +10,7 @@ Run 的原始 `goal` 始终完整保留，独立于 Question；层级为 Goal �
 
 Run 初始 `phase=entry`，每次 Entry 请求 `tool_choice=required`，实际只注册 `finish_investigation` 和 `update_investigation_steps`；未开放的读取、Question 更新或 Proposal 工具即使被模型发出也不会执行。Entry 的 `update_investigation_steps(questions, steps)` 在副本上复用 Question 与 Step 校验，整批原子登记；每个 Question 至少关联一个 Step，初态均为 pending/in_progress。失败保持空状态和 Entry，成功才进入 Execution。计划消耗现有 Question/Step 共享更新预算，不增加额外 Agent 或规划循环。
 
-Execution 开放十个现有工具，`update_investigation_steps(steps)` 恢复为行动增量更新；新子问题通过 `update_questions` 登记。`current_question_ids` 优先选择全部 in_progress Question，否则选择第一个 pending Question，无活动任务时为[]。只读/Proposal 的 null question_ids 使用此焦点；显式 ID 可以关联已登记问题。状态正文、节点、关系和来源优先呈现当前焦点的材料；后端记录活动与材料，不因工具 ok 自动回答问题。
+Execution 在案件有 InfoUnit、当前上下文尚无已取得正文/来源、也无实际读取结果或读取错误时，使用 `tool_policy=initial_read`，仅注册三个只读工具并原生 `tool_choice=required`。选中/画布初始材料可直接进入分析；完成有效只读调用（含 empty/truncated）、真实执行的读取返回 error、案件为空或读取预算耗尽时，也恢复十个现有工具。参数/ID错误和未派发调用不解除门控；错误结果仍不授予引用。门控由 KnowledgeState 与预算即时派生，不新增阶段或持久状态。恢复后 `update_investigation_steps(steps)` 为行动增量更新，新子问题通过 `update_questions` 登记。`current_question_ids` 优先选择全部 in_progress Question，否则选择第一个 pending Question，无活动任务时为[]。只读/Proposal 的 null question_ids 使用此焦点；显式 ID 可以关联已登记问题。后端记录活动与材料，不因工具 ok 自动回答问题。
 
 简单的能力介绍、准确类型计数及上下文已明确提供的信息可以在 Entry 直接 finish：`completion_status=completed`，`findings/question_updates/step_updates=[]`，不建立调查任务或案件证据 Finding。需要调查或生成推理建议时先提交计划。Execution 的 finish 要求已登记子问题全部 answered 或具体 blocked，所有 Step completed/deferred；completed 必须有依据的 Finding，且没有 blocked Question。`evidence_insufficient` 必须有具体 blocked 条件。代码检查已登记任务及其依据的一致性，不能保证自然语言 Goal 已被完整拆分或答案在语义上充分。
 
@@ -34,17 +34,19 @@ completed 必须有以下至少一种明确依据：当前目标/重新打开后
 2. 一条 user JSON：phase、完整原始 goal、核心/当前 Issue、类型统计与有限画布/人工推理上下文，Question 进度、InvestigationStep 状态/活动指针与有限详情，KnowledgeState 实际材料及成功成果，剩余分类/总工具/模型预算和恢复错误。
 3. 最近一次完成的 Assistant Tool Call + Tool Result 配对；最多保留一组。只有结果已经入状态并写入审计后才退役；大于 16000 字符的整组消息一并退役，不留下孤立 tool 消息。
 
+`case_info_directory` 在 Entry/Execution 均提供 `total_count/items/obtained_info_unit_count/obtained_source_count/context_truncated/omitted_count`。条目仅为 `id/title/type/title_truncated`，按稳定 ID 排序，标题最多120字符，目录最多80项且条目 JSON 合计不超过6000字符；17条的 Case A 完整展示。全局48000字符限制仍可缩减目录并准确累加省略数量。目录不进入 KnowledgeState、seen 或来源权限，正文与原文仍通过既有工具按需取得。`information_acquisition` 显示初始材料、读取取得/空结果/失败、预算耗尽或尚需读取的实际状态；它不证明语义充分性。
+
 状态 JSON 使用 48000 字符预算作为确定性的 Token 规模代理，材料按当前任务优先选择；正文必要时展示 500 字符片段，分区预算控制节点、关系、来源、活动和成果。所有省略通过 `context_truncated/omitted_ids` 表达，完整数据不从审计或内存删除。最近工具结果在 12000 字符内原样展示，超限使用有截断标记的片段；不调用 LLM 总结。成功的重复只读请求返回本轮缓存，支持重新获取被省略来源而不重复执行查询；同状态失败和重复 Proposal 不重执行。
 
 `investigation_opportunities` 按 Question 从当前案件索引和已有 KnowledgeState/活动记录即时派生：关联材料尚未提供的来源/片段、未获取的一跳节点，以及问题/缺失条件文本匹配的候选材料和截断检索范围。它是有数量/字符预算的启发式检索建议，保留候选 ID、标题、原因及可用只读动作；不复制原文，不授予 seen 引用权限，不维护独立的线索生命周期。该算法暂时仅用于本地及 Langfuse 最终工作状态审计，不向模型请求注入候选 ID、标题或工具推荐，也不参与结束校验。模型根据 Question、已获取材料、调查进展及未解决条件，自主使用现有检索工具决定调查范围与结束时机。
 
 ## 结束工具与恢复
 
-Entry 只注册两个决策工具；Execution 注册十个原生工具：三个只读查询、四个原有 `propose_*`、`update_questions`、`update_investigation_steps` 和 `finish_investigation`。继续使用现有 Chat Completions 客户端，strict 参数、关闭并行调用，无 result response_format。Entry 始终 required；Execution 默认 auto，普通文本后的恢复请求 required。
+Entry 只注册两个决策工具；Execution 按上述初始获取条件注册三个只读工具或十个完整原生工具。继续使用现有 Chat Completions 客户端，strict 参数、关闭并行调用，无 result response_format。Entry 和初始获取门控始终 required；普通 Execution 默认 auto，普通文本后的恢复请求 required。实际请求、Generation 和工具审计记录相同的 tool_policy 与 information_acquisition；工具另记前后获取状态，最终工作状态记录结束时的获取依据。
 
 `finish_investigation(answer, findings, question_updates, step_updates, completion_status)` 增加必填 step_updates，无更新时传[]。先在副本中审核Question，然后复用同一个 update_steps 对Step增量更新进行案件、归属、转换与依据校验；最后统一检查所有问题 answered 或具体 blocked、登记的Step均completed/deferred、成果/引用/Proposal/Issue/预算一致，并沿用简洁回复校验（默认40–80字，上限240个非空白字符）。pending/in_progress即使被写成evidence_missing也不能结束；错误指向Step及finish.step_updates，仍可在调查过程中使用update_investigation_steps。某Question的行动全部deferred时不能answered；全部延期仍在limitations显式提示。completed需要有依据的Finding且无blocked，证据不足可以空Findings、blocked+evidence_insufficient结束。
 
-存在未读取的候选线索、未提供的来源或截断检索建议，不会阻止结构和状态均合法的结束。`evidence_insufficient` 仍需具体 blocked Question，`completed` 仍不得存在 blocked Question；引用只能使用实际取得的材料，预算类状态仍校验实际预算。模型自主判断调查是否充分，后端不以启发式候选清单决定结束，也不要求固定读取次数、假设数量或案件关键词。Question 不保存候选跳过清单。
+Execution 的 finish 在接受 Question 更新前检查实际获取状态：案件有可查询材料却无初始正文/来源、无真实读取结果/错误、读取预算仍可用时，返回 `initial_information_required`，提示根据目录调用只读工具，不接受本次状态更新。已调查仍有缺口、真实来源读取受阻、案件为空或读取预算已耗尽可按实际条件交付。Proposal 耗尽不能冒充读取预算耗尽。`evidence_insufficient` 仍需具体 blocked Question，`completed` 仍不得存在 blocked Question；引用只能使用实际取得的材料。有效空查询只说明该查询无结果，不证明全案缺证。后端不要求穷尽目录/候选、固定工具顺序或读取深度，语义充分性仍由模型判断并需真实验收。
 
 Proposal 不再绑定“交付计划”。其 kind/字段约束、当前运行实际返回的 proposal_id、Hypothesis 依赖类型和先后顺序、已获 InfoUnit/SourceRef、Issue 隔离及用户审批全部由现有 Proposal 工具、成果校验和独立采纳服务负责。Proposal 调用的 question_ids 仍须为已登记问题，归属记录在同一活动日志，合法 Hypothesis 依赖可以跨子问题共享。原交付计划的一对一绑定、材料交集、不可替换绑定检查随该关系删除；新 Step 不接受 Proposal ID，也不能通过提交 Proposal 自动完成。没有另建相同绑定或兼容旧字段。
 
@@ -89,6 +91,12 @@ Run 开始时冻结两种组合，`.input.json.system_prompts` 保存全文与�
 - `scripts/sync_versions.py --sync/--check`、`git diff --check`通过；其他Agent的Prompt版本/哈希、Schema与Gold保持不变，v17归档文本未改写。
 
 真实模型验收仍需检查：简单能力/计数请求是否正确直接完成；复杂Goal是否进入计划并完整拆分；A1/A2/A3的检索、来源核对与判断是否充分；错误依赖/引用、截断、受阻问题及预算限制后的恢复与结束是否合理。直接回答的语义正确性和计划对自然语言Goal的覆盖不由结构校验保证。
+
+## 初始信息获取修复验收（2026-10-27）
+
+失败依据为 A1 Trace `cc5c0f23d859a02149c4dfaad47bb36d` 对应的原始本地审计：17条案件信息、0条已取得材料、无目录，Execution立即以auto开放10个工具，最终零次读取便接受blocked/deferred的证据不足结束。此次增加目录、由实际状态派生的初始读取门控及独立finish获取校验；不改三个只读工具的查询/来源权限，也不设置固定检索顺序或调查深度。
+
+最终验证：`backend/.venv/Scripts/python.exe -m unittest discover -s backend/tests -q` 368项通过；Case A的21项静态测试及`evals/case_a/tests/validate_eval.py`通过。`scripts/run_investigation_eval.py dry-run`完成A1/A2/A3，每项3次Mock调用、0次工具错误，共36个内存Span；真实付费调用为0。`scripts/sync_versions.py --sync/--check`与`git diff --check`通过，Common/Entry/Execution为v3/v4/v3；其余Prompt、Schema、Gold、固定Dataset与历史记录未改。目录权限、初始门控、空/截断/失败/预算状态、finish原子性与Generation审计均有离线覆盖；这些通过不代表真实模型已完成A1的语义质量验收。
 
 ## 统一前端入口（MVP）
 

@@ -11,8 +11,13 @@ from app.investigation_state import KnowledgeState, QuestionState, MAX_CONTEXT_C
 class TestInvestigationState(unittest.TestCase):
     setUp = f.TestInvestigationAgent.setUp
     tearDown = f.TestInvestigationAgent.tearDown
-    run_script = f.TestInvestigationAgent.run_execution_script
     audits = f.TestInvestigationAgent.audits
+
+    def run_script(self, goal, replies, selected=None, **kwargs):
+        # State/step regressions start with an explicitly supplied departure
+        # record; empty initial acquisition is covered at the raw loop boundary.
+        return f.TestInvestigationAgent.run_execution_script(self, goal, replies,
+            selected=["U022"] if selected is None else selected, **kwargs)
 
     def test_multi_question_investigation_records_activity_without_automatic_answer(self):
         goal = "核对入住及损失"
@@ -39,7 +44,7 @@ class TestInvestigationState(unittest.TestCase):
         case = self.case.model_copy(deep=True)
         case.info_units = [u for u in case.info_units if u.id in {"U026", "U029", "U036"}]
         case.relations = [r for r in case.relations if {r.source_id, r.target_id} <= {"U026", "U029", "U036"}]
-        result, _ = self.run_script(goal, decide, case=case)
+        result, _ = self.run_script(goal, decide, case=case, selected=["U026"])
         self.assertEqual([q["status"] for q in result["question_state"]["questions"]], ["blocked", "answered", "blocked"])
         self.assertEqual(len(result["open_questions"]), 2)
         activities = self.audits()[0]["knowledge_state"]["activities"]

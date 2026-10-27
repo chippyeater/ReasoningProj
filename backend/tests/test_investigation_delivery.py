@@ -105,7 +105,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         args = json.loads(call["function"]["arguments"])
         args["question_ids"] = ["foreign"]
         result, calls = self.run_script("核对", [f.tool("propose_hypothesis", args, "invalid"), f.finish("核对")],
-            work_context=deepcopy(self.context), issue_key=self.case.issue_set[1])
+            selected=["U022"], work_context=deepcopy(self.context), issue_key=self.case.issue_set[1])
         self.assertEqual(json.loads(calls[1]["messages"][-1]["content"])["error"]["code"], "invalid_question_reference")
         self.assertEqual(result["proposals"], [])
 

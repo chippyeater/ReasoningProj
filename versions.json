@@ -39,20 +39,20 @@
     {
       "name": "investigation_common",
       "path": "backend/prompts/investigation_common_prompt.md",
-      "version": 2,
-      "sha256": "906848d0cd8916e00191329bae68487459aee7db333e664b66e57f37d6b6bc7f"
+      "version": 3,
+      "sha256": "f1ad76282992be1c16b83a8fd20106e2d3f9e1993ec281e299827cbce327cd82"
     },
     {
       "name": "investigation_entry",
       "path": "backend/prompts/investigation_entry_prompt.md",
-      "version": 2,
-      "sha256": "c9e90c1b920af2e000404cea576bc0f133af371a067862d42fd5b4ada6adfb1f"
+      "version": 4,
+      "sha256": "358d2f895fdcf24fa8ce1e947bc470d95719f002bd026ce93c824a285977a123"
     },
     {
       "name": "investigation_execution",
       "path": "backend/prompts/investigation_execution_prompt.md",
-      "version": 2,
-      "sha256": "306c9c2d5ed1612428a3ffd0eaa635758c7d5e8fccf50daf8930dc2a53b3ee34"
+      "version": 3,
+      "sha256": "a5d31d551171418e480a393cad25162f80868574a771b8737ecf2110091e9f95"
     },
     {
       "name": "reasoning_selector",
