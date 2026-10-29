@@ -34,7 +34,7 @@
 | gap_handling | 54d069a7-212b-4253-8f50-4b10a6ee3c21 | 重要缺口遗漏或当作事实 / 已识别但处理不足 / 合理调查或记录 |
 | completion_calibration | 63d36db7-0119-4873-8d45-d16ff100c270 | 明显提前/错误完成 / 基本合理但局部不一致 / 与实际完成程度一致 |
 
-在 Trace/Observation 详情点击 **Annotate**，选择以上配置、给出整数 0/1/2，并在 Comment 写明 Finding、来源指针或模型/工具/Question 记录的依据。新实验执行后，也可从 Experiment compare view 打开对应任务和原生 Trace 评分。UI 的评论功能可用，但后端配置不会强制人工必须填写评论；这是标注规范。Runner 不自动预填人工分，也不设置未经验证的总分通过线。经明确授权的 Codex 审阅可使用原生 ANNOTATION 预标注，必须记录 `reviewer=Codex`、`human_verified=false`，供真人复核；不能冒充已完成真人标注。当前不额外建立 Annotation Queue。
+在 Trace/Observation 详情点击 **Annotate**，选择以上配置、给出整数 0/1/2，并在 Comment 写明 Finding、来源指针或模型和工具记录的依据。新实验执行后，也可从 Experiment compare view 打开对应任务和原生 Trace 评分。UI 的评论功能可用，但后端配置不会强制人工必须填写评论；这是标注规范。Runner 不自动预填人工分，也不设置未经验证的总分通过线。经明确授权的 Codex 审阅可使用原生 ANNOTATION 预标注，必须记录 `reviewer=Codex`、`human_verified=false`，供真人复核；不能冒充已完成真人标注。当前不额外建立 Annotation Queue。
 
 ## 命令
 
@@ -59,11 +59,11 @@ backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py live --allow-
 backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py live --task A1 --allow-paid-models
 ```
 
-`--task A1|A2|A3` 仅用于 dry-run/live。省略时仍运行三个任务；指定时先核对完整远端 Dataset，再仅在本地筛选原生 Item，不修改 Dataset。运行元数据记录选择范围及本次调用上界，单任务最多 28 次模型调用。Runner 不自动重跑任务；远端核验失败时，可从审计目录的 `execution.json` 找到本次 Experiment/Trace ID，继续只读核查，避免为同步问题重新调用模型。
+`--task A1|A2|A3` 仅用于 dry-run/live。省略时仍运行三个任务；指定时先核对完整远端 Dataset，再仅在本地筛选原生 Item，不修改 Dataset。运行元数据记录选择范围及本次调用上界，单任务最多 20 次模型调用。Runner 不自动重跑任务；远端核验失败时，可从审计目录的 `execution.json` 找到本次 Experiment/Trace ID，继续只读核查，避免为同步问题重新调用模型。
 
 `init` 使用确定性 Dataset Item ID；已存在且一致的对象不重建。定义、快照、配置或远端 Item 漂移时明确失败，不静默覆盖。远端 unavailable、权限不足、写入拒绝或读回核验失败均返回非零退出码，不冒充同步成功。`live` 缺少授权标志会在加载模型或执行调查前失败；还要求干净且已提交的工作区和开启 Langfuse 内容记录。
 
-当前 v18 的离线协议脚本先提交 Question/Step 计划，再读取来源并完成交付（每项3次 Mock 模型调用）。运行元数据包含两阶段 Prompt manifest 与两组工具契约的整体哈希；不读取旧单文件 Prompt。它只验证阶段切换、来源访问、步骤依据和完成协议，不能代替三项任务的真实语义验收。
+当前离线协议脚本直接读取来源并完成交付（每项2次 Mock 模型调用），无需先登记计划。运行元数据包含唯一 Prompt 的名称、版本、实际 SHA、Commit、发布状态及八个工具的契约哈希。它验证来源访问、统一循环、交付协议和可观测性，不代表真实语义质量通过。
 
 `dry-run` 使用内存 Span Exporter 和只接受 Mock API 的 httpx transport。它实际运行 SDK v5 Experiment Runner、三个隔离任务、完整 Agent 工具循环、原生 Evaluator 和 Trace 嵌套；模型回复为明确标注的协议样例。报告中的完成状态只说明协议通过，不是真实调查质量或真实 Experiment 上传成功。
 
