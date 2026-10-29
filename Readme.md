@@ -125,7 +125,7 @@ Set-Location backend
 `prompt_release_status=uncommitted`。这些字段与 `prompt_name / schema_version / model` 按每次调用分别写入本地审计和 Langfuse Generation。
 StageRun 保持原结构；旧日志中 SHA-256 形式的 `prompt_version` 无需迁移并仍可读取。
 
-Investigation v18 使用同一注册表中的三份源 Prompt 和 `compositions` 有序组合：Entry 为 Common + Entry，Execution 为 Common + Execution。源版本独立递增；组合版本为 `c1:<有序源名称及版本>:<完整组合SHA256>`。每次调用记录 phase、组件版本/哈希、实际组合哈希和可验证的 Git/发布状态；运行输入快照冻结两阶段全文。首次只开放直接 finish 和原子计划工具，成功提交 Question/Step 后才开放调查工具。详见 [Investigation Agent](docs/investigation_agent.md)。
+Investigation 使用统一的目标驱动工具循环与单份 `investigation_common_prompt.md`，由共用 Prompt Loader 校验版本、SHA、Git 和发布状态。首轮即可自主读取案件或提交 Proposal，无强制规划和任务状态维护；每轮从 KnowledgeState 重建去重材料与必要错误，不发送工具历史和预算计数。详见 [Investigation Agent](docs/investigation_agent.md)。
 
 ## LLM Observability（Langfuse）
 
