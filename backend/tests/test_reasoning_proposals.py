@@ -55,20 +55,17 @@ class TestReasoningProposals(TestReasoningWorkspace):
         def model(request):
             body = json.loads(request.content)
             requests.append(body)
-            step = len(requests) - 2
-            if step < 0:
-                reply = replies.plan()
-            elif step == 0:
-                reply = replies.tool("get_evidence", {"info_unit_ids": read_ids or ["U029"], "step_id": "S1"})
+            step = len(requests) - 1
+            if step == 0:
+                reply = replies.tool("get_evidence", {"info_unit_ids": read_ids or ["U029"]})
             elif step <= len(proposals or []):
                 state = json.loads(body["messages"][1]["content"])
-                ids = [p["proposal_id"] for p in state["knowledge_state"]["proposals"]["items"]]
+                ids = [p["proposal_id"] for p in state["proposals"]]
                 reply = proposal_call(proposals[step - 1], ids, f"proposal-{step}")
             elif summary_failure:
                 return httpx.Response(500, text="mock final model failure")
             else:
-                reply = replies.finish(goal, ["U029"], refs=[("U029", 0)], status="completed",
-                    step_updates=[replies.step(status="completed", note="已核对来源及建议")])
+                reply = replies.finish(goal, ["U029"], refs=[("U029", 0)], status="completed")
             return httpx.Response(200, json=reply.response)
         with patch.object(llm_client.httpx, "AsyncClient", side_effect=lambda **kwargs:
                           real_client(transport=httpx.MockTransport(model), **kwargs)):
@@ -92,8 +89,8 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(path.read_bytes(), before)
         initial = json.loads(requests[0]["messages"][1]["content"])
-        self.assertEqual(initial["work_context"]["reasoning"]["hypotheses"][0]["id"], hid)
-        self.assertNotIn("source_refs", json.dumps(initial["work_context"]))
+        self.assertEqual(initial["reasoning"]["hypotheses"][0]["id"], hid)
+        self.assertNotIn("source_refs", json.dumps(initial["reasoning"]))
         self.assertNotIn("node_positions", json.dumps(initial))
         self.assertNotIn("visible_node_ids", json.dumps(initial))
         self.assertNotIn("response_format", requests[0])
@@ -126,9 +123,9 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertIn("用户修正", current["content"])
         next_run, requests = self.investigate(None, [hid])
         self.assertEqual(next_run.status_code, 200, next_run.text)
-        wire = json.loads(requests[0]["messages"][1]["content"])["work_context"]["reasoning"]["hypotheses"][0]
-        self.assertEqual((wire["judgment"], wire["work_status"], wire["revision"]),
-                         (current["judgment"], current["work_status"], current["revision"]))
+        wire = json.loads(requests[0]["messages"][1]["content"])["reasoning"]["hypotheses"][0]
+        self.assertEqual((wire["judgment"], wire["work_status"]),
+                         (current["judgment"], current["work_status"]))
         self.assertEqual(wire["content"], current["content"])
         fresh, _ = self.investigate([suggestion("hypothesis_status", hid)], [hid])
         self.assertEqual(fresh.status_code, 200, fresh.text)
@@ -237,7 +234,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertEqual(second.json()["proposals"], [])
         run = second.json()["run_id"]
         audit = json.loads((case_dir(self.case.case_id) / f"runs/{run}.output.json").read_text(encoding="utf-8"))
-        self.assertEqual(audit["tool_calls"][2]["result"]["status"], "invalid_request")
+        self.assertEqual(next(c for c in audit["tool_calls"] if c["name"] == "propose_evidence_gap")["result"]["status"], "invalid_request")
         response = self.client.post(f"/api/cases/{self.case.case_id}/reasoning-proposals/accept", json={
             "issue": self.issue, "run_id": run, "proposal_id": foreign_id})
         self.assertEqual(response.status_code, 409)
@@ -297,7 +294,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertEqual(response.status_code, 200, response.text)
         run = response.json()["run_id"]
         audit = json.loads((case_dir(self.case.case_id) / f"runs/{run}.output.json").read_text(encoding="utf-8"))
-        rejected = audit["tool_calls"][3]["result"]
+        rejected = next(c for c in audit["tool_calls"] if c["result"]["status"] == "invalid_request")["result"]
         self.assertEqual(rejected["status"], "invalid_request")
         self.assertEqual(rejected["error"]["validation_details"]["category"], "proposal_semantics")
         self.assertEqual(rejected["error"]["validation_details"]["errors"][0]["loc"], ["proposals", 1, "hypothesis_proposal_ids", 0])

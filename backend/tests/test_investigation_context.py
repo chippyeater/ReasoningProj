@@ -31,8 +31,8 @@ class TestInvestigationContext(unittest.TestCase):
         self.edit(gap={"content": "实际计租和收款如何", "hypothesis_ids": [h], "info_unit_ids": ["U036"], "status": "open"})
         self.canvas(["U029", "U036", h], ["U029"], h)
         requests = []
-        responses = [replies.plan(), replies.finish("核查损失", ["U029", "U036"], ["R010"], [("U029", 0), ("U036", 0)],
-            statement="双方陈述存在分歧，仍需独立核实。", step_updates=[replies.step(status="completed", note="已核对上下文陈述", basis=["U029", "U036"])])]
+        responses = [replies.finish("核查损失", ["U029", "U036"], ["R010"], [("U029", 0), ("U036", 0)],
+            statement="双方陈述存在分歧，仍需独立核实。")]
         def model(request):
             requests.append(json.loads(request.content))
             return httpx.Response(200, json=responses[len(requests) - 1].response)
@@ -45,17 +45,15 @@ class TestInvestigationContext(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["relevant_relation_ids"], ["R010"])
         initial = json.loads(requests[0]["messages"][1]["content"])
-        context = initial["work_context"]
-        self.assertEqual([u["id"] for u in context["canvas"]["info_units"]], ["U029", "U036"])
+        context = initial
+        self.assertEqual([u["id"] for u in context["materials"]["info_units"]["items"]], ["U029", "U036"])
         relation = next(r for r in self.case.relations if r.id == "R010")
-        self.assertEqual(context["canvas"]["relations"], [{"id": "R010", "source_id": relation.source_id,
+        self.assertEqual(context["materials"]["relations"]["items"], [{"id": "R010", "source_id": relation.source_id,
             "target_id": relation.target_id, "relation_type": "contradict"}])
-        self.assertEqual(context["canvas"]["focused_object_id"], h)
-        self.assertEqual(context["canvas"]["selected_reasoning_ids"], [h])
         self.assertEqual(context["reasoning"]["hypotheses"][0]["judgment"], "unverified")
         self.assertEqual(context["reasoning"]["gaps"][0]["status"], "open")
         self.assertEqual(context["reasoning"]["links"][0]["meaning"], "oppose")
-        serialized = json.dumps(initial["work_context"])
+        serialized = json.dumps(initial["reasoning"])
         for field in ("node_positions", "viewport", "offset_x", "display_levels", "source_refs", "quote_units", "files"):
             self.assertNotIn(field, serialized)
         self.assertEqual(len(response.json()["evidence_refs"]), 2)  # Verified initial excerpts are directly citable.

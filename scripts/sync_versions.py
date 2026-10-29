@@ -59,8 +59,8 @@ def _safe_relative_path(value: object, field: str) -> PurePosixPath:
 
 
 def validate_registry(repository_root: Path, registry: object) -> tuple[list[dict], dict[str, str]]:
-    if not isinstance(registry, dict) or set(registry) != {"prompts", "compositions", "schema", "gold"}:
-        raise RegistryError("versions.json must contain exactly prompts, compositions, schema, and gold")
+    if not isinstance(registry, dict) or set(registry) != {"prompts", "schema", "gold"}:
+        raise RegistryError("versions.json must contain exactly prompts, schema, and gold")
     schema = registry["schema"]
     if not isinstance(schema, dict) or set(schema) != {"version"} or not isinstance(schema["version"], str):
         raise RegistryError("schema.version must be a string")
@@ -110,22 +110,6 @@ def validate_registry(repository_root: Path, registry: object) -> tuple[list[dic
         if not isinstance(sha256, str) or not SHA256_PATTERN.fullmatch(sha256):
             raise RegistryError(f"{label}.sha256 must be a lowercase SHA-256")
         hashes[name] = _content_hash(repository_root / relative)
-
-    compositions = registry["compositions"]
-    if not isinstance(compositions, list):
-        raise RegistryError("compositions must be a list")
-    composition_names = set()
-    for item in compositions:
-        if not isinstance(item, dict) or set(item) != {"name", "components"}:
-            raise RegistryError("Compositions require exactly name and components")
-        name, components = item["name"], item["components"]
-        if not isinstance(name, str) or not NAME_PATTERN.fullmatch(name) or name in names | composition_names:
-            raise RegistryError("Composition names must be valid and unique across all Prompts")
-        composition_names.add(name)
-        if (not isinstance(components, list) or len(components) < 2
-                or any(not isinstance(n, str) or n not in names for n in components)
-                or len(set(components)) != len(components)):
-            raise RegistryError("Composition components must be ordered unique registered source names")
 
     actual_paths = {
         path.relative_to(repository_root).as_posix()

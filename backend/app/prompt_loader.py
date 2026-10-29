@@ -22,7 +22,6 @@ class LoadedPrompt:
     git_commit: str | None
     schema_version: str
     release_status: str
-    components: tuple[LoadedPrompt, ...] = ()
 
     def metadata(self, model: str) -> dict:
         result = {
@@ -34,9 +33,6 @@ class LoadedPrompt:
             "model": model,
             "prompt_release_status": self.release_status,
         }
-        if self.components:
-            result.update(prompt_composition="concat-v1", prompt_components=[
-                component.metadata(model) for component in self.components])
         return result
 
 
@@ -139,40 +135,3 @@ def load_prompt(path: Path, name: str, *, repository_root: Path = REPOSITORY_ROO
         schema_version=schema_version,
         release_status=release_status,
     )
-
-
-def load_composed_prompt(name: str, *, repository_root: Path = REPOSITORY_ROOT,
-                         registry_path: Path | None = None) -> LoadedPrompt:
-    """Concatenate ordered, independently versioned sources with two LF characters.
-
-    Source text is never stripped or rewritten. The version names both ordered
-    source releases and the full content digest; no independent version counter.
-    """
-    registry_path = registry_path or repository_root / "versions.json"
-    registry = json.loads(registry_path.read_text(encoding="utf-8"))
-    matches = [row for row in registry.get("compositions", []) if row.get("name") == name]
-    if len(matches) != 1:
-        raise ValueError(f"Prompt composition must be registered exactly once: {name}")
-    names = matches[0].get("components")
-    if not isinstance(names, list) or len(names) < 2 or any(not isinstance(n, str) for n in names) or len(set(names)) != len(names):
-        raise ValueError(f"Invalid ordered Prompt components: {name}")
-    sources = []
-    for source_name in names:
-        entries = [row for row in registry["prompts"] if row["name"] == source_name]
-        if len(entries) != 1:
-            raise ValueError(f"Unknown or duplicate Prompt component: {source_name}")
-        sources.append(load_prompt(repository_root / entries[0]["path"], source_name,
-            repository_root=repository_root, registry_path=registry_path))
-    if len({p.schema_version for p in sources}) != 1:
-        raise ValueError("Prompt components must use the same Schema")
-    content = "\n\n".join(p.content for p in sources)
-    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    released = all(p.release_status == "committed" for p in sources)
-    head = _run_git(repository_root, "rev-parse", "HEAD") if released else None
-    commit = head.stdout.decode("ascii").strip() if head and head.returncode == 0 else None
-    if commit is not None and not re.fullmatch(r"[0-9a-f]{40}", commit):
-        commit = None
-    return LoadedPrompt(name=name, content=content,
-        version="c1:" + "+".join(f"{p.name}@{p.version}" for p in sources) + ":" + digest,
-        sha256=digest, git_commit=commit, schema_version=sources[0].schema_version,
-        release_status="committed" if commit else "uncommitted", components=tuple(sources))

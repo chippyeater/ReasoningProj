@@ -1,4 +1,4 @@
-"""Same-run Link -> Hypothesis dependency, strict adoption and compatibility."""
+"""Same-run Link -> Hypothesis dependency, strict adoption and Issue isolation."""
 import json
 import unittest
 
@@ -67,7 +67,7 @@ class TestEvidenceLinkProposals(unittest.TestCase):
                 run = response.json()["run_id"]
                 audit = json.loads((case_dir(self.case.case_id) / f"runs/{run}.output.json").read_text(encoding="utf-8"))
                 rejected = next(call for call in audit["tool_calls"] if call["name"] == "propose_evidence_link")
-                self.assertEqual(rejected["phase"], "execution")
+                self.assertNotIn("phase", rejected)
                 self.assertEqual(rejected["result"]["status"], "invalid_request")
         # Formal object cannot be taken from another Issue or fabricated.
         response, _ = self.investigate([fixture.suggestion("evidence_link", "foreign-hypothesis")])

@@ -21,7 +21,7 @@ class TestSummaryValidation(unittest.TestCase):
 
     def test_invalid_summaries_have_specific_diagnostics_and_are_not_truncated(self):
         for text, code in ((None, "invalid_summary"), (" \n", "invalid_summary"),
-                           ("字" * 241, "summary_too_long"), ('{"answer":"结论"}', "structured_final_reply")):
+                           ("字" * (agent.MAX_SUMMARY_CHARACTERS + 1), "summary_too_long"), ('{"answer":"结论"}', "structured_final_reply")):
             with self.subTest(code=code), self.assertRaises(AppError) as raised:
                 agent._validate_summary(text, [])
             self.assertEqual(raised.exception.code, "investigation_summary_invalid")
@@ -49,17 +49,17 @@ class TestSummaryValidation(unittest.TestCase):
 class TestSummaryHandoff(unittest.TestCase):
     setUp = fixture.TestInvestigationAgent.setUp
     tearDown = fixture.TestInvestigationAgent.tearDown
-    run_script = fixture.TestInvestigationAgent.run_execution_script
+    run_script = fixture.TestInvestigationAgent.run_script
     audits = fixture.TestInvestigationAgent.audits
 
     def test_rejected_answer_is_recoverable_finish_error_without_partial_findings(self):
-        result, calls = self.run_script("核对", [fixture.finish("核对", ["U029"], refs=[("U029", 0)], answer="字"*241, call_id="bad"),
+        result, calls = self.run_script("核对", [fixture.finish("核对", ["U029"], refs=[("U029", 0)], answer="字"*(agent.MAX_SUMMARY_CHARACTERS + 1), call_id="bad"),
             fixture.finish("核对", ["U029"], refs=[("U029", 0)], answer="陈述仍需核实。")], selected=["U029"])
         self.assertEqual(len(calls), 2)
         self.assertEqual(result["answer"], "陈述仍需核实。")
-        error = json.loads(calls[1]["messages"][-1]["content"])["error"]
+        error = json.loads(calls[1]["messages"][1]["content"])["recovery"]
         self.assertEqual(error["validation_details"]["errors"][0]["code"], "summary_too_long")
-        self.assertEqual(json.loads(calls[1]["messages"][1]["content"])["knowledge_state"]["findings"]["items"], [])
+        self.assertEqual(self.audits()[0]["tool_calls"][0]["result"]["status"], "invalid_request")
 
     def test_successful_proposals_survive_model_failure_before_finish(self):
         from app import llm_client

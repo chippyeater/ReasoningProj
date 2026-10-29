@@ -4,16 +4,11 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 import re
-from typing import Annotated, Literal
-
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import ValidationError
 
 from app.errors import AppError
 
-Text = Annotated[str, Field(min_length=1, max_length=600, pattern=r"\S")]
-Identifier = Annotated[str, Field(min_length=1, max_length=80, pattern=r"\S")]
-MAX_QUESTIONS = 20
-MAX_CONTEXT_CHARS = 48000  # Deterministic character proxy, independent of provider tokenizer.
+MAX_CONTEXT_CHARS = 24000  # Deterministic character proxy, independent of provider tokenizer.
 MAX_DIRECTORY_ITEMS = 80
 MAX_DIRECTORY_CHARS = 6000
 READ_TOOLS = frozenset({"search_info_units", "get_relations", "get_evidence"})
@@ -47,467 +42,135 @@ def validation_issues(exc, prefix=(), fix="Correct the indicated field using the
              "message": row.get("message", str(exc)), "fix": row.get("fix", fix)} for row in rows]
 
 
-class StateModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-
-class EvidencePointer(StateModel):
-    info_unit_id: Text
-    source_ref_index: Annotated[int, Field(ge=0)]
-
-
-class InvestigationStepUpdate(StateModel):
-    """One incremental upsert; execution indices are never model input."""
-    id: Identifier
-    question_id: Identifier
-    objective: Text
-    status: Literal["pending", "in_progress", "completed", "deferred"]
-    result_note: Text | None
-    basis_info_unit_ids: Annotated[list[Text], Field(max_length=80)]
-
-    @model_validator(mode="after")
-    def terminal_note(self):
-        if self.status in {"completed", "deferred"} and self.result_note is None:
-            raise ValueError("Completed steps need a result; deferred steps need a specific reason")
-        if self.status != "completed" and self.basis_info_unit_ids:
-            raise ValueError("Completion material belongs only to completed steps; use [] when reopening")
-        return self
-
-
-class InvestigationStep(InvestigationStepUpdate):
-    activity_indices: list[Annotated[int, Field(ge=0)]] = Field(default_factory=list)
-    activity_start_index: Annotated[int, Field(ge=0)] = 0
-
-
-class Question(StateModel):
-    id: Identifier
-    question: Annotated[str, Field(min_length=1, max_length=2000, pattern=r"\S")]
-    status: Literal["pending", "in_progress", "answered", "blocked"]
-    related_info_unit_ids: Annotated[list[Text], Field(max_length=80)]
-    evidence_refs: Annotated[list[EvidencePointer], Field(max_length=64)]
-    finding: Text | None
-    block_reason: Text | None
-    block_kind: Literal["evidence_missing", "tool_failure", "unsupported", "budget_exhausted"] | None
-
-    @model_validator(mode="after")
-    def consistent_status(self):
-        if self.status == "blocked":
-            if not self.block_reason or not self.block_kind:
-                raise ValueError("Blocked questions require a specific block_reason and block_kind")
-        elif self.block_reason is not None or self.block_kind is not None:
-            raise ValueError("Only blocked questions may have blocking fields")
-        if self.status == "answered" and (not self.finding or not (self.related_info_unit_ids or self.evidence_refs)):
-            raise ValueError("Answered questions require a finding and obtained materials")
-        return self
-
-
-class QuestionState:
-    def __init__(self):
-        self.items: dict[str, Question] = {}
-        self.activities = {}
-        self.steps: dict[str, InvestigationStep] = {}
-
-    def dump(self):
-        return {"questions": [q.model_dump(mode="json") for q in self.items.values()],
-                "activities": deepcopy(self.activities), "current_question_ids": self.resolve(None),
-                "investigation_steps": [s.model_dump(mode="json") for s in self.steps.values()]}
-
-    def resolve(self, ids):
-        if ids is None:
-            ids = [q.id for q in self.items.values() if q.status == "in_progress"]
-            return ids or [q.id for q in self.items.values() if q.status == "pending"][:1]
-        if not isinstance(ids, list) or not ids or len(ids) > MAX_QUESTIONS or any(not isinstance(i, str) for i in ids):
-            raise AppError("invalid_question_reference", "Supply a nonempty list of current Question IDs")
-        if len(set(ids)) != len(ids) or not set(ids) <= self.items.keys():
-            raise AppError("invalid_question_reference", "Question IDs must be unique and already registered")
-        return list(ids)
-
-    def review_updates(self, updates, case, seen, context):
-        """Build a diagnostic draft without accepting any invalid update batch."""
-        from app.investigation_actions import artifacts
-        draft, errors, parsed = deepcopy(self), [], []
-        if not isinstance(updates, list) or len(updates) > MAX_QUESTIONS:
-            return draft, [{"loc": ["questions"], "code": "invalid_questions",
-                "message": "Submit a list of at most twenty Questions", "fix": "Use [] to reuse current validated Questions"}]
-        for index, row in enumerate(updates):
-            try:
-                parsed.append(Question.model_validate(row, strict=True))
-            except ValidationError as exc:
-                errors.extend(validation_issues(exc, ["questions", index]))
-        if len({q.id for q in parsed}) != len(parsed):
-            errors.append({"loc": ["questions"], "code": "invalid_questions",
-                "message": "Duplicate Question IDs", "fix": "Submit each Question ID once"})
-        def error(loc, code, message, fix):
-            errors.append({"loc": loc, "code": code, "message": message, "fix": fix})
-
-        for q in parsed:
-            loc = ["questions", q.id]
-            if q.related_info_unit_ids or q.evidence_refs:
-                try:
-                    artifacts(case, seen, context, "Question basis", [], [{"statement": q.finding or q.question[:600],
-                        "info_unit_ids": q.related_info_unit_ids, "relation_ids": [],
-                        "evidence_refs": [r.model_dump() for r in q.evidence_refs]}], [], "evidence_insufficient")
-                except (AppError, ValidationError) as exc:
-                    for issue in validation_issues(exc, fix="Use obtained current-case material and verified SourceRef indices"):
-                        path = issue["loc"]
-                        issue["loc"] = [*loc, *(path[2:] if path[:1] == ["findings"] else path)]
-                        if issue["loc"][2:3] == ["relevant_info_unit_ids"]:
-                            issue["loc"][2] = "related_info_unit_ids"
-                        errors.append(issue)
-            draft.items[q.id] = q
-        if len(draft.items) > MAX_QUESTIONS:
-            error(["questions"], "question_limit", "At most twenty run-local Questions", "Keep the current Question limit")
-        for q in parsed:
-            draft.activities.setdefault(q.id, [])
-        return draft, errors
-
-    def update(self, updates, case, seen, context):
-        if not updates:
-            raise AppError("invalid_questions", "Submit one to twenty unique Questions per batch")
-        draft, errors = self.review_updates(updates, case, seen, context)
-        if errors:
-            raise AppError(errors[0]["code"], "Question updates were not accepted; fix all listed fields",
-                           details={"category": "questions", "errors": errors})
-        self.items, self.activities = draft.items, draft.activities
-        return {"status": "ok", "updated_question_ids": [q["id"] for q in updates]}
-
-    def submit_plan(self, updates, steps, case, seen, context, knowledge):
-        """Accept Entry Questions and their actions as a single validated batch."""
-        if self.items or self.steps:
-            raise AppError("plan_already_registered", "Entry planning requires an empty task state")
-        draft = deepcopy(self)
-        draft.update(updates, case, seen, context)
-        if any(q.status not in {"pending", "in_progress"} for q in draft.items.values()):
-            raise AppError("invalid_plan", "Plan Questions must be pending or in_progress")
-        result = draft.update_steps(steps, case, knowledge)
-        if any(s.status not in {"pending", "in_progress"} for s in draft.steps.values()):
-            raise AppError("invalid_plan", "Plan Steps must be pending or in_progress")
-        if {s.question_id for s in draft.steps.values()} != draft.items.keys():
-            raise AppError("invalid_plan", "Each planned Question needs at least one investigation Step")
-        self.items, self.activities, self.steps = draft.items, draft.activities, draft.steps
-        return {**result, "updated_question_ids": list(self.items)}
-
-    def open_questions(self):
-        return [(q.question + ("：" + q.block_reason if q.block_reason else ""))[:600]
-                for q in self.items.values() if q.status != "answered"]
-
-    def record(self, activity_index, ids):
-        for qid in ids:
-            self.activities[qid].append(activity_index)
-
-    def update_steps(self, updates, case, knowledge):
-        """Upsert only supplied IDs atomically; omitted steps always survive."""
-        from pydantic import TypeAdapter
-        parsed = TypeAdapter(Annotated[list[InvestigationStepUpdate], Field(min_length=1, max_length=20)]).validate_python(updates, strict=True)
-        draft, errors, ids = deepcopy(self.steps), [], set()
-        case_ids = {unit.id for unit in case.info_units}
-        obtained_ids = knowledge.info_units.keys() | {r["info_unit_id"] for r in knowledge.source_refs.values()}
-
-        def error(index, field, code, message, fix):
-            errors.append({"loc": ["steps", index, field], "code": code, "message": message, "fix": fix})
-
-        for index, row in enumerate(parsed):
-            old = self.steps.get(row.id)
-            if row.id in ids:
-                error(index, "id", "duplicate_step", "Each step ID may appear only once per update", "Send each changed step once")
-            ids.add(row.id)
-            if row.question_id not in self.items:
-                error(index, "question_id", "invalid_question_reference", "Step needs a registered Question", "Create the Question first")
-                continue
-            if old and row.question_id != old.question_id:
-                error(index, "question_id", "step_scope_changed", "Registered step ownership cannot change", "Keep the original question_id; add a new step for other work")
-            if old and old.status in {"completed", "deferred"}:
-                if row.status not in {old.status, "in_progress"}:
-                    error(index, "status", "invalid_step_transition", "Terminal steps may only retain status or reopen in_progress", "Reopen the same objective before continuing")
-                if row.objective != old.objective:
-                    error(index, "objective", "step_history_changed", "Terminal objective cannot be overwritten", "Reopen with the original objective first, or add a new step")
-            if old and old.status == "in_progress" and row.status == "pending":
-                error(index, "status", "invalid_step_transition", "Started work cannot return to pending", "Continue it or record its result/deferral")
-            indices = list(old.activity_indices) if old else []
-            new_work = not old or row.objective != old.objective or (
-                old.status in {"completed", "deferred"} and row.status == "in_progress")
-            activity_start = len(knowledge.activities) if new_work else old.activity_start_index
-            question = self.items[row.question_id]
-            question_ids = set(question.related_info_unit_ids) | {r.info_unit_id for r in question.evidence_refs}
-            for offset, uid in enumerate(row.basis_info_unit_ids):
-                if uid not in case_ids or uid not in obtained_ids or uid not in question_ids:
-                    error(index, "basis_info_unit_ids", "invalid_step_basis",
-                          f"basis_info_unit_ids[{offset}] must be current-case, obtained and associated with this Question",
-                          "Use explicitly obtained IDs in the owning Question, or perform a valid step-associated read; do not borrow another Question's material")
-            if len(set(row.basis_info_unit_ids)) != len(row.basis_info_unit_ids):
-                error(index, "basis_info_unit_ids", "duplicate_step_basis", "Completion basis IDs must be unique", "List each actual material once")
-            if row.status == "completed":
-                # An empty successful search is a real investigation result.
-                # A Proposal, an invented index or prose alone is not execution.
-                read_result = any(activity_start <= i < len(knowledge.activities)
-                    and knowledge.activities[i]["tool"] in {"search_info_units", "get_relations", "get_evidence"}
-                    and knowledge.activities[i]["status"] in {"ok", "empty", "truncated"}
-                    and (knowledge.activities[i]["executed"] or knowledge.activities[i]["cached"])
-                    and knowledge.activities[i]["step_id"] == row.id
-                    and knowledge.activities[i]["question_ids"] == [row.question_id] for i in indices)
-                if not read_result and not row.basis_info_unit_ids:
-                    error(index, "status", "step_completion_without_basis", "No valid linked read for the current objective/opening or explicit completion material",
-                          "Read with step_id or explicitly list obtained, Question-scoped basis_info_unit_ids; otherwise defer with a specific reason")
-            draft[row.id] = InvestigationStep(**row.model_dump(), activity_indices=indices, activity_start_index=activity_start)
-        if len(draft) > 20:
-            errors.append({"loc": ["steps"], "code": "step_limit", "message": "At most twenty registered investigation steps",
-                           "fix": "Update existing steps; registered history cannot be deleted"})
-        if errors:
-            raise AppError(errors[0]["code"], "Step updates were not accepted; fix all listed fields",
-                           details={"category": "steps", "errors": errors})
-        self.steps = draft
-        return {"status": "ok", "updated_step_ids": [s.id for s in parsed]}
-
-    def resolve_step(self, step_id, question_ids):
-        if step_id is None:
-            return None
-        if not isinstance(step_id, str) or step_id not in self.steps:
-            raise AppError("invalid_step_reference", "step_id must be registered in this run")
-        step = self.steps[step_id]
-        if question_ids != [step.question_id]:
-            raise AppError("step_question_mismatch", "A step-associated read must target only its owning Question")
-        if step.status in {"completed", "deferred"}:
-            raise AppError("step_not_active", "Reopen a terminal step in_progress before another associated read")
-        return step
-
-    def record_step(self, step, activity_index):
-        if step is not None:
-            step.activity_indices.append(activity_index)
-            if step.status == "pending":
-                step.status = "in_progress"
-
-
 class KnowledgeState:
+    """Lossless run-local material store; model views are bounded projections."""
     def __init__(self, initial):
         self.info_units, self.relations, self.source_refs = {}, {}, {}
         self.work_context = deepcopy(initial.get("work_context", {}))
-        self.activities, self.findings, self.proposals = [], [], []
-        for row in initial["selected_info_units"] + initial.get("work_context", {}).get("canvas", {}).get("info_units", []):
+        self.activities, self.proposals = [], []
+        canvas = self.work_context.get("canvas", {})
+        for row in [*initial.get("selected_info_units", []), *canvas.get("info_units", [])]:
             self.info_units[row["id"]] = deepcopy(row)
-        canvas = initial.get("work_context", {}).get("canvas", {})
         self.relations.update((r["id"], deepcopy(r)) for r in canvas.get("relations", []))
-        self.initial_scope = deepcopy({"evidence_context": initial["evidence_context"],
-            "canvas_omissions": {k: v for k, v in canvas.items() if k.startswith("has_more")}})
-        for row in initial["evidence_context"]["items"]:
+        self.initial_scope = deepcopy(initial.get("evidence_context", {}))
+        for row in self.initial_scope.get("items", []):
             self.source_refs[self.ref_key(row)] = deepcopy(row)
+        self.priority_ids = list(self.info_units)
+        self.focus_ids = set()
+        self.notices = []
+        if self.initial_scope.get("has_more") or self.initial_scope.get("errors") or self.initial_scope.get("status") in {"error", "invalid_request"}:
+            self.notices.append({"tool": "initial_sources", **{k:v for k,v in self.initial_scope.items() if k != "items"}})
+        if any(v for k,v in canvas.items() if k.startswith("has_more")):
+            self.notices.append({"tool": "initial_canvas", "message": "Initial workspace projection is partial; use case read tools for other material."})
 
     @staticmethod
     def ref_key(row):
         return f"{row['info_unit_id']}:{row['source_ref_index']}"
 
-    def merge(self, name, args, response, question_ids, *, step_id=None, executed=True):
-        """Only successful read projections grant knowledge; failures remain explicit."""
+    def merge(self, name, args, response, *, executed=True):
         if response["status"] not in {"invalid_request", "error"}:
+            touched = []
             for row in response.get("items", []):
                 if name == "search_info_units":
                     self.info_units[row["id"]] = deepcopy(row)
+                    touched.append(row["id"])
                 elif name == "get_relations":
                     relation = row["relation"]
                     self.relations[relation["id"]] = deepcopy(relation)
                     for unit in row["adjacent_info_units"]:
                         self.info_units[unit["id"]] = deepcopy(unit)
+                        touched.append(unit["id"])
                 elif name == "get_evidence":
                     self.source_refs[self.ref_key(row)] = deepcopy(row)
-        activity = {"activity_index": len(self.activities), "tool": name, "arguments": deepcopy(args),
-            "question_ids": list(question_ids), "step_id": step_id, "executed": executed,
-            "cached": bool(response.get("cached")),
-            "status": response["status"], "has_more": response.get("has_more", False),
-            "error": deepcopy(response.get("error")),
-            "obtained": [row.get("id") or row.get("relation", {}).get("id") or self.ref_key(row)
-                         for row in response.get("items", [])]}
-        if response.get("proposal_id"):
-            activity["proposal_id"] = response["proposal_id"]
-        self.activities.append(activity)
-        return len(self.activities) - 1
+                    touched.append(row["info_unit_id"])
+            self.priority_ids = list(dict.fromkeys([*touched, *self.priority_ids]))
+            self.focus_ids = set(args.get("info_unit_ids", touched)) if name in READ_TOOLS else self.focus_ids
+        # Audit history stays on the server. Notices preserve distinct scopes,
+        # including a truncated query after a later unrelated successful query.
+        if name in READ_TOOLS:
+            key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+            self.notices = [n for n in self.notices if n.get("key") != key]
+            if response.get("has_more") or response["status"] in {"empty", "error"}:
+                self.notices.append({"key": key, "tool": name, "arguments": deepcopy(args),
+                    "status": response["status"], "has_more": response.get("has_more", False),
+                    "error": {k:v for k,v in (response.get("error") or {}).items() if k in {"code", "message"}}})
+        self.activities.append({"tool": name, "arguments": deepcopy(args), "executed": executed,
+            "cached": bool(response.get("cached")), "status": response["status"],
+            "has_more": response.get("has_more", False), "error": deepcopy(response.get("error"))})
 
     def dump(self):
         return deepcopy({"info_units": self.info_units, "relations": self.relations,
-            "source_refs": self.source_refs, "initial_scope": self.initial_scope,
-            "work_context": self.work_context,
-            "activities": self.activities, "findings": self.findings, "proposals": self.proposals})
+            "source_refs": self.source_refs, "work_context": self.work_context,
+            "activities": self.activities, "proposals": self.proposals, "initial_scope": self.initial_scope})
 
-    def information_acquisition(self, case, questions, *, read_budget_exhausted=False):
-        """Describe actual access, not semantic sufficiency or an exploration quota.
-
-        An initial selected/canvas content projection, an executed read
-        result (including empty), or a real read failure permits analysis and
-        recovery. Argument/dispatch failures and directory entries do not.
-        """
-        case_ids = {u.id for u in case.info_units}
-        obtained = {uid for uid, row in self.info_units.items()
-                    if uid in case_ids and isinstance(row.get("content"), str) and row["content"].strip()}
-        obtained.update(r["info_unit_id"] for r in self.source_refs.values()
-                        if r["info_unit_id"] in case_ids and (
-                            r.get("source_ref", {}).get("quote") or r.get("quote_excerpt")))
-        associated = {uid for q in questions.items.values()
-                      for uid in [*q.related_info_unit_ids, *(r.info_unit_id for r in q.evidence_refs)]}
-        reads = [a for a in self.activities if a["tool"] in READ_TOOLS
-                 and (a["executed"] or a["cached"]) and set(a["question_ids"]) & questions.items.keys()]
+    def acquisition(self):
+        reads = [a for a in self.activities if a["tool"] in READ_TOOLS and a["executed"]]
+        obtained = bool(self.info_units or self.source_refs)
         successful = [a for a in reads if a["status"] in {"ok", "empty", "truncated"}]
-        failures = [a for a in reads if a["status"] == "error"]
-        if not questions.items:
-            status = "not_planned"
-        elif not case_ids:
-            status = "no_case_material"
-        elif successful:
-            status = "read_obtained" if obtained else "read_empty"
-        elif obtained:
-            status = "initial_material"
-        elif failures:
-            status = "read_failed"
-        elif read_budget_exhausted:
-            status = "read_budget_exhausted"
-        else:
-            status = "required"
-        last = reads[-1] if reads else None
-        return {"status": status, "needs_initial_read": status == "required",
-                "case_info_unit_count": len(case_ids), "obtained_info_unit_count": len(obtained),
-                "obtained_source_count": len(self.source_refs), "associated_info_unit_count": len(obtained & associated),
-                "read_attempt_count": sum(a["executed"] for a in reads), "successful_read_count": len(successful),
-                "read_error_count": len(failures), "read_budget_exhausted": read_budget_exhausted,
-                "last_read": {"tool": last["tool"], "status": last["status"], "has_more": last["has_more"],
-                              "error_code": (last["error"] or {}).get("code")} if last else None}
-
-    def available_work(self, case, questions):
-        """Discovery hints, NOT obtained evidence or a semantic relevance judgment.
-
-        Derive from current records/activity every time; no second task/lead store.
-        A short list may be investigated or explicitly declined, never exhausted
-        as a completion quota. Looking at this index grants no citation permission.
-        """
-        from app import investigation_tools as tools
-
-        units = {u.id: u for u in case.info_units}
-        result = {}
-        for q in questions.items.values():
-            anchors = set(q.related_info_unit_ids)
-            for activity in self.activities:
-                if q.id in activity["question_ids"] and activity["status"] not in {"error", "invalid_request"}:
-                    anchors.update(uid for uid in activity["arguments"].get("info_unit_ids", []) if uid in units)
-                    anchors.update(uid for uid in activity["obtained"] if uid in units)
-            neighbors = {uid for r in case.relations if {r.source_id, r.target_id} & anchors
-                         for uid in [r.source_id, r.target_id, *r.evidence_unit_ids]} - anchors
-            # Generic language matching, not case-specific terms or a truth test.
-            text = " ".join([q.question, q.finding or "", q.block_reason or ""])
-            terms = set(re.findall(r"[^\W_]+", tools._normalized(text)))
-            for part in re.findall(r"[\u3400-\u9fff]+", text):
-                terms.update(part[i:i+2] for i in range(len(part)-1))
-            candidates = []
-            for uid, unit in units.items():
-                score, weighted = tools._keyword_score(unit, list(terms))
-                if uid in anchors:
-                    missing = [i for i in range(len(unit.source_refs)) if self.ref_key({"info_unit_id": uid, "source_ref_index": i}) not in self.source_refs]
-                    partial = any(row.get("quote_truncated") for row in self.source_refs.values() if row["info_unit_id"] == uid)
-                    if missing or partial:
-                        candidates.append((3, score, {"lead_id": "source:" + uid, "kind": "unread_source",
-                            "info_unit_id": uid, "title": unit.title[:120],
-                            "reason": "Associated material has unprovided sources or only an excerpt",
-                            "next_tool": "get_evidence", "arguments": {"info_unit_ids": [uid]}}))
-                elif uid not in self.info_units and not any(r["info_unit_id"] == uid for r in self.source_refs.values()) and (uid in neighbors or weighted >= 3):
-                    candidates.append((2 if uid in neighbors else 1, score, {
-                        "lead_id": "unit:" + uid, "kind": "unread_info_unit", "info_unit_id": uid,
-                        "title": unit.title[:120], "reason": "One-hop relation" if uid in neighbors else "Text overlap with this Question/missing condition",
-                        "next_tool": "get_evidence" if unit.source_refs else "search_info_units",
-                        "arguments": {"info_unit_ids": [uid]} if unit.source_refs else {"query": unit.title[:tools.MAX_QUERY_CHARS]}}))
-            for index, activity in enumerate(self.activities):
-                if q.id not in activity["question_ids"] or not activity["has_more"] or activity["tool"] not in {"search_info_units", "get_relations"}:
-                    continue
-                # A wider successful query supersedes a bounded earlier prefix.
-                args = activity["arguments"]
-                if any(a["tool"] == activity["tool"] and a["status"] in {"ok", "empty", "truncated"}
-                       and {k:v for k,v in a["arguments"].items() if k != "limit"} == {k:v for k,v in args.items() if k != "limit"}
-                       and a["arguments"].get("limit", tools.DEFAULT_LIMIT) > args.get("limit", tools.DEFAULT_LIMIT)
-                       for a in self.activities[index+1:]):
-                    continue
-                candidates.append((3, 0, {"lead_id": f"query:{index}", "kind": "truncated_query",
-                    "reason": "Returned prefix does not exhaust this query; widen/refine if useful",
-                    "next_tool": activity["tool"], "arguments": {**args, "limit": tools.MAX_LIMIT}}))
-            candidates.sort(key=lambda row: (-row[0], -row[1], row[2]["lead_id"]))
-            result[q.id] = {"question_id": q.id, "items": [row[2] for row in candidates[:tools.MAX_LIMIT]],
-                "has_more": len(candidates) > tools.MAX_LIMIT,
-                "scope": "Heuristic discovery index only. Inspect valuable leads, or explain specifically why they cannot improve this Question. Not proof of missing evidence."}
-        return result
+        return {"obtained_info_unit_count": len(self.info_units), "obtained_source_count": len(self.source_refs),
+            "read_attempt_count": len(reads), "successful_read_count": len(successful),
+            "read_error_count": sum(a["status"] == "error" for a in reads),
+            "has_material": obtained, "has_read_result": bool(successful),
+            "read_failed": any(a["status"] == "error" for a in reads)}
 
 
-def _preview(value, text_limit=500):
-    if isinstance(value, str) and len(value) > text_limit:
-        return {"excerpt": value[:text_limit], "context_truncated": True,
-                "full_characters": len(value), "recovery": "Original in run audit; use read tools for full source wording"}
-    if isinstance(value, list):
-        return [_preview(v, text_limit) for v in value]
-    if isinstance(value, dict):
-        return {k: _preview(v, text_limit) for k, v in value.items()}
-    return value
-
-
-def model_context(initial, knowledge, questions, budget, recovery, *, phase="execution"):
-    """Bound each section and disclose omitted records; no summarization model."""
-    # Work context is already bounded by the Issue service, retained as user data.
-    result = {**deepcopy(initial), "phase": phase, "question_state": {}, "knowledge_state": {},
-              "remaining_budget": budget, "recovery": recovery}
-    result.pop("evidence_context", None)  # Now held in KnowledgeState, not duplicated each turn.
-    result.pop("selected_info_units", None)
-    if "case_info_directory" in result:
-        directory = result["case_info_directory"]
-        obtained = set(knowledge.info_units) | {r["info_unit_id"] for r in knowledge.source_refs.values()}
-        directory["obtained_info_unit_count"] = len(obtained)
-        directory["obtained_source_count"] = len(knowledge.source_refs)
-    current = questions.resolve(None)
-    preferred = {uid for a in knowledge.activities if set(a["question_ids"]) & set(current)
-                 for uid in a["arguments"].get("info_unit_ids", [])}
-    preferred.update(uid for qid in current for uid in questions.items[qid].related_info_unit_ids)
-
+def model_context(initial, knowledge, recovery=None):
+    """Send each material once, with explicit omissions and no activity history."""
+    from app.investigation_tools import _normalized
+    goal = initial["goal"]
+    words = set(re.findall(r"[^\W_]+", _normalized(goal)))
+    for part in re.findall(r"[\u3400-\u9fff]+", goal):
+        words.update(part[i:i+2] for i in range(len(part)-1))
+    def rank(row):
+        uid = row.get("info_unit_id", row.get("id", ""))
+        unit = knowledge.info_units.get(uid, {})
+        text = _normalized(" ".join(str(value) for value in (
+            row.get("title", ""), row.get("content", ""), unit.get("title", ""), unit.get("content", ""),
+            row.get("quote_excerpt", ""), row.get("source_ref", {}).get("quote", ""))))
+        return (uid not in knowledge.focus_ids, -sum(w in text for w in words),
+                knowledge.priority_ids.index(uid) if uid in knowledge.priority_ids else 100000, str(uid))
+    def relation_rank(row):
+        return min(rank({"id": uid}) for uid in (row[1]["source_id"], row[1]["target_id"]))
     def section(rows, allowance):
-        kept, omitted = [], []
-        size = 0
+        kept, omitted, size = [], [], 0
         for key, row in rows:
-            preview = _preview(row)
-            cost = len(json.dumps(preview, ensure_ascii=False))
+            cost = len(json.dumps(row, ensure_ascii=False))
             if size + cost <= allowance:
-                kept.append(preview)
-                size += cost
+                kept.append(deepcopy(row)); size += cost
             else:
                 omitted.append(key)
         return {"items": kept, "context_truncated": bool(omitted), "omitted_ids": omitted}
-
-    qdump = questions.dump()
-    # Always expose the status of every task, even when its detailed plan exceeds the view budget.
-    result["question_state"] = {"current_question_ids": current,
-        "progress": [{"id": q.id, "question": q.question[:200], "status": q.status,
-            "question_truncated": len(q.question) > 200,
-            "block_kind": q.block_kind, "block_reason": _preview(q.block_reason, 240)}
-            for q in questions.items.values()],
-        "details": section(sorted([(q["id"], q) for q in qdump["questions"]], key=lambda row: row[0] not in current), 12000)}
-    result["investigation_steps"] = {
-        "progress": [{"id": s.id, "question_id": s.question_id, "status": s.status,
-                      "objective": s.objective[:200], "objective_truncated": len(s.objective) > 200,
-                      "activity_start_index": s.activity_start_index,
-                      "activity_indices": list(s.activity_indices)} for s in questions.steps.values()],
-        "details": section(sorted([(s["id"], s) for s in qdump["investigation_steps"]],
-                                  key=lambda row: row[1]["question_id"] not in current), 8000)}
-    result["knowledge_state"] = {
-        "info_units": section(sorted(knowledge.info_units.items(), key=lambda r: r[0] not in preferred), 6000),
-        "relations": section(sorted(knowledge.relations.items(), key=lambda row:
-            not bool({row[1]["source_id"], row[1]["target_id"]} & preferred)), 4000),
-        "source_refs": section(sorted(knowledge.source_refs.items(), key=lambda row: row[1]["info_unit_id"] not in preferred), 7000),
-        "initial_scope": _preview({k: v for k, v in knowledge.initial_scope.items() if k != "evidence_context"}),
-        "initial_source_status": {k: v for k, v in knowledge.initial_scope["evidence_context"].items() if k != "items"},
-        "activities": section([(str(i), a) for i, a in enumerate(knowledge.activities)], 4500),
-        "findings": section([(str(i), f) for i, f in enumerate(knowledge.findings)], 3000),
-        "proposals": section([(p["proposal_id"], p) for p in knowledge.proposals], 5000)}
-    # Global cap: trim the largest detailed section; progress/budget/recovery stay visible.
-    candidates = [result["question_state"]["details"], result["investigation_steps"]["details"], *[v for v in result["knowledge_state"].values()
-                  if isinstance(v, dict) and "omitted_ids" in v]]
-    while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and any(s["items"] for s in candidates):
-        target = max((s for s in candidates if s["items"]), key=lambda s: len(json.dumps(s, ensure_ascii=False)))
+    workspace = knowledge.work_context
+    fields = {"hypotheses": ("id", "content", "judgment", "work_status", "content_truncated"),
+              "gaps": ("id", "content", "hypothesis_ids", "info_unit_ids", "status", "content_truncated", "references_truncated"),
+              "links": ("id", "hypothesis_id", "info_unit_id", "meaning", "rationale", "rationale_truncated")}
+    reasoning = {kind: [{k:deepcopy(row[k]) for k in keys if k in row}
+                        for row in workspace.get("reasoning", {}).get(kind, [])] for kind, keys in fields.items()}
+    reasoning["has_more"] = workspace.get("reasoning", {}).get("has_more", False)
+    result = {"goal": goal, "current_issue": workspace.get("current_issue"),
+        "core_issue": initial.get("core_issue"),
+        "case_info_directory": deepcopy(initial["case_info_directory"]),
+        "materials": {
+            "info_units": section(sorted(knowledge.info_units.items(), key=lambda kv:rank(kv[1])), 6500),
+            "relations": section(sorted(knowledge.relations.items(), key=relation_rank), 3500),
+            "source_refs": section(sorted(knowledge.source_refs.items(), key=lambda kv:rank(kv[1])), 7500)},
+        "reasoning": deepcopy(reasoning),
+        "proposals": deepcopy(knowledge.proposals),
+        "notices": [{k:v for k,v in n.items() if k != "key"} for n in knowledge.notices[-6:]],
+        "recovery": deepcopy(recovery)}
+    if len(knowledge.notices) > 6:
+        result["notices"].append({"context_truncated": True, "omitted_count": len(knowledge.notices) - 6})
+    # Successful proposals and dependency IDs remain visible. Trim material
+    # projections and directory, never the authoritative KnowledgeState.
+    sections = list(result["materials"].values())
+    while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and any(s["items"] for s in sections):
+        target = max((s for s in sections if s["items"]), key=lambda s:len(json.dumps(s, ensure_ascii=False)))
         row = target["items"].pop()
-        target["omitted_ids"].append(row.get("id") or row.get("proposal_id") or row.get("info_unit_id") or "record")
-        target["context_truncated"] = True
-    directory = result.get("case_info_directory")
-    while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and directory and directory["items"]:
-        directory["items"].pop()
-        directory["context_truncated"] = True
-        directory["omitted_count"] += 1
+        key = KnowledgeState.ref_key(row) if "source_ref_index" in row else row["id"]
+        target["omitted_ids"].append(key); target["context_truncated"] = True
+    directory = result["case_info_directory"]
+    while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and directory["items"]:
+        directory["items"].pop(); directory["context_truncated"] = True; directory["omitted_count"] += 1
     if len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS:
-        raise AppError("investigation_context_limit", "Required task/Issue metadata exceeds the context budget")
+        raise AppError("investigation_context_limit", "Required task and proposal context exceeds the context budget")
     return result
