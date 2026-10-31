@@ -127,8 +127,12 @@ def _keyword_score(unit: InfoUnit, terms: list[str]) -> tuple[int, int]:
 
 
 def search_info_units(case: CaseData, query: str, types: list[str] | None = None,
-                      limit: int = DEFAULT_LIMIT) -> dict:
-    """Search title/content using literal keywords, returning at most 8 previews."""
+                      limit: int = DEFAULT_LIMIT, *, exclude_info_unit_ids: set[str] | frozenset[str] = frozenset()) -> dict:
+    """Search title/content; caller-only exclusions precede ranking and limiting.
+
+    The Agent supplies currently visible InfoUnit IDs, not all previously seen
+    IDs. This internal argument is never part of the model's tool schema.
+    """
     try:
         _check_limit(limit)
         allowed = _enum_filter(types, {kind.value for kind in InfoUnitType}, "types")
@@ -142,7 +146,7 @@ def search_info_units(case: CaseData, query: str, types: list[str] | None = None
 
     ranked = []
     for unit in case.info_units:
-        if unit.type.value in allowed:
+        if unit.id not in exclude_info_unit_ids and unit.type.value in allowed:
             coverage, weighted = _keyword_score(unit, terms)
             if coverage:
                 ranked.append((-coverage, -weighted, unit.id, unit))

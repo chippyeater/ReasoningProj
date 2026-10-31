@@ -68,20 +68,26 @@ class KnowledgeState:
         return f"{row['info_unit_id']}:{row['source_ref_index']}"
 
     def merge(self, name, args, response, *, executed=True):
+        """Merge accepted projections and return the material keys actually returned."""
+        material_keys = set()
         if response["status"] not in {"invalid_request", "error"}:
             touched = []
             for row in response.get("items", []):
                 if name == "search_info_units":
                     self.info_units[row["id"]] = deepcopy(row)
+                    material_keys.add(("info_units", row["id"]))
                     touched.append(row["id"])
                 elif name == "get_relations":
                     relation = row["relation"]
                     self.relations[relation["id"]] = deepcopy(relation)
+                    material_keys.add(("relations", relation["id"]))
                     for unit in row["adjacent_info_units"]:
                         self.info_units[unit["id"]] = deepcopy(unit)
+                        material_keys.add(("info_units", unit["id"]))
                         touched.append(unit["id"])
                 elif name == "get_evidence":
                     self.source_refs[self.ref_key(row)] = deepcopy(row)
+                    material_keys.add(("source_refs", self.ref_key(row)))
                     touched.append(row["info_unit_id"])
             self.priority_ids = list(dict.fromkeys([*touched, *self.priority_ids]))
             self.focus_ids = set(args.get("info_unit_ids", touched)) if name in READ_TOOLS else self.focus_ids
@@ -97,6 +103,7 @@ class KnowledgeState:
         self.activities.append({"tool": name, "arguments": deepcopy(args), "executed": executed,
             "cached": bool(response.get("cached")), "status": response["status"],
             "has_more": response.get("has_more", False), "error": deepcopy(response.get("error"))})
+        return material_keys
 
     def dump(self):
         return deepcopy({"info_units": self.info_units, "relations": self.relations,

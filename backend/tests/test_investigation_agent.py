@@ -173,22 +173,125 @@ class TestInvestigationAgent(unittest.TestCase):
 
     def test_unknown_id_failure_cannot_substitute_for_actual_read(self):
         _, calls = self.run_script("核对", [tool("get_evidence", {"info_unit_ids": ["foreign"]}),
-            finish("核对", call_id="too-soon"), tool("search_info_units", {"query": "没有这种凭证"}, "empty"), finish("核对")])
+            finish("核对", call_id="too-soon"), tool("search_info_units", {"query": "月租"}, "read"), finish("核对")])
         self.assertEqual(json.loads(calls[2]["messages"][1]["content"])["recovery"]["code"], "initial_information_required")
 
+    def test_empty_read_can_finish_with_an_explicit_limitation(self):
+        result, _ = self.run_script("查凭证", [tool("search_info_units", {"query": "没有这种凭证"}),
+            finish("查凭证", questions=["未找到匹配节点，不能据此确认凭证不存在。"])])
+        self.assertEqual(result["completion_status"], "evidence_insufficient")
+        self.assertEqual(result["stop_reason"], "finish_investigation")
+
     def test_budget_exhaustion_leaves_proposal_and_finish_available(self):
-        reads = [tool("search_info_units", {"query": f"不存在的凭证{i}"}, str(i)) for i in range(8)]
-        result, calls = self.run_script("核对", [*reads, finish("核对", status="budget_exhausted")])
+        case = self.case.model_copy(deep=True)
+        case.info_units = [case.info_units[0].model_copy(update={"id": f"budget-{i}",
+            "title": f"预算材料{i}", "content": "独立信息", "source_refs": []}) for i in range(8)]
+        case.relations = []
+        reads = [tool("search_info_units", {"query": f"预算材料{i}"}, str(i)) for i in range(8)]
+        result, calls = self.run_script("核对", [*reads, finish("核对", status="budget_exhausted")], case=case)
         self.assertEqual(result["completion_status"], "budget_exhausted")
         self.assertEqual({d["function"]["name"] for d in calls[-1]["definitions"]}, {
             "finish_investigation", "propose_hypothesis", "propose_evidence_gap", "propose_evidence_link", "propose_hypothesis_status"})
 
     def test_repeated_read_stops_without_publishing_an_answer(self):
-        result, _ = self.run_script("核对", [tool("search_info_units", {"query": "损失"}, str(i)) for i in range(4)])
+        result, _ = self.run_script("核对", [tool("get_evidence", {"info_unit_ids": ["U029"]}, str(i)) for i in range(4)])
         self.assertEqual(result["stop_reason"], "no_progress_limit")
         self.assertEqual(result["summary_status"], "failed")
         self.assertIsNone(result["answer"])
         self.assertEqual(sum(t["executed"] for t in self.audits()[0]["tool_calls"]), 1)
+
+    def test_search_excludes_selected_and_cached_visible_nodes(self):
+        _, calls = self.run_script("查月租", [tool("search_info_units", {"query": "月租"}, str(i)) for i in range(3)]
+            + [finish("查月租")], selected=["U029"])
+        reads = self.audits()[0]["tool_calls"][:3]
+        self.assertEqual([r["id"] for r in reads[0]["result"]["items"]], ["U004"])
+        self.assertEqual(reads[0]["excluded_info_unit_ids"], ["U029"])
+        self.assertEqual(reads[1]["excluded_info_unit_ids"], ["U004", "U029"])
+        self.assertEqual(reads[1]["result"]["status"], "empty")
+        self.assertFalse(reads[1]["result"].get("cached"))
+        self.assertTrue(reads[2]["result"]["cached"])
+        self.assertEqual(reads[2]["result"]["items"], [])
+        for call in calls:
+            search = next(d for d in call["definitions"] if d["function"]["name"] == "search_info_units")
+            self.assertEqual(set(search["function"]["parameters"]["properties"]), {"query", "types", "limit"})
+
+    def test_search_excludes_a_matching_initial_node(self):
+        _, calls = self.run_script("查月租", [tool("search_info_units", {"query": "月租"}), finish("查月租")], selected=["U004"])
+        self.assertEqual(self.audits()[0]["tool_calls"][0]["result"]["status"], "empty")
+        material = json.loads(calls[1]["messages"][1]["content"])["materials"]["info_units"]["items"]
+        self.assertEqual([r["id"] for r in material], ["U004"])
+
+    def test_different_empty_searches_stop_before_read_budget_is_spent(self):
+        result, _ = self.run_script("查凭证", [tool("search_info_units", {"query": f"不存在的凭证{i}"}, str(i)) for i in range(3)])
+        self.assertEqual(result["stop_reason"], "no_progress_limit")
+        self.assertEqual(result["tool_budget_used"]["read"], 3)
+        self.assertEqual([t["no_progress"] for t in self.audits()[0]["tool_calls"]], [1, 2, 3])
+
+    def test_successful_duplicate_material_does_not_reset_no_progress(self):
+        response = tools.search_info_units(self.case, "月租")
+        # Even a successful tool response cannot turn existing IDs/reordering into progress.
+        with patch.object(tools, "search_info_units", return_value=response):
+            result, _ = self.run_script("查月租", [tool("search_info_units", {"query": f"不同查询{i}"}, str(i)) for i in range(4)])
+        self.assertEqual(result["stop_reason"], "no_progress_limit")
+        reads = self.audits()[0]["tool_calls"]
+        self.assertTrue(all(r["result"]["status"] == "ok" for r in reads))
+        self.assertEqual([r["read_progress"] for r in reads], [True, False, False, False])
+
+    def test_new_material_resets_empty_search_no_progress(self):
+        self.run_script("查月租", [
+            tool("search_info_units", {"query": "不存在凭证甲"}, "empty-a"),
+            tool("search_info_units", {"query": "不存在凭证乙"}, "empty-b"),
+            tool("search_info_units", {"query": "月租"}, "new"),
+            tool("search_info_units", {"query": "不存在凭证丙"}, "empty-c"),
+            tool("search_info_units", {"query": "不存在凭证丁"}, "empty-d"), finish("查月租")])
+        self.assertEqual([t["no_progress"] for t in self.audits()[0]["tool_calls"]], [1, 2, 0, 1, 2, 0])
+
+    def test_new_relation_and_source_each_reset_no_progress(self):
+        self.run_script("比较依据", [
+            tool("search_info_units", {"query": "不存在凭证甲"}, "empty-a"),
+            tool("search_info_units", {"query": "不存在凭证乙"}, "empty-b"),
+            tool("get_relations", {"info_unit_ids": ["U029"], "relation_types": ["contradict"]}, "relation"),
+            tool("search_info_units", {"query": "不存在凭证丙"}, "empty-c"),
+            tool("search_info_units", {"query": "不存在凭证丁"}, "empty-d"),
+            tool("get_evidence", {"info_unit_ids": ["U029"]}, "source"), finish("比较依据")])
+        reads = self.audits()[0]["tool_calls"]
+        self.assertEqual([r["no_progress"] for r in reads], [1, 2, 0, 1, 2, 0, 0])
+        self.assertTrue(reads[2]["read_progress"])
+        self.assertTrue(reads[5]["read_progress"])
+
+    def large_material_case(self):
+        case = self.case.model_copy(deep=True)
+        seed = case.info_units[0]
+        case.info_units = [seed.model_copy(update={"id": f"large-{i}", "title": label + "长"*3400,
+            "content": "节点内容", "source_refs": []}) for i, label in enumerate(("首个条件", "第二条件"))]
+        case.relations = []
+        context = {"current_issue": self.case.issue_set[1], "canvas": {
+            "info_units": [tools._summary(u) for u in case.info_units], "relations": []}}
+        return case, context
+
+    def test_omitted_seen_node_and_cached_search_restore_visible_material(self):
+        case, context = self.large_material_case()
+        result, calls = self.run_script("比较条件", [tool("search_info_units", {"query": "第二条件"}),
+            tool("search_info_units", {"query": "首个条件"}, "restore-first"),
+            tool("search_info_units", {"query": "第二条件"}, "restore-cached"), finish("比较条件")],
+            case=case, work_context=context)
+        views = [json.loads(c["messages"][1]["content"])["materials"]["info_units"] for c in calls]
+        self.assertEqual([[r["id"] for r in v["items"]] for v in views],
+            [["large-0"], ["large-1"], ["large-0"], ["large-1"]])
+        self.assertTrue(all(v["context_truncated"] for v in views))
+        reads = self.audits()[0]["tool_calls"][:3]
+        self.assertTrue(reads[-1]["result"]["cached"])
+        self.assertEqual([r["no_progress"] for r in reads], [0, 0, 0])
+        self.assertEqual(result["stop_reason"], "finish_investigation")
+
+    def test_empty_read_cannot_gain_progress_by_reordering_existing_memory(self):
+        case, context = self.large_material_case()
+        result, calls = self.run_script("比较条件", [tool("get_evidence", {"info_unit_ids": [f"large-{i}"]}, str(n))
+            for n, i in enumerate((1, 0, 1))], case=case, work_context=context)
+        views = [json.loads(c["messages"][1]["content"])["materials"]["info_units"] for c in calls]
+        self.assertNotEqual(views[0]["items"], views[1]["items"])
+        self.assertEqual(result["stop_reason"], "no_progress_limit")
+        self.assertEqual([t["no_progress"] for t in self.audits()[0]["tool_calls"]], [1, 2, 3])
 
     def test_plain_prose_requires_delivery_but_does_not_become_accepted_answer(self):
         result, calls = self.run_script("介绍能力", [final("尚未提交的回答"), finish("介绍能力", status="completed", basis="general", answer="可检索并核对案件材料。")])

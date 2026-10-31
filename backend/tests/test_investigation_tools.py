@@ -106,6 +106,24 @@ class TestInvestigationTools(unittest.TestCase):
         self.assertEqual(search_info_units(self.case, "实际 损失"),
                          search_info_units(self.case, "实际 实际，损失"))
 
+    def test_search_excludes_visible_nodes_before_limit_and_has_more(self):
+        case = self.case.model_copy(deep=True)
+        seed = case.info_units[0]
+        case.info_units = [seed.model_copy(update={"id": f"search-{i}", "title": "独立检索条件",
+            "content": "相同条件的材料"}) for i in range(6)]
+        excluded = {"search-0", "search-1"}
+        result = search_info_units(case, "独立检索条件", limit=2, exclude_info_unit_ids=excluded)
+        self.assert_result(result, "truncated")
+        self.assertEqual([r["id"] for r in result["items"]], ["search-2", "search-3"])
+        excluded.update(["search-2", "search-3"])
+        result = search_info_units(case, "独立检索条件", limit=2, exclude_info_unit_ids=excluded)
+        self.assert_result(result, "ok")
+        self.assertEqual([r["id"] for r in result["items"]], ["search-4", "search-5"])
+        excluded.update(["search-4", "search-5"])
+        self.assert_result(search_info_units(case, "独立检索条件", exclude_info_unit_ids=excluded), "empty")
+        # Caller exclusions do not change standalone tool calls or case records.
+        self.assertEqual(len(search_info_units(case, "独立检索条件", limit=8)["items"]), 6)
+
     def test_search_nfkc_and_casefold(self):
         case = self.case.model_copy(deep=True)
         case.info_units[0].content = "材料记载ＡＢＣ付款事项。"

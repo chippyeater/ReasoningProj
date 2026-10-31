@@ -73,11 +73,12 @@ def tool_definitions() -> list[dict]:
     limit = {"type": ["integer", "null"], "minimum": 1, "maximum": tools.MAX_LIMIT}
     definitions = [
         _function("search_info_units", (
-            "在当前案件的全部 InfoUnit 中按关键词查找相关信息，返回匹配节点的 ID、标题、类型和内容摘要。"
-            "可直接输入查询关键词，从尚未查看过的案件信息中发现相关节点。\n\n"
-            "查询匹配 InfoUnit 的标题和内容，多个关键词采用 OR 匹配。根据返回的节点 ID，"
-            "可以进一步使用 get_relations 探索相关信息，或使用 get_evidence 核对原始来源。"
-            "结果中的 has_more 表示存在更多匹配节点。"
+            "在当前案件的 InfoUnit 标题和内容中按关键词查找，多个关键词采用 OR 匹配。"
+            "每次围绕一个明确的信息需求查询，避免混合不同主题的关键词。"
+            "返回 ID、标题、类型、子类型、最多120字符的内容摘要、陈述者及截断标记；默认5条、最多8条。"
+            "后端排除当前 materials.info_units 已可见的节点，因上下文省略的材料仍可重新取得。"
+            "取得的内容可用于探索性假设和证据缺口；按需用 get_relations 探索关系或 get_evidence 核对原始来源。"
+            "has_more 仅表示排除后仍有未返回的匹配节点，无需穷尽；仅当仍缺影响当前判断的信息时继续针对性检索。"
         ), {
             "query": {"type": "string", "minLength": 1, "maxLength": tools.MAX_QUERY_CHARS},
             "types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in InfoUnitType]}},
@@ -93,8 +94,10 @@ def tool_definitions() -> list[dict]:
         }),
         _function("get_evidence", (
             "根据已知 InfoUnit ID，读取对应来源材料中的原始引用及其文件位置，"
-            "用于核对具体记载、时间、陈述主体和上下文。节点 ID 可以来自初始上下文、"
-            "search_info_units 或 get_relations 的结果。"
+            "用于按需核对具体措辞、时间、金额、陈述主体和上下文。"
+            "已有 InfoUnit 内容足以形成探索性 Hypothesis 或 Evidence Gap 时可直接提出，无需逐条读取原文。"
+            "Evidence Link 和 Hypothesis Status 需要有效来源引用，可使用初始已提供的 SourceRef 或本工具结果。"
+            "节点 ID 可以来自初始上下文、search_info_units 或 get_relations 的结果。"
         ), {
             "info_unit_ids": ids,
         }),
@@ -187,12 +190,16 @@ def _arguments(name: str, raw: str) -> dict:
     return args
 
 
-def _fingerprint(name: str, args: dict) -> str:
+def _fingerprint(name: str, args: dict, *, visible_info_unit_ids=frozenset()) -> str:
     normalized = deepcopy(args)
     if name == "search_info_units" and isinstance(args.get("query"), str):
         normalized["query"] = sorted(set(re.findall(r"\w+", tools._normalized(args["query"]))))
     if name == "search_info_units" and normalized.get("types") is None:
         normalized["types"] = [kind.value for kind in InfoUnitType]
+    if name == "search_info_units":
+        # Search results depend on current visibility, including on cache hits.
+        # An omitted old node may be read again; a visible cached hit is excluded.
+        normalized["exclude_info_unit_ids"] = sorted(visible_info_unit_ids)
     if name == "get_relations" and normalized.get("relation_types") is None:
         normalized["relation_types"] = [kind.value for kind in RelationType]
     # Evidence order affects which complete references fit the bounded prefix.
@@ -203,6 +210,12 @@ def _fingerprint(name: str, args: dict) -> str:
         if isinstance(normalized.get(field), list):
             normalized[field] = sorted(normalized[field], key=lambda value: json.dumps(value, sort_keys=True))
     return name + ":" + json.dumps(normalized, ensure_ascii=False, sort_keys=True)
+
+
+def _material_keys(materials: dict) -> set[tuple[str, str]]:
+    """Compare material identity, not ordering, notices or acquisition counters."""
+    return {(kind, KnowledgeState.ref_key(row) if kind == "source_refs" else row["id"])
+            for kind, section in materials.items() for row in section["items"]}
 
 
 def _remember(name: str, result: dict, seen: dict) -> None:
@@ -496,6 +509,7 @@ async def run_investigation(case: CaseData, goal: str,
                 return stopped("model_budget_exhausted")
             available = [d for d in tool_definitions() if used[bucket(d["function"]["name"])] < limits[bucket(d["function"]["name"])]]
             state = model_context(initial_input, knowledge, recovery)
+            visible_units = frozenset(row["id"] for row in state["materials"]["info_units"]["items"])
             request_messages = [{"role": "system", "content": prompt.content},
                                 {"role": "user", "content": json.dumps(state, ensure_ascii=False)}]
             choice = "required" if recovery and recovery.get("code") == "finish_required" else "auto"
@@ -538,8 +552,10 @@ async def run_investigation(case: CaseData, goal: str,
                     metadata={"tool_name": name if category else "unsupported_tool", "attempt": attempts}) as tool_span:
                 try:
                     args = _arguments(name, raw)
-                    fingerprint = _fingerprint(name, args)
+                    fingerprint = _fingerprint(name, args, visible_info_unit_ids=visible_units)
                     tool_audit["arguments"] = deepcopy(args)
+                    if name == "search_info_units":
+                        tool_audit["excluded_info_unit_ids"] = sorted(visible_units)
                     if not permitted:
                         raise AppError("tool_budget_exhausted", "This tool budget is exhausted; choose a remaining tool or finish")
                     prior = fingerprints.get(fingerprint)
@@ -551,7 +567,8 @@ async def run_investigation(case: CaseData, goal: str,
                         tool_audit["executed"] = True
                         executed += 1
                         if name in READ_TOOLS:
-                            response = getattr(tools, name)(bound_case, **args)
+                            internal = {"exclude_info_unit_ids": visible_units} if name == "search_info_units" else {}
+                            response = getattr(tools, name)(bound_case, **args, **internal)
                             if response["status"] not in {"error", "invalid_request"}:
                                 _remember(name, response, seen)
                         elif name in actions.PROPOSAL_TOOLS:
@@ -582,7 +599,6 @@ async def run_investigation(case: CaseData, goal: str,
                         fingerprints[fingerprint] = {"successful": False, "state": signature}
                 _tool_recovery(response, name)
                 failed = response["status"] in {"invalid_request", "error"}
-                no_progress = no_progress + 1 if failed or response.get("cached") else 0
                 recovery = deepcopy(response["error"]) if failed else None
                 if recovery:
                     recovery["tool"] = name
@@ -596,12 +612,18 @@ async def run_investigation(case: CaseData, goal: str,
                         details["omitted_error_count"] = len(errors) - 8
                 if response.get("has_more"):
                     limitations.append(f"{name}: truncated result; additional material may remain.")
-                knowledge.merge(name, args, response, executed=tool_audit["executed"])
-                if response.get("cached") and model_context(initial_input, knowledge, recovery)["materials"] != state["materials"]:
-                    no_progress = 0  # Restoring an omitted material is useful work.
+                merged_keys = knowledge.merge(name, args, response, executed=tool_audit["executed"])
+                read_progress = name in READ_TOOLS and not failed and bool(
+                    merged_keys & (_material_keys(model_context(initial_input, knowledge, recovery)["materials"])
+                    - _material_keys(state["materials"])))
+                progressed = read_progress if name in READ_TOOLS else not failed and not response.get("cached")
+                no_progress = 0 if progressed else no_progress + 1
+                tool_audit.update(read_progress=bool(read_progress), no_progress=no_progress)
                 tool_audit["result"] = deepcopy(response)
                 tool_audit["information_acquisition"] = knowledge.acquisition()
-                tool_span.update(output=response, metadata={"information_acquisition": knowledge.acquisition()})
+                tool_span.update(output=response, metadata={"information_acquisition": knowledge.acquisition(),
+                    "read_progress": bool(read_progress), "no_progress": no_progress,
+                    **({"excluded_info_unit_ids": sorted(visible_units)} if name == "search_info_units" else {})})
             persist()
             if finished:
                 stop_reason = "finish_investigation"
