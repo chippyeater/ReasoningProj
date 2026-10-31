@@ -46,7 +46,7 @@ def _propose(case, seen, context, proposals, kind, **values):
 
 
 def propose_hypothesis(case, seen, context, proposals, *, content, rationale, info_unit_ids, evidence_refs):
-    """Propose a testable explanation, pending user approval, never verified by default. Exploratory hypotheses may use empty info_unit_ids/evidence_refs; explain uncertainty in rationale. Cite validated initial source_refs or get_evidence results when available; source location alone does not prove the hypothesis."""
+    """Propose a testable explanation, pending user approval, never verified by default. Obtained InfoUnit content can support exploratory reasoning without get_evidence; evidence_refs may be empty. If no direct material exists info_unit_ids may also be empty; explain uncertainty in rationale. Cite validated initial source_refs or get_evidence results when available; source location alone does not prove the hypothesis."""
     return _propose(case, seen, context, proposals, "hypothesis", content=content, rationale=rationale,
                     info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
 
@@ -61,7 +61,7 @@ def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info
 
 def propose_evidence_gap(case, seen, context, proposals, *, content, hypothesis_ids, hypothesis_proposal_ids,
                          rationale, info_unit_ids, evidence_refs):
-    """Propose a discriminating unresolved question linked to existing Hypotheses or this run's returned Hypothesis proposal IDs. May use empty info_unit_ids/evidence_refs when no direct evidence exists; describe what is missing, not a proven fact."""
+    """Propose one specific, independently verifiable missing fact or condition. State what must be confirmed and why it affects the Hypotheses, with a concrete evidence action or material type. Split independently useful conditions into separate Gaps; several materials checking the same condition can share one Gap. Do not bundle a new lease, payment records, move-out proof and expense receipts into a broad request. A shared Gap may link multiple competing existing Hypothesis IDs or this run's returned Hypothesis proposal IDs; explain how it distinguishes them rather than duplicate it for each. Obtained InfoUnit content is sufficient for an exploratory Gap without get_evidence; evidence_refs may be empty, as may info_unit_ids when no direct material exists. Describe uncertainty, not a proven fact."""
     return _propose(case, seen, context, proposals, "evidence_gap", content=content, hypothesis_ids=hypothesis_ids,
                     hypothesis_proposal_ids=hypothesis_proposal_ids, rationale=rationale,
                     info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
