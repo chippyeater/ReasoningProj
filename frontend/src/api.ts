@@ -399,7 +399,9 @@ export type ReasoningEdit = { issue: string; hypothesis?: { id?: string; content
 export type IssueCanvas = V03WorkspaceState & { visible_node_ids: string[] };
 export type IssueWorkspaces = {
   active_issue: string | null;
-  workspaces: Record<string, { status: IssueStatus; canvas: IssueCanvas; reasoning: ReasoningState }>;
+  investigation_baseline_info_unit_ids: string[];
+  workspaces: Record<string, { status: IssueStatus; canvas: IssueCanvas; reasoning: ReasoningState;
+    investigation_info_unit_ids: string[] }>;
 };
 
 export async function editIssueReasoning(caseId: string, edit: ReasoningEdit): Promise<{ workspaces: IssueWorkspaces; object_id: string }> {
