@@ -4,7 +4,7 @@
 
 ## 执行和交付
 
-只有一个工具调用循环。首轮即提供 `search_info_units`、`get_relations`、`get_evidence`、四个 `propose_*` 工具及 `finish_investigation`，原生 `tool_choice=auto`。没有规划阶段、Question/InvestigationStep 模型、更新工具或关联参数。读取范围、工具顺序、Proposal 数量和结束时机由 Goal 与读取结果决定。
+只有一个工具调用循环。首轮即提供 `search_info_units`、`get_relations`、`get_evidence`、五个 `propose_*` 工具及 `finish_investigation`，原生 `tool_choice=auto`。没有规划阶段、Question/InvestigationStep 模型、计划更新工具或关联参数。读取范围、工具顺序、Proposal 数量和结束时机由 Goal 与读取结果决定。
 
 通过 finish 交付 `answer`、`answer_basis`、可选内容的 `findings`、`open_questions` 和 `completion_status`。空 Findings/Proposal 合法。answer_basis 为 general（能力/通用回答）、case_metadata（可靠案件统计）或 case_material（案件判断）；它描述答复依据，不创建另一条执行流程。涉及案件依据的成果必须选择 case_material。目录不授予材料或引用权限；尚无材料/有效读取结果时，案件判断返回可恢复错误。实际 empty、读取 error、空案件或预算限制可以支持明确的证据不足说明，不能证明事实。后端不以关键词猜测 Goal，也不能独立证明自然语言任务已经充分覆盖。
 
@@ -20,6 +20,8 @@ Findings、Proposal 引用须属于当前案件并实际取得；初始选中/Is
 
 Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成依据，来源引用只能指向已取得的这些节点；不接受 `addressing_info_unit_ids`。正式 Gap 的回应列表初始为空，后续通过现有工作区编辑接口追加去重，材料关联不自动解决 Gap 或改变假设判断。上下文分别提供形成依据、回应材料及各自截断标记；这些引用本身不授予材料读取权限。Hypothesis、Evidence Link、Hypothesis Status 的 `info_unit_ids` 语义保持不变。已保存工作区的一次性迁移见 `docs/issue_reasoning.md`。
 
+`propose_evidence_gap_update` 指定当前 Issue 已提供的 `gap_id`、1–5 个已取得的 `addressing_info_unit_ids`、建议 `status` 和已取得的来源引用。用户采纳前核对目标 Gap revision 与材料哈希，再复用 Gap 编辑入口追加去重回应材料和应用建议状态；保留原 ID、内容、形成依据、Hypothesis 关联。部分回应保持 open，不强制变更 Hypothesis judgment；只有独立的新条件才创建新 Gap。同一建议重复采纳幂等，无实际数据变化不递增 revision。
+
 ## 每轮上下文
 
 Issue 的调查候选范围独立于 Canvas：`IssueWorkspace.investigation_info_unit_ids` 保存已登记的 InfoUnit；历史缺省时从原 `canvas.visible_node_ids` 中的 InfoUnit 初始化。`IssueWorkspaces.investigation_baseline_info_unit_ids` 固定记录初始化时已有节点，用来区分原先排除的旧材料和后来新增的材料。新建 Workspace 仍按 `related_issue == issue` 初始化。
@@ -28,11 +30,16 @@ Extraction 在提交 CaseData 前初始化已有 Workspace 的基线；初始化
 
 该过程不修改 Canvas 的可见节点、布局、层级、视口、选择、Focus 或当前视图。候选仍按选中项、Focus 和 Goal 相关性排序，初始最多8个 InfoUnit、12条两端均在已选材料中的 Relation，截断标志按独立调查范围计算。目录和既有只读工具能力保持原有边界。
 
+另从案件索引中最近成功提交的 Extraction 输入快照读取 `selected_file_ids`（早期快照读取 `model_input.files[].file_id`），按 SourceRef 找出本批涉及的全部节点，包括旧 ID 追加新来源。失败/未提交运行不算新批次，人工历史基线不当作新增材料；无法读取最新范围时明确返回 unavailable，不猜测或静默回退到旧批次。本批材料作为临时候选补充，不修改持久 Issue 归属或 Canvas，也不因 related_issue 缺失或不同而排除。选中/Focus 优先后优先本批材料，再按 Goal 排序，仍共享8个节点上限；由 Agent 对照当前 Issue 的 Gap/Hypothesis 判断相关性。
+
+`recent_extraction` 提供 run_id、有界文件 ID（最多20个）和计数、实际提供的本批节点与来源指针、明确省略标记。首轮仍最多8个来源片段、每节点1条、每条160字符；优先本批 SourceRef，并从缓存 TXT 独立核验该精确位置，旧节点的新来源也可进入首轮。`get_evidence` 本身的返回顺序、预算和无分页契约保持不变。
+
 只发送 System Prompt 与一个动态 JSON User Message，不重复附带上一轮 Assistant/Tool 消息。动态字段：
 
 - `goal`、`current_issue`、必要案件背景 `core_issue`。
 - `case_info_directory`：总数、稳定 ID、标题、类型、截断及省略数量；按 ID 确定排序，最多80项、条目累计6000字符，标题最多120字符。
 - `materials.info_units/relations/source_refs`：本轮实际取得的去重工具投影，各自带 `items/context_truncated/omitted_ids`。
+- `recent_extraction`：最近成功批次的范围和来源指针，不替代 materials 中的内容或来源校验。
 - `reasoning`：当前 Issue 中相关的正式假设、缺口和证据关联，保留用户判断、弃用/解决状态，不发送修订号、时间戳和显示布局。
 - `proposals`：本轮成功提交的完整提案，保留实际返回 ID 和依赖。
 - `notices` 与 `recovery`：必要的空结果、截断范围、来源限制和当前错误。
