@@ -69,8 +69,9 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
       {target.kind === "gap" ? <>
         <label>缺口状态<select aria-label="缺口状态" value={gapStatus} onChange={event => setGapStatus(event.target.value as typeof gapStatus)}><option value="open">未解决</option><option value="resolved">已解决</option></select></label>
         <fieldset><legend>关联假设（至少一个）</legend>{state.hypotheses.map(item => <label key={item.id}><input type="checkbox" checked={hypothesisIds.includes(item.id)} onChange={() => setHypothesisIds(toggle(hypothesisIds, item.id))} />{item.content}</label>)}</fieldset>
-        <details><summary>缺口形成依据（可选）</summary>{caseData.info_units.map(item => <label key={item.id}><input type="checkbox" checked={infoIds.includes(item.id)} onChange={() => setInfoIds(toggle(infoIds, item.id))} />{item.title}
-          {infoIds.includes(item.id) ? <button type="button" onClick={() => onLocate(item.id)}>定位信息</button> : null}</label>)}</details>
+        <details><summary>缺口形成依据（可选）</summary>{caseData.info_units.map(item => <div key={item.id} className="gap-basis-item">
+          <label><input type="checkbox" checked={infoIds.includes(item.id)} onChange={() => setInfoIds(toggle(infoIds, item.id))} />{item.title}</label>
+          {infoIds.includes(item.id) ? <button type="button" onClick={() => onLocate(item.id)}>定位信息</button> : null}</div>)}</details>
         <section aria-label="用于回应缺口的信息"><h3>用于回应缺口的信息</h3>
           {gap?.addressing_info_unit_ids.length ? gap.addressing_info_unit_ids.map(id =>
             <button type="button" key={id} onClick={() => onLocate(id)}>{unitTitle(id)}</button>) : <p>尚未关联回应材料。</p>}

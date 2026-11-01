@@ -59,13 +59,63 @@ class TestGapReferences(unittest.TestCase):
         self.assertEqual(gap.basis_info_unit_ids, ["U029"])
         self.assertEqual(gap.addressing_info_unit_ids, ["U026", "U027"])
         self.assertEqual(gap.status, "open")
-        self.assertEqual(gap.revision, 4)
+        self.assertEqual(gap.revision, 3)
         hypotheses = get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses
         self.assertEqual(hypotheses[0].judgment, "verified")
         self.assertEqual(self.update_gap(status="resolved").status_code, 200)
         self.assertEqual(self.update_gap(addressing_info_unit_ids=["U004"]).status_code, 200)
         self.assertEqual(self.gap().status, "resolved")
         self.assertEqual(self.gap().addressing_info_unit_ids, ["U026", "U027", "U004"])
+
+    def test_duplicate_and_empty_addressing_preserve_versions_and_pending_proposal(self):
+        self.create_gap()
+        self.assertEqual(self.update_gap(addressing_info_unit_ids=["U026"]).status_code, 200)
+        hid = self.gap().hypothesis_ids[0]
+        result, _ = proposal_fixture.TestReasoningProposals.investigate(self, [suggestion("hypothesis_status", hid)])
+        self.assertEqual(result.status_code, 200, result.text)
+        path = case_dir(self.case.case_id) / "issue_workspaces.json"
+        before = path.read_bytes()
+        for ids in (["U026"], [], ["U026", "U026"], []):
+            with self.subTest(ids=ids):
+                self.assertEqual(self.update_gap(addressing_info_unit_ids=ids).status_code, 200)
+                # Includes Gap/Hypothesis revision, timestamps, editors and judgments.
+                self.assertEqual(path.read_bytes(), before)
+        adopted = proposal_fixture.TestReasoningProposals.accept(self, result.json()["run_id"])
+        self.assertEqual(adopted.status_code, 200, adopted.text)
+        self.assertEqual(self.gap().status, "open")
+        self.assertEqual(self.update_gap(status="resolved").status_code, 200)
+        before = path.read_bytes()
+        self.assertEqual(self.update_gap(addressing_info_unit_ids=["U026"]).status_code, 200)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.gap().status, "resolved")
+
+    def test_new_addressing_or_content_change_increments_each_revision_once(self):
+        self.create_gap()
+        self.update_gap(addressing_info_unit_ids=["U026"])
+        for values in ({"addressing_info_unit_ids": ["U026", "U027", "U027"]},
+                       {"addressing_info_unit_ids": ["U026", "U027"], "content": "计租起点能否覆盖搬离当日？"}):
+            with self.subTest(values=values):
+                before = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+                self.assertEqual(self.update_gap(**values).status_code, 200)
+                after = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+                self.assertEqual(after.gaps[0].revision, before.gaps[0].revision + 1)
+                self.assertEqual(after.hypotheses[0].revision, before.hypotheses[0].revision + 1)
+                self.assertNotEqual(after.gaps[0].updated_at, before.gaps[0].updated_at)
+                self.assertEqual(after.hypotheses[0].judgment, "unverified")
+                self.assertEqual(after.gaps[0].status, "open")
+        self.assertEqual(self.gap().addressing_info_unit_ids, ["U026", "U027"])
+        self.assertEqual(self.gap().content, "计租起点能否覆盖搬离当日？")
+
+    def test_empty_noop_preserves_accepted_gap_editor_and_timestamp(self):
+        hid = self.hypothesis()
+        result, _ = proposal_fixture.TestReasoningProposals.investigate(self, [suggestion("evidence_gap", hid)])
+        adopted = proposal_fixture.TestReasoningProposals.accept(self, result.json()["run_id"])
+        self.assertEqual(adopted.status_code, 200, adopted.text)
+        self.assertEqual(self.gap().last_edited_by, "agent_accepted")
+        path = case_dir(self.case.case_id) / "issue_workspaces.json"
+        before = path.read_bytes()
+        self.assertEqual(self.update_gap(addressing_info_unit_ids=[]).status_code, 200)
+        self.assertEqual(path.read_bytes(), before)
 
     def test_roles_overlap_only_by_explicit_operation_and_basis_remains_editable(self):
         self.create_gap()

@@ -46,7 +46,12 @@ def edit_reasoning(case: CaseData, edit: ReasoningEdit, *, proposal_key: str | N
                     values["status"] = existing.status
             elif draft.addressing_info_unit_ids:
                 raise AppError("gap_addressing_requires_existing", "Create the Gap before adding addressing material")
-        if edit.link:
+        # Compare the final merged data, not the submitted append list or editor.
+        unchanged_gap = bool(edit.gap and existing and all(values[field] == getattr(existing, field) for field in (
+            "content", "hypothesis_ids", "basis_info_unit_ids", "addressing_info_unit_ids", "status")))
+        if unchanged_gap:
+            obj = existing
+        elif edit.link:
             if any(link.hypothesis_id == draft.hypothesis_id and link.info_unit_id == draft.info_unit_id
                    and link.id != draft.id for link in collection):
                 raise AppError("duplicate_evidence_link", "This InfoUnit is already linked to the Hypothesis", 409)
@@ -55,11 +60,12 @@ def edit_reasoning(case: CaseData, edit: ReasoningEdit, *, proposal_key: str | N
         else:
             values.update(revision=existing.revision + 1 if existing else 1, updated_at=now)
             obj = (Hypothesis if edit.hypothesis else EvidenceGap)(**values)
-        if existing:
-            collection[collection.index(existing)] = obj
-        else:
-            collection.append(obj)
-        if edit.link or edit.gap:
+        if not unchanged_gap:
+            if existing:
+                collection[collection.index(existing)] = obj
+            else:
+                collection.append(obj)
+        if (edit.link or edit.gap) and not unchanged_gap:
             affected = {obj.hypothesis_id} if edit.link else set(obj.hypothesis_ids)
             if existing:
                 affected.update([existing.hypothesis_id] if edit.link else existing.hypothesis_ids)

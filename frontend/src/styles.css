@@ -2504,6 +2504,8 @@ button,
 .reasoning-editor label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .reasoning-editor input[type=checkbox] { width: auto; }
 .reasoning-editor fieldset label, .reasoning-editor details label { flex-direction: row; align-items: center; margin: 8px 0; }
+.reasoning-editor .gap-basis-item { display: flex; align-items: center; gap: 6px; margin: 8px 0; font-size: 13px; }
+.reasoning-editor .gap-basis-item label { margin: 0; }
 .reasoning-editor textarea { min-height: 85px; width: 100%; resize: vertical; }
 .reasoning-editor select { width: 100%; }
 .reasoning-editor header, .reasoning-editor footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }

@@ -77,13 +77,27 @@ const api = 'http://127.0.0.1:8018';
     await editor.getByLabel('缺口问题', { exact: true }).fill('是否存在替租人的实际入住记录和新租约？');
     await editor.getByLabel('房东可能没有实际空置损失，仍需核对。', { exact: true }).check();
     await editor.getByText('缺口形成依据（可选）', { exact: true }).click();
-    await editor.getByLabel(before.info_units.find(u => u.id === 'U026').title, { exact: true }).check();
+    const basisCheckbox = editor.getByLabel(before.info_units.find(u => u.id === 'U026').title, { exact: true });
+    await basisCheckbox.check();
+    assert.equal(await basisCheckbox.isChecked(), true);
+    assert.equal(await editor.locator('label button').count(), 0);
+    await basisCheckbox.uncheck();
+    assert.equal(await basisCheckbox.isChecked(), false);
+    assert.equal(await editor.getByRole('button', { name: '定位信息', exact: true }).count(), 0);
+    await basisCheckbox.check();
     await save();
     work = await current();
     const gap = work.reasoning.gaps.at(-1);
     assert.deepEqual([...gap.hypothesis_ids].sort(), [h1, h2].sort());
     assert.deepEqual(gap.basis_info_unit_ids, ['U026']);
     assert.deepEqual(gap.addressing_info_unit_ids, []);
+    await page.locator(`[data-node-id="${gap.id}"]`).getByRole('button', { name: '查看与编辑' }).click();
+    await editor.getByText('缺口形成依据（可选）', { exact: true }).click();
+    assert.equal(await basisCheckbox.isChecked(), true);
+    assert.equal(await editor.locator('label button').count(), 0);
+    await editor.getByRole('button', { name: '定位信息', exact: true }).click();
+    await editor.waitFor({ state: 'hidden' }); await saved();
+    await page.locator('[data-node-id="U026"].node-selected').waitFor();
     // Addressing material accumulates through the existing API, independently
     // of the editable basis and without automatically resolving the Gap.
     const editUrl = `${api}/api/cases/${before.case_id}/issue-reasoning`;
