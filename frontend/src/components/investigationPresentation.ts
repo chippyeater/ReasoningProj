@@ -1,6 +1,19 @@
-import type { AgentResult, InfoUnit, Relation, ReasoningState } from "../api";
+import type { AgentResult, InfoUnit, Relation, ReasoningProposal, ReasoningState } from "../api";
 
 type Evidence = AgentResult["evidence"][number];
+
+export function proposalInfoUnitIds(item: ReasoningProposal) {
+  return item.kind === "evidence_gap" ? item.basis_info_unit_ids
+    : item.kind === "evidence_gap_update" ? item.addressing_info_unit_ids : item.info_unit_ids;
+}
+
+export function gapUpdatePreview(item: ReasoningProposal, state: ReasoningState) {
+  if (item.kind !== "evidence_gap_update") return null;
+  const gap = state.gaps.find(g => g.id === item.gap_id);
+  return { targetId: item.gap_id, title: gap?.content ?? "原缺口已不可用", missing: !gap,
+    statusText: `建议状态：${item.status === "open" ? "开放" : "已解决"}`,
+    hypothesisTitles: (gap?.hypothesis_ids ?? []).map(id => state.hypotheses.find(h => h.id === id)?.content ?? "关联假设") };
+}
 
 export function proposalKey(result: Pick<AgentResult, "run_id" | "proposals">, index: number) {
   return `${result.run_id}:${result.proposals?.[index]?.proposal_id ?? index}`;
@@ -62,7 +75,7 @@ export function displayText(text: string, units: Pick<InfoUnit, "id" | "title">[
   const labels = new Map(units.map(unit => [unit.id, unit.title]));
   for (const [key, value] of Object.entries({ search_info_units: "资料检索", get_relations: "关联核查", get_evidence: "原文核查",
     propose_hypothesis: "假设建议", propose_evidence_link: "证据关联建议", propose_evidence_gap: "缺口建议",
-    propose_hypothesis_status: "判断调整建议", present_findings: "发现展示",
+    propose_hypothesis_status: "判断调整建议", propose_evidence_gap_update: "已有缺口更新", present_findings: "发现展示",
     truncated: "部分材料尚未核查", invalid_request: "查询条件需要调整", error: "查询未能完成" })) labels.set(key, value);
   for (const ref of evidence) labels.set(ref.file_id, ref.filename);
   for (const relation of relations) labels.set(relation.id, "相关关系");

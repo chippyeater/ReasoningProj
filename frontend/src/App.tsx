@@ -42,7 +42,7 @@ import {
 } from "./api";
 import { ReasoningEditor, judgments, meanings, type ReasoningEditorTarget } from "./components/ReasoningEditor";
 import { ReasoningSuggestions, reasoningText } from "./components/ReasoningSuggestions";
-import { candidateNodeId, evidenceLinkPreview, hypothesisProposalTargets, proposalKey } from "./components/investigationPresentation";
+import { candidateNodeId, evidenceLinkPreview, gapUpdatePreview, hypothesisProposalTargets, proposalInfoUnitIds, proposalKey } from "./components/investigationPresentation";
 import { InvestigationResultPanel } from "./components/InvestigationResultPanel";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
@@ -3287,22 +3287,24 @@ export default function App() {
               {candidateProposals.map(({ item, index }) => {
                 const pending = agentResult ? hypothesisProposalTargets(agentResult, reasoning, index).some(target => !target.accepted) : false;
                 const link = agentResult ? evidenceLinkPreview(agentResult, reasoning, index) : null;
+                const update = gapUpdatePreview(item, reasoning);
                 return <article key={`candidate-${index}`} className="reasoning-candidate"
                 data-proposal-index={index}
                 data-node-id={agentResult ? candidateNodeId(agentResult, index) : undefined}
                 ref={element => { if (agentResult) nodeElementRefs.current[candidateNodeId(agentResult, index)] = element; }}
                 aria-label="候选推理建议" style={{ left: candidatePositions[index]?.x, top: candidatePositions[index]?.y }}
                 onMouseDown={event => event.stopPropagation()} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
-                <strong>Agent 候选 · {item.kind === "hypothesis" ? "假设" : item.kind === "evidence_gap" ? "证据缺口" : item.kind === "evidence_link" ? meanings[item.meaning!] : "判断建议"}</strong>
-                <p>{link ? `「${currentCase?.info_units.find(u => u.id === link.sourceId)?.title ?? "相关材料"}」→「${currentCase ? reasoningText(link.title, currentCase, reasoning) : link.title}」`
+                <strong>Agent 候选 · {update ? "更新已有缺口" : item.kind === "hypothesis" ? "假设" : item.kind === "evidence_gap" ? "证据缺口" : item.kind === "evidence_link" ? meanings[item.meaning!] : "判断建议"}</strong>
+                <p>{update ? update.title : link ? `「${currentCase?.info_units.find(u => u.id === link.sourceId)?.title ?? "相关材料"}」→「${currentCase ? reasoningText(link.title, currentCase, reasoning) : link.title}」`
                   : currentCase ? reasoningText(item.content ?? reasoning.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "待确认的推理建议", currentCase, reasoning, agentResult?.evidence) : "待确认建议"}</p>
-                <details id={`candidate-preview-${index}`}><summary>{item.kind === "evidence_gap" ? "预览缺口形成依据" : "预览建议依据"}</summary>
+                {update ? <p>{update.statusText} · 追加回应材料，保留原缺口及关联假设。</p> : null}
+                <details id={`candidate-preview-${index}`}><summary>{update ? "预览缺口回应材料" : item.kind === "evidence_gap" ? "预览缺口形成依据" : "预览建议依据"}</summary>
                   <p>{currentCase ? reasoningText(item.rationale, currentCase, reasoning, agentResult?.evidence) : item.rationale}</p>
-                  {(item.kind === "evidence_gap" ? item.basis_info_unit_ids : item.info_unit_ids).map(id => <button type="button" key={id} onClick={() => locateAgentNode(id)}>定位{currentCase?.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}
+                  {proposalInfoUnitIds(item).map(id => <button type="button" key={id} onClick={() => locateAgentNode(id)}>定位{currentCase?.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}
                 </details>
                 {!item.evidence_refs.length ? <p>尚无直接来源依据，待检验。</p> : null}
                 {pending ? <p>请先采纳关联假设；可在灵动岛查看关联。</p> : null}
-                <span>尚未保存</span><button type="button" disabled={reasoningBusy || pending} onClick={() => void mutateReasoning(undefined, index)}>采纳</button>
+                <span>尚未保存</span><button type="button" disabled={reasoningBusy || pending || update?.missing} onClick={() => void mutateReasoning(undefined, index)}>采纳</button>
                 <button type="button" disabled={reasoningBusy} onClick={() => setDismissedProposals(ids => [...ids, index])}>忽略</button>
               </article>; })}
             </div>

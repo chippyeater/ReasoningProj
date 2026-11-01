@@ -1,6 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupSources, displayText, presentQuestion, hypothesisProposalTargets, evidenceLinkPreview, candidateNodeId } from '../src/components/investigationPresentation.ts';
+import { groupSources, displayText, presentQuestion, hypothesisProposalTargets, evidenceLinkPreview, candidateNodeId,
+  gapUpdatePreview, proposalInfoUnitIds } from '../src/components/investigationPresentation.ts';
+
+test('Gap update previews point to the original Gap and both Hypotheses without changing them', () => {
+  const state = Object.freeze({ gaps: Object.freeze([{ id: 'gap-original', content: '是否实际履行起租约定？',
+    hypothesis_ids: ['h-a', 'h-b'], basis_info_unit_ids: ['old-info'], addressing_info_unit_ids: [] }]),
+    hypotheses: Object.freeze([{ id: 'h-a', content: '实际履行' }, { id: 'h-b', content: '未实际履行' }]) });
+  const proposal = Object.freeze({ kind: 'evidence_gap_update', gap_id: 'gap-original',
+    addressing_info_unit_ids: ['new-contract'], status: 'open' });
+  assert.deepEqual(gapUpdatePreview(proposal, state), { targetId: 'gap-original', title: '是否实际履行起租约定？',
+    missing: false, statusText: '建议状态：开放', hypothesisTitles: ['实际履行', '未实际履行'] });
+  assert.deepEqual(proposalInfoUnitIds(proposal), ['new-contract']);
+  assert.deepEqual(state.gaps[0].basis_info_unit_ids, ['old-info']);
+  assert.deepEqual(state.gaps[0].addressing_info_unit_ids, []);
+});
+
+test('Gap update previews flag a missing target and retain distinct basis/addressing displays', () => {
+  const update = { kind: 'evidence_gap_update', gap_id: 'deleted', addressing_info_unit_ids: ['new'], status: 'resolved' };
+  const preview = gapUpdatePreview(update, { gaps: [], hypotheses: [] });
+  assert.equal(preview.missing, true);
+  assert.equal(preview.title, '原缺口已不可用');
+  assert.equal(preview.statusText, '建议状态：已解决');
+  assert.deepEqual(proposalInfoUnitIds({ kind: 'evidence_gap', basis_info_unit_ids: ['basis'] }), ['basis']);
+  assert.deepEqual(proposalInfoUnitIds({ kind: 'hypothesis', info_unit_ids: ['material'] }), ['material']);
+});
 
 test('Link previews use the exact pending or adopted Hypothesis endpoint in this run', () => {
   const result = { run_id: 'run-a', proposals: [

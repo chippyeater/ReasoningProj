@@ -21,6 +21,16 @@ async def model(config, messages, definitions, schema=None, **kwargs):
     await asyncio.sleep(0.15)
     state = json.loads(messages[1]["content"])
     goal, proposals = state["goal"], state["proposals"]
+    if "补充合同对已有缺口" in goal:
+        uid = state["recent_extraction"]["info_unit_ids"][0]
+        ref = next(ref for ref in state["materials"]["source_refs"]["items"] if ref["info_unit_id"] == uid)
+        if not proposals:
+            return replies.tool("propose_evidence_gap_update", {
+                "gap_id": state["reasoning"]["gaps"][0]["id"], "addressing_info_unit_ids": [uid], "status": "open",
+                "rationale": "合同只约定起租，实际履行和收款尚待核实，故仅部分回应原缺口。",
+                "evidence_refs": [{"info_unit_id": uid, "source_ref_index": ref["source_ref_index"]}]})
+        return replies.finish(goal, [uid], refs=[(uid, ref["source_ref_index"])], status="evidence_insufficient",
+                              questions=["实际履行情况仍未核实。"], answer="补充合同回应了约定部分，仍需实际履行记录；可审阅对原缺口的更新建议。")
     refs = state["materials"]["source_refs"]["items"]
     ids = {r["info_unit_id"] for r in refs}
     if "失败" in goal and "总结失败" not in goal:
@@ -76,6 +86,19 @@ async def model(config, messages, definitions, schema=None, **kwargs):
         questions=["尚缺计租及收款记录以核实是否少收租金。"] if analysis else [])
 
 
+async def extract(config, prompt, model_input, schema):
+    """Real extraction pipeline with deterministic local candidates, no provider request."""
+    file = model_input["files"][0]
+    new = file["filename"] == "new-contract.txt"
+    result = {"core_issue": "租金实际损失", "issue_set": ["租金实际损失"], "info_units": [{
+        "local_id": "lease-record", "type": "state", "subtype": None,
+        "title": "新合同起租约定" if new else "原有租赁陈述",
+        "content": "合同约定起租，实际履行尚未核实。" if new else "当事人称存在租赁履行争议。",
+        "evidence_ids": [file["quote_units"][0]["quote_id"]], "speaker": file["filename"],
+        "side": None, "actor_local_id": None, "target_local_id": None, "related_issue": None}]}
+    return llm_client.LLMReply(json.dumps(result, ensure_ascii=False), {"mock": True})
+
+
 if __name__ == "__main__":
     fixture = fixtures.TestInvestigationTools()
     fixture.setUp()
@@ -88,7 +111,8 @@ if __name__ == "__main__":
         from app.case_service import create_empty_case
         case_store.save_case(create_empty_case("空白测试案件"), set_current=False)
         with patch.dict(os.environ, {"LOGICWEAVER_OBSERVABILITY_ENABLED": "false"}), patch.object(
-                llm_client, "load_config", return_value=replies.CONFIG), patch.object(llm_client, "call_tools", side_effect=model):
+                llm_client, "load_config", return_value=replies.CONFIG), patch.object(llm_client, "call_tools", side_effect=model), patch.object(
+                llm_client, "call_structured", side_effect=extract):
             uvicorn.run(app, host="127.0.0.1", port=8018)
     finally:
         fixture.doCleanups()

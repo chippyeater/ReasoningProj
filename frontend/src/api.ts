@@ -390,6 +390,7 @@ type ProposalFields = {
   proposal_id?: string | null; hypothesis_proposal_ids?: string[]; hypothesis_proposal_indices?: number[] };
 export type ReasoningProposal = ProposalFields & (
   { kind: "evidence_gap"; basis_info_unit_ids: string[] } |
+  { kind: "evidence_gap_update"; gap_id: string; addressing_info_unit_ids: string[]; status: "open" | "resolved" } |
   { kind: "hypothesis" | "evidence_link" | "hypothesis_status"; info_unit_ids: string[] });
 export type ReasoningEdit = { issue: string; hypothesis?: { id?: string; content: string; judgment: Judgment; work_status: "active" | "deprecated" };
   gap?: { id?: string; content: string; hypothesis_ids: string[]; basis_info_unit_ids?: string[];
