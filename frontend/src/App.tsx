@@ -1403,7 +1403,11 @@ export default function App() {
     setExtractionRunning(true);
     setError("");
     try {
-      await runExtraction({ case_id: currentCase.case_id, workflow_id: workflowId });
+      const extracted = await runExtraction({ case_id: currentCase.case_id, workflow_id: workflowId });
+      if (extracted === null) {
+        setError("没有尚未提取的已解析新材料。请先上传新文件。");
+        return;
+      }
       try {
         await runRelation({ case_id: currentCase.case_id, workflow_id: workflowId });
       } catch (relationError) {

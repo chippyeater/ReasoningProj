@@ -1055,14 +1055,13 @@ export async function routeTask(payload: RouteRequestPayload): Promise<RouteResp
   );
 }
 
-export async function runExtraction(payload: ExtractionRunRequest): Promise<ExtractionRunResponse> {
-  return readJson<ExtractionRunResponse>(
-    await fetch(`${API_BASE}/api/extraction/run`, {
+export async function runExtraction(payload: ExtractionRunRequest): Promise<ExtractionRunResponse | null> {
+  const response = await fetch(`${API_BASE}/api/extraction/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    })
-  );
+    });
+  return response.status === 204 ? null : readJson<ExtractionRunResponse>(response);
 }
 
 export async function runRelation(payload: {
