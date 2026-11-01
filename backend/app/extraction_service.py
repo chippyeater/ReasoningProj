@@ -14,6 +14,7 @@ from app.observability import RunTrace
 from app.case_service import now_iso
 from app.case_store import artifact_path, case_dir, load_case_snapshot, save_case, write_json
 from app.errors import AppError
+from app.issue_workspaces import initialize_investigation_baseline
 from app.extraction import (
     ExtractionFailure, ExtractionValidationRepair, ModelExtraction, extraction_repair_evidence,
     materialize_extraction, parse_extraction_payload, validate_extraction_candidates,
@@ -319,6 +320,8 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
             candidate = CaseData.model_validate(candidate.model_dump(mode="json"))
         except ValidationError as exc:
             raise AppError("extraction_state_conflict", "Merged InfoUnits would invalidate existing case references", 409) from exc
+        audit["active_step"] = "issue_investigation_baseline"
+        initialize_investigation_baseline(case)
         run.status = RunStatus.success
         audit["active_step"] = "commit"
         audit["status"] = "success"

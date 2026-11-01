@@ -8,7 +8,8 @@ import test_investigation_agent as replies
 import test_reasoning_workspace as fixture
 from app import llm_client
 from app.errors import AppError
-from app.issue_workspaces import investigation_context, get_issue_workspaces, persist_issue_workspaces
+from app.issue_workspaces import investigation_context, get_issue_workspaces
+from app.case_store import case_dir, write_json
 from app.schemas import Relation
 
 
@@ -23,7 +24,11 @@ class TestInvestigationContext(unittest.TestCase):
         canvas = state.workspaces[self.issue].canvas
         canvas.visible_node_ids = list(ids)
         canvas.selected_node_ids, canvas.focused_node_id = list(selected), focus
-        persist_issue_workspaces(self.case, state)
+        # These fixtures intentionally choose both independent scopes; hiding a
+        # node on Canvas alone no longer changes its investigation membership.
+        state.workspaces[self.issue].investigation_info_unit_ids = [
+            uid for uid in ids if uid in {u.id for u in self.case.info_units}]
+        write_json(case_dir(self.case.case_id) / "issue_workspaces.json", state.model_dump(mode="json"))
 
     def test_actual_request_contains_conflict_direction_focus_and_user_judgments_not_layout(self):
         h = self.hypothesis("尚不能确认租金损失")

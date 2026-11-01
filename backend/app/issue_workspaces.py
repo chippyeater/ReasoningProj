@@ -35,11 +35,14 @@ class IssueWorkspace(ContractModel):
     status: IssueStatus = "pending"
     canvas: IssueCanvas
     reasoning: ReasoningState = Field(default_factory=ReasoningState)
+    investigation_info_unit_ids: list[Text] | None = None
 
 
 class IssueWorkspaces(ContractModel):
     active_issue: Text | None = None
     workspaces: dict[str, IssueWorkspace] = Field(default_factory=dict)
+    # Frozen before an Extraction commit: distinguish hidden old IDs from new IDs.
+    investigation_baseline_info_unit_ids: list[Text] | None = None
 
 
 class IssueWorkspacePatch(ContractModel):
@@ -69,12 +72,23 @@ def _read(case: CaseData) -> IssueWorkspaces:
 def get_issue_workspaces(case: CaseData) -> IssueWorkspaces:
     saved = _read(case)
     keys, known = issue_keys(case), _node_ids(case)
+    unit_ids = {u.id for u in case.info_units}
+    baseline = saved.investigation_baseline_info_unit_ids
+    if baseline is None:
+        baseline = [u.id for u in case.info_units]
+    new_ids = unit_ids - set(baseline)
     projected = {}
     for key in keys:
         if key in saved.workspaces:
             item = saved.workspaces[key].model_copy(deep=True)
             local_known = known | {obj.id for obj in [*item.reasoning.hypotheses, *item.reasoning.gaps]}
             canvas = item.canvas
+            initial_scope = item.investigation_info_unit_ids
+            if initial_scope is None:
+                initial_scope = canvas.visible_node_ids
+            item.investigation_info_unit_ids = list(dict.fromkeys([
+                *(uid for uid in initial_scope if uid in unit_ids),
+                *(u.id for u in case.info_units if u.id in new_ids and u.related_issue == key)]))
             # Deleting shared nodes must not make unrelated Issue layouts unusable.
             canvas.visible_node_ids = [uid for uid in canvas.visible_node_ids if uid in local_known]
             canvas.selected_node_ids = [uid for uid in canvas.selected_node_ids if uid in local_known]
@@ -94,7 +108,7 @@ def get_issue_workspaces(case: CaseData) -> IssueWorkspaces:
                      for index, uid in enumerate(visible)}
         if core:
             positions.update(legacy.node_positions)
-        projected[key] = IssueWorkspace(canvas=IssueCanvas(
+        projected[key] = IssueWorkspace(investigation_info_unit_ids=list(visible), canvas=IssueCanvas(
             **{**legacy.model_dump(), "selected_node_ids": [], "focused_node_id": None,
                "current_view_id": None,
                "node_positions": positions,
@@ -102,7 +116,7 @@ def get_issue_workspaces(case: CaseData) -> IssueWorkspaces:
                "viewport": legacy.viewport if core else {"zoom": 1, "offset_x": 0, "offset_y": 0}},
             visible_node_ids=visible))
     return IssueWorkspaces(active_issue=saved.active_issue if saved.active_issue in keys else (keys[0] if keys else None),
-                           workspaces=projected)
+                           workspaces=projected, investigation_baseline_info_unit_ids=list(baseline))
 
 
 def update_issue_workspace(case: CaseData, patch: IssueWorkspacePatch) -> IssueWorkspaces:
@@ -129,9 +143,48 @@ def update_issue_workspace(case: CaseData, patch: IssueWorkspacePatch) -> IssueW
 def persist_issue_workspaces(case: CaseData, current: IssueWorkspaces) -> None:
     # Preserve dormant entries if a later extraction changes issue_set.
     saved = _read(case)
+    # Keep the original baseline even if a stale caller saves after Extraction.
+    if saved.investigation_baseline_info_unit_ids is None:
+        saved.investigation_baseline_info_unit_ids = current.investigation_baseline_info_unit_ids
+    if saved.investigation_baseline_info_unit_ids is None:
+        saved.investigation_baseline_info_unit_ids = [u.id for u in case.info_units]
+    unit_ids = {u.id for u in case.info_units}
+    new_ids = unit_ids - set(saved.investigation_baseline_info_unit_ids)
+    for key, item in current.workspaces.items():
+        old = saved.workspaces.get(key)
+        previous = (old.investigation_info_unit_ids if old and old.investigation_info_unit_ids is not None
+                    else old.canvas.visible_node_ids if old else [])
+        scope = item.investigation_info_unit_ids
+        item.investigation_info_unit_ids = list(dict.fromkeys([
+            *(uid for uid in previous if uid in unit_ids),
+            *(uid for uid in (scope if scope is not None else item.canvas.visible_node_ids) if uid in unit_ids),
+            *(u.id for u in case.info_units if u.id in new_ids and u.related_issue == key)]))
     saved.workspaces.update(current.workspaces)
     saved.active_issue = current.active_issue
     write_json(case_dir(case.case_id) / "issue_workspaces.json", saved.model_dump(mode="json"))
+
+
+def initialize_investigation_baseline(case: CaseData) -> None:
+    """Freeze old hidden IDs before case.json changes; later reads recover new IDs.
+
+    No post-commit workspace write is required: scope is a deterministic projection
+    of the saved baseline and committed CaseData. Failed writes abort Extraction;
+    a later failed case commit leaves only a harmless old-case baseline.
+    """
+    if not (case_dir(case.case_id) / "issue_workspaces.json").exists():
+        return
+    saved = _read(case)
+    if saved.investigation_baseline_info_unit_ids is None or any(
+            item.investigation_info_unit_ids is None for item in saved.workspaces.values()):
+        unit_ids = {u.id for u in case.info_units}
+        if saved.investigation_baseline_info_unit_ids is None:
+            saved.investigation_baseline_info_unit_ids = [u.id for u in case.info_units]
+        for item in saved.workspaces.values():
+            if item.investigation_info_unit_ids is None:
+                item.investigation_info_unit_ids = [uid for uid in item.canvas.visible_node_ids if uid in unit_ids]
+        # Do not persist get_issue_workspaces()'s display cleanup as a side effect
+        # of Extraction. Initialization changes only investigation metadata.
+        write_json(case_dir(case.case_id) / "issue_workspaces.json", saved.model_dump(mode="json"))
 
 
 def reasoning_references(case: CaseData, info_unit_id: str) -> list[dict]:
@@ -158,6 +211,7 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
     canvas, reasoning = workspace.canvas, workspace.reasoning
     units = {u.id: u for u in case.info_units}
     visible = set(canvas.visible_node_ids)
+    investigation_ids = set(workspace.investigation_info_unit_ids or [])
     selected_units = selected_info_unit_ids or []
     if selected_units:
         _selected_units(case, selected_units)
@@ -173,11 +227,11 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
     terms = set(_normalized(goal)[i:i+2] for i in range(max(0, len(goal) - 1)))
     def overlap(text):
         return sum(term in _normalized(text) for term in terms)
-    chosen_units = sorted((u for u in case.info_units if u.id in visible),
+    chosen_units = sorted((u for u in case.info_units if u.id in investigation_ids),
         key=lambda u: (u.id in selected_ids, u.id == focus, overlap(u.title + u.content)), reverse=True)[:8]
     uids = {u.id for u in chosen_units}
-    visible_relations = [r for r in case.relations if {r.source_id, r.target_id} <= visible]
-    relations = sorted((r for r in visible_relations if {r.source_id, r.target_id} <= uids),
+    available_relations = [r for r in case.relations if {r.source_id, r.target_id} <= investigation_ids]
+    relations = sorted((r for r in available_relations if {r.source_id, r.target_id} <= uids),
         key=lambda r: (bool({r.source_id, r.target_id} & priority_ids), r.relation_type.value == "contradict"), reverse=True)[:12]
     keys = list(dict.fromkeys([current_issue, *issue_keys(case)]))
     result = {"current_issue": current_issue[:500],
@@ -189,8 +243,8 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
                        "relation_type": r.relation_type.value} for r in relations],
         "selected_info_unit_ids": selected_units, "selected_reasoning_ids": selected,
         "focused_object_id": focus,
-        "has_more_info_units": len(chosen_units) < sum(uid in units for uid in visible),
-        "has_more_relations": len(relations) < len(visible_relations),
+        "has_more_info_units": len(chosen_units) < sum(uid in units for uid in investigation_ids),
+        "has_more_relations": len(relations) < len(available_relations),
     }
     # Explicit selection first, then goal overlap, then latest edits. Bounded
     # summaries carry current user decisions, never a history or full canvas.
