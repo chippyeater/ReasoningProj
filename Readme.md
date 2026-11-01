@@ -10,7 +10,7 @@
 - 原文件保存在 `backend/data/{case_id}/upload_files/`，完整正文保存在 `parsed/{file_id}.txt`。
 - `original_path`、`parsed_text_path` 均为案件目录下的相对路径。`case.json` 不复制完整正文。
 - 提取输入仅从缓存 TXT 构建；缓存缺失、空白或编码错误均返回错误，不重新解析原文件。
-- Extraction 已接通：完整有效 TXT → 全案 LLM 初稿 → 逐项校验 → 必要时单次定向修复 → 后端来源定位、正式 ID / 时间与去重 → 完整复验 → 原子保存。
+- Extraction 已接通：待提取文件的缓存 TXT → LLM 初稿 → 逐项校验 → 必要时单次定向修复 → 后端来源定位、正式 ID / 时间与增量去重 → 完整复验 → 原子追加保存。
 - `InfoUnit`、争点、来源切片、直接关系和视图引用校验；完整定义全部 v0.3 模型。
 - 解析日志使用 `StageRun`，输入输出快照保存在案件目录的 `runs/` 下。
 
@@ -63,7 +63,7 @@ Set-Location backend
 | `DELETE /api/case` | 删除当前案件；不自动切换其他案件 |
 | `GET /api/cases/{case_id}/files/{file_id}/text` | `ParsedDocument`，读取已缓存正文 |
 | `GET /api/cases/{case_id}/extraction-input` | `ExtractionInput`；可重复传 `?file_id=...` 选择文件 |
-| `POST /api/extraction/run` | `{case_id}` → 完整 `ExtractionOutput`，同时保存到案件 |
+| `POST /api/extraction/run` | `{case_id}` → 合并后的完整 `ExtractionOutput`；无待提取材料时返回 204，不创建 Run |
 
 未指定文件时构建全部文件的提取输入；存在失败或不支持文件时明确报错。
 要继续处理可用文件，应显式选择已解析的文件 ID，不会静默略过失败项。
@@ -84,24 +84,39 @@ Set-Location backend
 每个 `CaseFile` 必须保存上传方明确提供的 `source_kind`，允许 document / communication / testimony / record / other。
 没有默认来源类型，不根据扩展名或文件内容推断，不存在独立登记接口或 sidecar。
 
-`POST /api/extraction/run` 不接受子集参数：一次发送案件全部 `parsed` 文件的完整 TXT。
-`failed` / `unsupported` 文件不会进入模型，排除项和原因逐项记录在运行日志；没有有效文件时明确报错。
+`POST /api/extraction/run` 不接受子集参数：后端选择尚未被已提交成功 Extraction StageRun 处理的 `parsed` 文件，仅发送这些文件的 Quote Units。
+成功范围从案件 `stage_runs` 所指向的输入快照 `model_input.files[].file_id` 读取；`partial_success` 沿用成功提交语义，整批选中文件均算已处理。失败 Run、独立审计中尚未提交的成功记录均不算已处理，可以重试。
+`failed` / `unsupported` 文件不会进入模型，排除项和原因逐项记录在运行日志。没有待提取文件返回 204，不调用模型、不写失败 Run；前端显示无新材料提示并跳过 Relation。首次提取选择全部已解析文件，后续仅选择新文件。
 初稿全部合法时 Extraction 只调用一次模型。存在可定位的候选错误时，仅把失败对象、结构化错误、必要实体依赖和有界 Quote Unit 证据候选发送给 `extraction_validation_repair`，最多增加一次修复调用；旧 Evidence Repair 不再形成第二条运行分支。
 修复可以替换失败候选的完整模型字段，但必须保留 `local_id`，且仍须重新通过分类、引用、来源物化和案件完整性校验。首次或修复后合法的节点可以部分接受；未修复节点及依赖失效节点只写入审计，不进入案件。
-最终接受集合一次性原子保存；没有安全候选、不可定位的批次错误、模型/网络/存储错误均整阶段失败。已有 InfoUnit 时在建立安全刷新策略前返回 409，不覆盖或删除现有数据。
-后端还会对内容、类型、发言人、角色、事件参与者和争点完全一致的重复节点进行确定性合并，保留来源并去掉重复引用。
+最终接受集合一次性原子保存；没有安全候选、不可定位的批次错误、模型/网络/存储错误均整阶段失败。失败不改变已有业务数据或文件成功处理范围。
+后端对内容、类型、子类型、发言人、角色、事件参与者和争点完全一致的新节点进行确定性合并；与唯一旧节点匹配时只追加未存在的 SourceRef，保留旧 ID、标题、内容和其他字段。已有节点之间不重新去重；存在多个旧节点可匹配时保留新节点，不猜测应合并到哪一个。
+实体先合并，再将本批事件的 actor/target 映射到最终实体 ID。原 core_issue、issue_set、Relation 和 Reasoning 工作区保持原样，新争点 label 按顺序追加。后续自动 Relation 继续使用原追加保存路径。
 后端不使用相似度阈值猜测不同表述是否同一事实；语义最小性仍须通过真实评测审查。
 
 `validation.locate_source_ref` 从缓存 TXT 计算 Unicode 字符位置 `[start,end)`。
 找不到引用或存在多个匹配（含重叠匹配）均报错；已有精确位置的引用必须逐字匹配切片。
 `validate_extraction` 继续作为物化后的完整来源门禁；候选逐项校验会收集 `item_id / field_path / error_code / message`，并将舍弃项连同原因保留在运行审计中。
 
-模型边界只允许批内 `local_id`、语义字段及 `file_id + quote`；正式 ID、时间、来源类型和偏移不由模型生成。
+模型边界只允许批内 `local_id`、语义字段及输入中的 `evidence_ids`；正式 ID、时间、来源类型和偏移不由模型生成。
 来源类型直接取 `CaseFile.source_kind`；保存案件时再次检查引文切片及文件来源类型一致性。
 模型输出 JSON Schema 通过五个联合分支直接约束一级类型与子类配对；初始 event 不允许 `verified`。这只是同一个 `InfoUnit` 的模型输出限制，不新增业务实体表。
 输入 JSON 不修复、不剥离 Markdown；重复 JSON 键、非法常量、额外字段、错误类型、非法分类或无效争点都明确拒绝。
-所有最终接受节点通过完整复验后，才一次性写入 `core_issue / issue_set / info_units`。失败只追加日志，不覆盖已有有效抽取。
-模型运行期间案件若发生变化，返回 409，避免覆盖其他请求；已有关系、视图或画布引用会因替换失效时也拒绝提交，不擅自删除下游数据。
+所有最终接受节点通过完整复验、审计持久化及提交前快照检查后，才一次性写入合并结果和成功 StageRun。失败只追加日志，不覆盖已有有效抽取。
+模型运行期间案件若发生变化，返回 409，避免覆盖其他请求；不删除下游引用。初稿和 Validation Repair 均限制在本轮选中文件的 Quote Units 范围内。
+
+### 一次性登记缺失的历史提取范围
+
+已有 InfoUnit 但没有成功 Extraction 记录，或成功记录的输入快照无法恢复文件范围时，接口返回 `extraction_history_baseline_required`，不自动全量重提取。上线前停止服务，核对哪些文件已处理，再执行以下命令；新上传且尚未提取的文件不能选入历史基线。
+
+```powershell
+# 默认只预览：列出历史文件及仍待提取的文件
+backend/.venv/Scripts/python.exe scripts/baseline_extraction.py CASE_ID --file-id OLD_FILE_ID --file-id OTHER_OLD_FILE_ID
+# 核对范围后应用一次（相同命令增加 --apply）
+backend/.venv/Scripts/python.exe scripts/baseline_extraction.py CASE_ID --file-id OLD_FILE_ID --file-id OTHER_OLD_FILE_ID --apply
+```
+
+脚本要求显式选择已解析旧文件，并涵盖已有 InfoUnit 引用的文件；备份 `case.json.before-incremental-extraction.bak`，新增无模型调用的历史基线 StageRun 及范围快照，不改写旧 Run 或审计。运行时统一按成功 StageRun 读取覆盖范围；基线中的 `historical_run_ids` 说明已由人工范围登记覆盖的旧记录。重复执行不再新增基线，后续仍只处理新文件。本次开发不自动迁移真实案件。
 
 每次执行的 `StageRun` 记录模型、Prompt 数字版本、状态和输入/输出快照路径。
 `runs/{run_id}.input.json` 保存模型输入、Extraction Prompt 及 Validation Repair Prompt；发生修复时，最小修复输入另存为 `.validation-repair.input.json`。
