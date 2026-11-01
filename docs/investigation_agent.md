@@ -8,7 +8,7 @@
 
 通过 finish 交付 `answer`、`answer_basis`、可选内容的 `findings`、`open_questions` 和 `completion_status`。空 Findings/Proposal 合法。answer_basis 为 general（能力/通用回答）、case_metadata（可靠案件统计）或 case_material（案件判断）；它描述答复依据，不创建另一条执行流程。涉及案件依据的成果必须选择 case_material。目录不授予材料或引用权限；尚无材料/有效读取结果时，案件判断返回可恢复错误。实际 empty、读取 error、空案件或预算限制可以支持明确的证据不足说明，不能证明事实。后端不以关键词猜测 Goal，也不能独立证明自然语言任务已经充分覆盖。
 
-Findings、Proposal 引用须属于当前案件并实际取得；初始选中/画布材料提供的来源片段继续由缓存 TXT 核验。证据不足须列明未解条件；completed 不可同时宣称 Goal 仍有未解条件。答复保留原文、Markdown，长度上限与工具 Schema 一致为1000字符；非法答复不截断、不发布，成功 Proposal 不因之后模型失败而丢失。
+Findings、Proposal 引用须属于当前案件并实际取得；初始选中/Issue 调查材料提供的来源片段继续由缓存 TXT 核验。证据不足须列明未解条件；completed 不可同时宣称 Goal 仍有未解条件。答复保留原文、Markdown，长度上限与工具 Schema 一致为1000字符；非法答复不截断、不发布，成功 Proposal 不因之后模型失败而丢失。
 
 保留8次读取、6次 Proposal、3次 finish 尝试的独立预算，最多20次模型调用；重复无进展最多3次。预算与完整活动只由后端记录，耗尽的工具从下次 Schema 移除。连续非法调用/重复读取、模型失败和审计写入失败均有显式结束或异常，不自动重试付费请求。普通文本不能冒充已验证交付，下一轮提示通过 finish 提交。
 
@@ -21,6 +21,12 @@ Findings、Proposal 引用须属于当前案件并实际取得；初始选中/�
 Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成依据，来源引用只能指向已取得的这些节点；不接受 `addressing_info_unit_ids`。正式 Gap 的回应列表初始为空，后续通过现有工作区编辑接口追加去重，材料关联不自动解决 Gap 或改变假设判断。上下文分别提供形成依据、回应材料及各自截断标记；这些引用本身不授予材料读取权限。Hypothesis、Evidence Link、Hypothesis Status 的 `info_unit_ids` 语义保持不变。已保存工作区的一次性迁移见 `docs/issue_reasoning.md`。
 
 ## 每轮上下文
+
+Issue 的调查候选范围独立于 Canvas：`IssueWorkspace.investigation_info_unit_ids` 保存已登记的 InfoUnit；历史缺省时从原 `canvas.visible_node_ids` 中的 InfoUnit 初始化。`IssueWorkspaces.investigation_baseline_info_unit_ids` 固定记录初始化时已有节点，用来区分原先排除的旧材料和后来新增的材料。新建 Workspace 仍按 `related_issue == issue` 初始化。
+
+Extraction 在提交 CaseData 前初始化已有 Workspace 的基线；初始化写入失败会中止提交，重试仍处理新文件。提交后读取 Workspace 时，以该基线和当前 CaseData 按正式 ID、`related_issue == issue` 幂等派生新增调查候选，下次 Workspace 保存时合并登记。无需在 Case 提交后再成功写第二个文件，因此 Workspace 暂未落盘的新 ID 仍能可靠进入 Agent 请求；Case 提交失败也不会提前暴露候选。基线初始化以前隐藏的节点保持排除，不根据时间或语义猜测其归属。
+
+该过程不修改 Canvas 的可见节点、布局、层级、视口、选择、Focus 或当前视图。候选仍按选中项、Focus 和 Goal 相关性排序，初始最多8个 InfoUnit、12条两端均在已选材料中的 Relation，截断标志按独立调查范围计算。目录和既有只读工具能力保持原有边界。
 
 只发送 System Prompt 与一个动态 JSON User Message，不重复附带上一轮 Assistant/Tool 消息。动态字段：
 
