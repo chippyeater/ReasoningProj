@@ -19,6 +19,7 @@ def proposal_receipt(case, issue_key, context, proposals):
         raise AppError("invalid_reasoning_proposal", "No Issue is bound to the proposal")
     return {"issue": issue_key,
             "target_revisions": {h["id"]: h["revision"] for h in context.get("reasoning", {}).get("hypotheses", [])},
+            "target_gap_revisions": {g["id"]: g["revision"] for g in context.get("reasoning", {}).get("gaps", [])},
             "evidence_hashes": [evidence_hash(case, proposal_material_ids(p)) for p in proposals]}
 
 
@@ -111,6 +112,12 @@ def accept_proposal(case, request):
     elif proposal.kind == "evidence_link":
         edit.link = LinkEdit(hypothesis_id=hypothesis_ids[0], info_unit_id=proposal.info_unit_ids[0],
                              meaning=proposal.meaning, rationale=proposal.rationale)
+    elif proposal.kind == "evidence_gap_update":
+        gap = next((g for g in state.gaps if g.id == proposal.gap_id), None)
+        if gap is None or gap.revision != receipt.get("target_gap_revisions", {}).get(proposal.gap_id):
+            raise AppError("stale_reasoning_proposal", "Target Gap changed; investigate again before adopting", 409)
+        edit.gap = GapEdit(id=gap.id, content=gap.content, hypothesis_ids=list(gap.hypothesis_ids),
+                           addressing_info_unit_ids=proposal.addressing_info_unit_ids, status=proposal.status)
     else:
         target = targets[proposal.hypothesis_ids[0]]
         edit.hypothesis = HypothesisEdit(id=target.id, content=target.content, judgment=proposal.judgment, work_status=target.work_status)

@@ -8,9 +8,9 @@ from typing import Literal
 
 from pydantic import Field, ValidationError, model_validator
 
-from app.case_store import case_dir, write_json
+from app.case_store import artifact_path, case_dir, write_json
 from app.errors import AppError
-from app.schemas import CaseData, ContractModel, Text, WorkspaceState
+from app.schemas import CaseData, ContractModel, ParseStatus, PipelineStage, RunStatus, Text, WorkspaceState
 from app.reasoning_models import ReasoningState
 
 IssueStatus = Literal["pending", "investigating", "closed"]
@@ -201,6 +201,30 @@ def reasoning_references(case: CaseData, info_unit_id: str) -> list[dict]:
     return refs
 
 
+def _recent_extraction(case: CaseData) -> tuple[dict, set[str]]:
+    """The committed run index is authoritative; failed/orphan output audits do not count."""
+    run = next((run for run in reversed(case.stage_runs)
+                if run.stage == PipelineStage.extraction and run.status == RunStatus.success), None)
+    if run is None:
+        return {}, set()
+    try:
+        snapshot = json.loads(artifact_path(case.case_id, run.input_snapshot_path).read_text(encoding="utf-8"))
+        if snapshot.get("operation") == "historical_baseline":
+            return {}, set()
+        ids = snapshot.get("selected_file_ids")
+        if ids is None:
+            ids = [file["file_id"] for file in snapshot["model_input"]["files"]]
+        parsed = {file.file_id for file in case.files if file.parse_status == ParseStatus.parsed}
+        if (not isinstance(ids, list) or not ids or any(not isinstance(fid, str) or fid not in parsed for fid in ids)
+                or len(ids) != len(set(ids))):
+            raise ValueError("Invalid committed file scope")
+        return {"run_id": run.id, "status": "available", "selected_file_ids": ids[:20],
+                "file_count": len(ids), "files_truncated": len(ids) > 20}, set(ids)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, AppError):
+        return {"run_id": run.id, "status": "unavailable",
+                "error": "Latest committed Extraction input scope cannot be read; do not infer which material is new."}, set()
+
+
 def investigation_context(case: CaseData, current_issue: str, goal: str = "", selected_reasoning_ids: list[str] | None = None,
                           *, selected_info_unit_ids: list[str] | None = None, focused_object_id: str | None = None) -> dict:
     from app.investigation_tools import _selected_units, _summary, _normalized
@@ -212,6 +236,11 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
     units = {u.id: u for u in case.info_units}
     visible = set(canvas.visible_node_ids)
     investigation_ids = set(workspace.investigation_info_unit_ids or [])
+    batch, batch_files = _recent_extraction(case)
+    batch_refs = {u.id: [i for i, ref in enumerate(u.source_refs) if ref.file_id in batch_files]
+                  for u in case.info_units}
+    batch_ids = {uid for uid, indices in batch_refs.items() if indices}
+    candidate_ids = investigation_ids | batch_ids
     selected_units = selected_info_unit_ids or []
     if selected_units:
         _selected_units(case, selected_units)
@@ -227,23 +256,31 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
     terms = set(_normalized(goal)[i:i+2] for i in range(max(0, len(goal) - 1)))
     def overlap(text):
         return sum(term in _normalized(text) for term in terms)
-    chosen_units = sorted((u for u in case.info_units if u.id in investigation_ids),
-        key=lambda u: (u.id in selected_ids, u.id == focus, overlap(u.title + u.content)), reverse=True)[:8]
+    chosen_units = sorted((u for u in case.info_units if u.id in candidate_ids),
+        key=lambda u: (u.id in selected_ids, u.id == focus, u.id in batch_ids, overlap(u.title + u.content)), reverse=True)[:8]
     uids = {u.id for u in chosen_units}
-    available_relations = [r for r in case.relations if {r.source_id, r.target_id} <= investigation_ids]
+    available_relations = [r for r in case.relations if {r.source_id, r.target_id} <= candidate_ids]
     relations = sorted((r for r in available_relations if {r.source_id, r.target_id} <= uids),
         key=lambda r: (bool({r.source_id, r.target_id} & priority_ids), r.relation_type.value == "contradict"), reverse=True)[:12]
     keys = list(dict.fromkeys([current_issue, *issue_keys(case)]))
     result = {"current_issue": current_issue[:500],
             "issues": [{"issue": key[:500], "status": state.workspaces[key].status} for key in keys[:30]],
             "issue_count": len(keys), "has_more_issues": len(keys) > 30}
+    if batch:
+        provided = [u.id for u in chosen_units if u.id in batch_ids]
+        batch.update(info_unit_ids=provided, info_unit_count=len(batch_ids),
+                     omitted_info_unit_count=len(batch_ids) - len(provided),
+                     has_more_info_units=len(provided) < len(batch_ids),
+                     source_refs=[{"info_unit_id": uid, "source_ref_index": batch_refs[uid][0]} for uid in provided],
+                     has_more_source_refs=sum(map(len, batch_refs.values())) > len(provided))
+        result["recent_extraction"] = batch
     result["canvas"] = {
         "info_units": [_summary(u) for u in chosen_units],
         "relations": [{"id": r.id, "source_id": r.source_id, "target_id": r.target_id,
                        "relation_type": r.relation_type.value} for r in relations],
         "selected_info_unit_ids": selected_units, "selected_reasoning_ids": selected,
         "focused_object_id": focus,
-        "has_more_info_units": len(chosen_units) < sum(uid in units for uid in investigation_ids),
+        "has_more_info_units": len(chosen_units) < sum(uid in units for uid in candidate_ids),
         "has_more_relations": len(relations) < len(available_relations),
     }
     # Explicit selection first, then goal overlap, then latest edits. Bounded
@@ -251,6 +288,8 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
     def rank(obj):
         related = bool(set(getattr(obj, "hypothesis_ids", [])) & priority_ids) or any(
             link.hypothesis_id == obj.id and link.info_unit_id in priority_ids for link in reasoning.links)
+        related = related or bool(set(getattr(obj, "basis_info_unit_ids", [])
+                                      + getattr(obj, "addressing_info_unit_ids", [])) & batch_ids)
         return (obj.id in selected_ids, obj.id == focus, related, overlap(obj.content), obj.updated_at)
     chosen = sorted(objects, key=rank, reverse=True)[:3]
     hids = {obj.id for obj in chosen if hasattr(obj, "judgment")}

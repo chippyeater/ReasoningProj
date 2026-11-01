@@ -18,7 +18,7 @@ from app.observability import RunTrace
 from app.prompt_loader import load_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
 from app.reasoning_models import (ProposalEvidenceRef, ReasoningProposal, MaterialProposal,
-                                  EvidenceGapProposal, proposal_material_ids)
+                                  EvidenceGapProposal, EvidenceGapUpdateProposal, proposal_material_ids)
 from app.investigation_state import KnowledgeState, case_info_directory, model_context
 
 MAX_TOOL_CALLS = 8  # Read attempts, reserved independently from artifact submissions.
@@ -122,6 +122,10 @@ def tool_definitions() -> list[dict]:
             "content": content, "hypothesis_ids": props["hypothesis_ids"], "hypothesis_proposal_ids": props["hypothesis_proposal_ids"]},
         "propose_hypothesis_status": {**grounded, "hypothesis_id": text_id,
             "judgment": next(p for p in props["judgment"]["anyOf"] if p.get("type") != "null")},
+        "propose_evidence_gap_update": {"gap_id": text_id,
+            "addressing_info_unit_ids": EvidenceGapUpdateProposal.model_json_schema()["properties"]["addressing_info_unit_ids"],
+            "status": {"type": "string", "enum": ["open", "resolved"]},
+            "rationale": props["rationale"], "evidence_refs": grounded["evidence_refs"]},
     }
     for name, properties in specifications.items():
         definition = _function(name, PROPOSAL_TOOLS[name].__doc__, deepcopy(properties))
@@ -306,6 +310,7 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
     targets = {obj["id"] for kind in ("hypotheses", "gaps")
                for obj in (work_context or {}).get("reasoning", {}).get(kind, [])}
     hypothesis_ids = {obj["id"] for obj in (work_context or {}).get("reasoning", {}).get("hypotheses", [])}
+    gap_ids = {obj["id"] for obj in (work_context or {}).get("reasoning", {}).get("gaps", [])}
     from app.reasoning_proposals import validate_proposal_dependencies
     try:
         validate_proposal_dependencies(result.proposals)
@@ -315,9 +320,12 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
     for offset, proposal in enumerate(result.proposals):
         if not work_context:
             invalid("invalid_reasoning_proposal", "proposal_semantics", ["proposals", offset], "Proposals require a bound Issue")
-        material_field = "basis_info_unit_ids" if proposal.kind == "evidence_gap" else "info_unit_ids"
+        material_field = ("basis_info_unit_ids" if proposal.kind == "evidence_gap" else
+                          "addressing_info_unit_ids" if proposal.kind == "evidence_gap_update" else "info_unit_ids")
         check(proposal_material_ids(proposal), set(result.relevant_info_unit_ids), ["proposals", offset, material_field])
         check(proposal.hypothesis_ids, hypothesis_ids & targets, ["proposals", offset, "hypothesis_ids"])
+        if proposal.kind == "evidence_gap_update":
+            check([proposal.gap_id], gap_ids, ["proposals", offset, "gap_id"])
         check([(p.info_unit_id, p.source_ref_index) for p in proposal.evidence_refs], set(pointers), ["proposals", offset, "evidence_refs"])
         if any(p.info_unit_id not in proposal_material_ids(proposal) for p in proposal.evidence_refs):
             invalid("invalid_reasoning_proposal", "reference", ["proposals", offset, "evidence_refs"], "Proposal evidence must refer to its retrieved InfoUnits")
@@ -349,7 +357,7 @@ def _tool_recovery(response, name):
         loc = item.get("loc", [])
         argument_loc = loc[2:] if loc[:1] == ["proposals"] else list(loc)
         # Discriminated-union tags describe a variant, not a native argument.
-        if argument_loc[:1] in (["hypothesis"], ["evidence_gap"], ["evidence_link"], ["hypothesis_status"]):
+        if argument_loc[:1] in (["hypothesis"], ["evidence_gap"], ["evidence_link"], ["hypothesis_status"], ["evidence_gap_update"]):
             argument_loc = argument_loc[1:]
         if argument_loc[:1] == ["relevant_info_unit_ids"]:
             argument_loc[0] = "info_unit_ids"
@@ -495,7 +503,8 @@ async def run_investigation(case: CaseData, goal: str,
     try:
         source_ids = list(dict.fromkeys([u.id for u in selected] + [
             row["id"] for row in canvas.get("info_units", []) if row["id"] in seen["units"]]))
-        initial_input["evidence_context"] = tools.initial_evidence_context(bound_case, source_ids)
+        initial_input["evidence_context"] = tools.initial_evidence_context(bound_case, source_ids,
+            preferred_source_refs=(work_context or {}).get("recent_extraction", {}).get("source_refs", []))
         seen["evidence"].update((row["info_unit_id"], row["source_ref_index"])
                                 for row in initial_input["evidence_context"]["items"])
         knowledge = KnowledgeState(initial_input)

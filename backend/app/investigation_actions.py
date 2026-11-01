@@ -14,7 +14,9 @@ def artifacts(case, seen, context, goal, proposals, findings, questions, status)
     findings = [f.model_dump(mode="json") for f in TypeAdapter(list[Finding]).validate_python(findings, strict=True)]
     units, relations, refs = [], [], []
     for item in [*findings, *(p.model_dump(mode="json") for p in proposals)]:
-        for uid in item["basis_info_unit_ids"] if item.get("kind") == "evidence_gap" else item["info_unit_ids"]:
+        material_ids = (item["basis_info_unit_ids"] if item.get("kind") == "evidence_gap" else
+                        item["addressing_info_unit_ids"] if item.get("kind") == "evidence_gap_update" else item["info_unit_ids"])
+        for uid in material_ids:
             if uid not in units:
                 units.append(uid)
         for rid in item.get("relation_ids", []):
@@ -73,6 +75,14 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
                     judgment=judgment, rationale=rationale, info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
 
 
+def propose_evidence_gap_update(case, seen, context, proposals, *, gap_id, addressing_info_unit_ids,
+                                status, rationale, evidence_refs):
+    """Propose addressing material for an existing Gap in the current Issue. Use its actual gap_id, obtained InfoUnits and verified source citations. Compare new material with the Gap and its competing Hypotheses; partial responses keep status=open and explain what remains missing. Use resolved only when the missing condition is sufficiently addressed. Adoption preserves the Gap ID, content, basis and Hypothesis associations, appends unique addressing IDs and checks its captured revision. Prefer this over recreating the same Gap; user approval is always required."""
+    return _propose(case, seen, context, proposals, "evidence_gap_update", gap_id=gap_id,
+                    addressing_info_unit_ids=addressing_info_unit_ids, status=status,
+                    rationale=rationale, evidence_refs=evidence_refs)
+
+
 def finish_investigation(case, seen, context, goal, proposals, *, answer, findings,
                          open_questions, completion_status, answer_basis, knowledge,
                          budget_exhausted=False, read_budget_exhausted=False):
@@ -105,4 +115,5 @@ def finish_investigation(case, seen, context, goal, proposals, *, answer, findin
 
 
 PROPOSAL_TOOLS = {function.__name__: function for function in (
-    propose_hypothesis, propose_evidence_link, propose_evidence_gap, propose_hypothesis_status)}
+    propose_hypothesis, propose_evidence_link, propose_evidence_gap, propose_hypothesis_status,
+    propose_evidence_gap_update)}

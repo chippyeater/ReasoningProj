@@ -140,7 +140,7 @@ class TestInvestigationResultContract(unittest.TestCase):
 
     def test_tool_schemas_frontload_distinct_operations_without_model_authored_kind_or_ids(self):
         definitions = {d["function"]["name"]: d["function"]["parameters"] for d in tool_definitions()}
-        for name in ("propose_hypothesis", "propose_evidence_link", "propose_evidence_gap", "propose_hypothesis_status"):
+        for name in ("propose_hypothesis", "propose_evidence_link", "propose_evidence_gap", "propose_hypothesis_status", "propose_evidence_gap_update"):
             schema = definitions[name]
             self.assertFalse(schema["additionalProperties"])
             self.assertEqual(set(schema["required"]), set(schema["properties"]))

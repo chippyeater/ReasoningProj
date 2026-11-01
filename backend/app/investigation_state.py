@@ -167,6 +167,8 @@ def model_context(initial, knowledge, recovery=None):
         "proposals": deepcopy(knowledge.proposals),
         "notices": [{k:v for k,v in n.items() if k != "key"} for n in knowledge.notices[-6:]],
         "recovery": deepcopy(recovery)}
+    if workspace.get("recent_extraction"):
+        result["recent_extraction"] = deepcopy(workspace["recent_extraction"])
     if len(knowledge.notices) > 6:
         result["notices"].append({"context_truncated": True, "omitted_count": len(knowledge.notices) - 6})
     # Successful proposals and dependency IDs remain visible. Trim material

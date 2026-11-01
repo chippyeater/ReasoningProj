@@ -25,7 +25,7 @@ INITIAL_EVIDENCE_REFS = 8
 INITIAL_EXCERPT_CHARS = 160
 
 
-def initial_evidence_context(case: CaseData, info_unit_ids: list[str]) -> dict:
+def initial_evidence_context(case: CaseData, info_unit_ids: list[str], *, preferred_source_refs: list[dict] | None = None) -> dict:
     """Server-prepared, verified source excerpts; reuse the exact cached-TXT reader.
 
     At most one SourceRef per supplied node, eight total and 1280 excerpt chars.
@@ -33,11 +33,31 @@ def initial_evidence_context(case: CaseData, info_unit_ids: list[str]) -> dict:
     """
     items, errors = [], []
     has_more = False
+    preferred = {ref["info_unit_id"]: ref["source_ref_index"] for ref in preferred_source_refs or []}
+    units, files = {u.id: u for u in case.info_units}, {f.file_id: f for f in case.files}
     for uid in dict.fromkeys(info_unit_ids):
         if len(items) == INITIAL_EVIDENCE_REFS:
             has_more = True
             break
-        response = get_evidence(case, [uid])
+        if uid in preferred:
+            # Select one current-batch source directly, even if older references
+            # fill get_evidence's first bounded page. The tool contract is unchanged.
+            index = preferred[uid]
+            try:
+                ref = units[uid].source_refs[index]
+                file = files[ref.file_id]
+                text = read_parsed_document(case.case_id, file).text
+                if (ref.source_kind != file.source_kind or ref.end > len(text) or text[ref.start:ref.end] != ref.quote):
+                    raise AppError("source_quote_mismatch", "SourceRef differs from the cached TXT")
+                if len(ref.quote) > MAX_EVIDENCE_CHARS:
+                    raise AppError("evidence_budget_exceeded", "SourceRef exceeds the existing evidence budget")
+                response = _result([{"info_unit_id": uid, "source_ref_index": index,
+                                     "source_ref": ref.model_dump(mode="json")}], has_more=len(units[uid].source_refs) > 1)
+            except (KeyError, IndexError, AppError) as exc:
+                error = exc if isinstance(exc, AppError) else AppError("invalid_source_ref", "Unknown current-batch source pointer")
+                response = _failure(error, status="error")
+        else:
+            response = get_evidence(case, [uid])
         if response["status"] in {"error", "invalid_request"}:
             errors.append({"info_unit_id": uid, **response["error"]})
             continue

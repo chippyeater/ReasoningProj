@@ -89,7 +89,7 @@ class TestIncrementalInvestigationContext(IsolatedCaseTest):
         for key, canvas in self.original_canvases.items():
             self.assertEqual(saved["workspaces"][key]["canvas"], canvas)
 
-    def test_new_units_and_relations_reach_only_matching_issue_without_canvas_changes(self):
+    def test_persisted_issue_scope_stays_isolated_and_recent_batch_is_separately_available(self):
         fid, quote = self.append()
         self.extract([model_unit(fid, quote, content="本议题的新付款记录。"),
                       model_unit(fid, quote, content="其他议题的新记录。", related_issue=self.other)])
@@ -101,13 +101,19 @@ class TestIncrementalInvestigationContext(IsolatedCaseTest):
                      relation_type="about", evidence_unit_ids=[new], rationale="跨议题记录", certainty="explicit")])
         case_store.save_case(self.case, set_current=False)
         request = self.actual_context()
-        self.assertEqual(set(self.ids(request)), {self.visible, new})
-        self.assertEqual([r["id"] for r in request["materials"]["relations"]["items"]], ["new-relation"])
-        self.assertEqual({s["info_unit_id"] for s in request["materials"]["source_refs"]["items"]}, {self.visible, new})
-        self.assertEqual(set(self.ids(self.actual_context(self.other))), {self.foreign, foreign_new})
+        self.assertEqual(set(self.ids(request)), {self.visible, new, foreign_new})
+        self.assertEqual({r["id"] for r in request["materials"]["relations"]["items"]}, {"new-relation", "foreign-relation"})
+        self.assertEqual({s["info_unit_id"] for s in request["materials"]["source_refs"]["items"]}, {self.visible, new, foreign_new})
+        self.assertEqual(set(self.ids(self.actual_context(self.other))), {self.foreign, foreign_new, new})
+        scopes = get_issue_workspaces(self.case).workspaces
+        self.assertEqual(set(scopes[self.issue].investigation_info_unit_ids), {self.visible, new})
+        self.assertEqual(set(scopes[self.other].investigation_info_unit_ids), {self.foreign, foreign_new})
         self.assert_canvases_unchanged()
 
     def test_historical_workspace_read_preserves_old_scope_and_does_not_write(self):
+        # Imported historical workspaces may have no Extraction batch record.
+        self.case.stage_runs = [r for r in self.case.stage_runs if r.stage.value != "extraction"]
+        case_store.save_case(self.case, set_current=False)
         before = self.path.read_bytes()
         self.assertEqual(self.ids(self.actual_context()), [self.visible])
         self.assertNotIn(self.hidden, self.ids(self.actual_context()))
@@ -129,9 +135,9 @@ class TestIncrementalInvestigationContext(IsolatedCaseTest):
         request = self.actual_context()
         self.assertEqual(self.ids(request), [self.visible])
         self.assertEqual(len(self.case.info_units[0].source_refs), 2)
-        # Initial excerpts retain the existing one-reference-per-node bound.
+        # Still one reference per node, now prioritizing the latest batch source.
         self.assertEqual([(r["info_unit_id"], r["source_ref_index"])
-                          for r in request["materials"]["source_refs"]["items"]], [(self.visible, 0)])
+                          for r in request["materials"]["source_refs"]["items"]], [(self.visible, 1)])
         self.assert_canvases_unchanged()
 
     def test_new_evidence_stays_bounded_prioritizes_selection_focus_goal_and_marks_omissions(self):
@@ -173,7 +179,7 @@ class TestIncrementalInvestigationContext(IsolatedCaseTest):
         stored = case_store.load_case(self.case.case_id)
         self.assertEqual(len(stored.info_units), 3)
         self.assertEqual(extraction_service.pending_extraction_files(stored), [fid])
-        self.assertEqual(self.ids(self.actual_context()), [self.visible])
+        self.assertEqual(set(self.ids(self.actual_context())), {self.visible, self.hidden, self.foreign})
         self.extract([model_unit(fid, quote, content="待重试的新记录。")])
         self.assertEqual(set(self.ids(self.actual_context())), {self.visible, self.case.info_units[-1].id})
         self.assert_canvases_unchanged()
@@ -188,7 +194,7 @@ class TestIncrementalInvestigationContext(IsolatedCaseTest):
         with patch.object(extraction_service, "save_case", side_effect=save):
             response, _ = self.run_with_reply(self.case_dict, model_result([model_unit(fid, quote, content="提交重试记录。")]))
         self.assertEqual(response.status_code, 500, response.text)
-        self.assertEqual(self.ids(self.actual_context()), [self.visible])
+        self.assertEqual(set(self.ids(self.actual_context())), {self.visible, self.hidden, self.foreign})
         self.extract([model_unit(fid, quote, content="提交重试记录。")])
         self.assertEqual(set(self.ids(self.actual_context())), {self.visible, self.case.info_units[-1].id})
         self.assert_canvases_unchanged()

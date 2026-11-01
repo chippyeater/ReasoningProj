@@ -131,9 +131,11 @@ class ProposalBase(ContractModel):
 
     @model_validator(mode="after")
     def shape(self):
-        if self.kind in {"evidence_link", "hypothesis_status"} and (not self.info_unit_ids or not self.evidence_refs):
-            raise ValueError("Evidence Link and status proposals require info_unit_ids and evidence_refs")
-        material_field = "basis_info_unit_ids" if self.kind == "evidence_gap" else "info_unit_ids"
+        if self.kind in {"evidence_link", "hypothesis_status", "evidence_gap_update"} and (
+                not proposal_material_ids(self) or not self.evidence_refs):
+            raise ValueError("Grounded proposals require obtained material IDs and evidence_refs")
+        material_field = ("basis_info_unit_ids" if self.kind == "evidence_gap" else
+                          "addressing_info_unit_ids" if self.kind == "evidence_gap_update" else "info_unit_ids")
         for field in ("hypothesis_ids", material_field):
             if len(getattr(self, field)) != len(set(getattr(self, field))):
                 raise ValueError(f"Duplicate {field}")
@@ -158,6 +160,8 @@ class ProposalBase(ContractModel):
         elif self.kind == "evidence_link":
             valid = (self.content is None and len(self.hypothesis_ids) + len(self.hypothesis_proposal_ids) == 1
                      and len(self.info_unit_ids) == 1 and self.meaning is not None and self.judgment is None)
+        elif self.kind == "evidence_gap_update":
+            valid = self.content is None and not self.hypothesis_ids and self.meaning is None and self.judgment is None
         else:
             valid = self.content is None and len(self.hypothesis_ids) == 1 and self.meaning is None and self.judgment is not None
         if not valid:
@@ -175,13 +179,24 @@ class EvidenceGapProposal(ProposalBase):
     basis_info_unit_ids: Annotated[list[Text], Field(max_length=5)]
 
 
-ReasoningProposal = Annotated[MaterialProposal | EvidenceGapProposal, Field(discriminator="kind")]
+class EvidenceGapUpdateProposal(ProposalBase):
+    kind: Literal["evidence_gap_update"]
+    gap_id: Text
+    addressing_info_unit_ids: Annotated[list[Text], Field(min_length=1, max_length=5)]
+    status: Literal["open", "resolved"]
+
+
+ReasoningProposal = Annotated[MaterialProposal | EvidenceGapProposal | EvidenceGapUpdateProposal, Field(discriminator="kind")]
 PROPOSAL_ADAPTER = TypeAdapter(ReasoningProposal)
 
 
 def proposal_material_ids(proposal: ReasoningProposal) -> list[str]:
     """References used for citation validation and adoption staleness checks."""
-    return proposal.basis_info_unit_ids if proposal.kind == "evidence_gap" else proposal.info_unit_ids
+    if proposal.kind == "evidence_gap":
+        return proposal.basis_info_unit_ids
+    if proposal.kind == "evidence_gap_update":
+        return proposal.addressing_info_unit_ids
+    return proposal.info_unit_ids
 
 
 class AcceptReasoningProposal(ContractModel):

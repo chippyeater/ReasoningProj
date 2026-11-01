@@ -93,7 +93,7 @@ class TestInvestigationAgent(unittest.TestCase):
         self.assertEqual(first["materials"]["info_units"]["items"], [])
         for call in calls:
             self.assertEqual(len(call["messages"]), 2)
-            self.assertEqual(len(call["definitions"]), 8)
+            self.assertEqual(len(call["definitions"]), 9)
             self.assertEqual(call["tool_choice"], "auto")
             schema = json.dumps(call["definitions"])
             for field in ("question_ids", "step_id", "update_questions", "update_investigation_steps"):
@@ -191,7 +191,7 @@ class TestInvestigationAgent(unittest.TestCase):
         result, calls = self.run_script("核对", [*reads, finish("核对", status="budget_exhausted")], case=case)
         self.assertEqual(result["completion_status"], "budget_exhausted")
         self.assertEqual({d["function"]["name"] for d in calls[-1]["definitions"]}, {
-            "finish_investigation", "propose_hypothesis", "propose_evidence_gap", "propose_evidence_link", "propose_hypothesis_status"})
+            "finish_investigation", "propose_hypothesis", "propose_evidence_gap", "propose_evidence_link", "propose_hypothesis_status", "propose_evidence_gap_update"})
 
     def test_repeated_read_stops_without_publishing_an_answer(self):
         result, _ = self.run_script("核对", [tool("get_evidence", {"info_unit_ids": ["U029"]}, str(i)) for i in range(4)])

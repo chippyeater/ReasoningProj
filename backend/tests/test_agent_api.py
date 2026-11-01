@@ -44,7 +44,7 @@ class TestAgentAPI(unittest.TestCase):
         self.assertEqual(response.json()["evidence"][0]["start"], ref.start)
         self.assertNotIn("planned_actions", json.dumps(response.json()))
         definitions = {d["function"]["name"]: d["function"] for d in requests[0]["tools"]}
-        self.assertEqual(len(definitions), 8)
+        self.assertEqual(len(definitions), 9)
         self.assertNotIn("update_investigation_steps", definitions)
         self.assertNotIn("question_state", response.json())
         self.assertNotIn("phase", response.json())
