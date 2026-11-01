@@ -24,7 +24,9 @@ def proposal_call(source, prior_ids, call_id):
     """Offline scenario -> native call, using only IDs returned by previous tools."""
     kind = source["kind"]
     args = {key: source[key] for key in ("rationale", "evidence_refs")}
-    if kind == "evidence_link":
+    if kind == "evidence_gap_update":
+        args.update(gap_id=source["gap_id"], addressing_info_unit_ids=source["addressing_info_unit_ids"], status=source["status"])
+    elif kind == "evidence_link":
         args.update(hypothesis_id=source["hypothesis_ids"][0] if source["hypothesis_ids"] else None,
                     info_unit_id=source["info_unit_ids"][0], meaning=source["meaning"],
                     hypothesis_proposal_ids=source.get("hypothesis_proposal_ids", [
@@ -110,7 +112,9 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertEqual(linked.status_code, 200, linked.text)
         link = get_issue_workspaces(self.case).workspaces[self.issue].reasoning.links[0]
         self.assertEqual((link.origin, link.meaning, link.info_unit_id), ("agent", "oppose", "U029"))
-        # Later proposals based on the old target must not overwrite subsequent edits.
+        # Independent evidence additions share the expected target revisions.
+        self.assertEqual(self.accept(run_id, 2).status_code, 200)
+        # Judgment changes still need the original evidence reasoning state.
         self.assertEqual(self.accept(run_id, 3).status_code, 409)
 
     def test_user_corrections_and_evidence_changes_invalidate_old_suggestions(self):
