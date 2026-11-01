@@ -506,10 +506,11 @@ def build_quote_model_input(case: CaseData, file_ids: list[str] | None = None,
     }
 
 
-def quote_catalog(case: CaseData, events: list[QuoteIndexEvent] | None = None) -> dict[str, tuple[QuoteUnit, CaseFile]]:
+def quote_catalog(case: CaseData, events: list[QuoteIndexEvent] | None = None,
+                  *, file_ids: list[str] | None = None) -> dict[str, tuple[QuoteUnit, CaseFile]]:
     files = {file.file_id: file for file in case.files}
     catalog: dict[str, tuple[QuoteUnit, CaseFile]] = {}
-    for index in quote_indexes_for_case(case, events=events):
+    for index in quote_indexes_for_case(case, file_ids=file_ids, events=events):
         for unit in index.units:
             if unit.quote_id in catalog:
                 raise AppError("duplicate_quote_id", f"Duplicate Quote Unit ID: {unit.quote_id}", 409)

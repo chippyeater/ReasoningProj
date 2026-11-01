@@ -138,22 +138,24 @@ class TestExtractionAPI(IsolatedCaseTest):
         run = stored.stage_runs[-1]
         audit = json.loads((self.data_dir / case["case_id"] / run.output_snapshot_path).read_text(encoding="utf-8"))
         self.assertEqual(audit["excluded_unparsed_files"][0]["parse_status"], "unsupported")
+        self.assertEqual(extraction_service.pending_extraction_files(stored), [])
 
-    def test_existing_results_block_rerun_before_model_call(self):
+    def test_no_new_files_is_a_noop_without_model_call_or_run(self):
         case = self.registered_case()
         fid = case["files"][0]["file_id"]
         response, _ = self.run_with_reply(case, model_result([model_unit(fid, self.evidence(case, "甲：我已付款"))]))
         self.assertEqual(response.status_code, 200)
         valid = response.json()
+        before = (self.data_dir / case["case_id"] / "case.json").read_bytes()
         with patch.object(llm_client, "call_structured", new=AsyncMock()) as call:
             response = self.client.post("/api/extraction/run", json={"case_id": case["case_id"]})
-        self.assertEqual(response.status_code, 409, response.text)
-        self.assertEqual(response.json()["detail"]["code"], "extraction_existing_results_conflict")
+        self.assertEqual(response.status_code, 204, response.text)
+        self.assertEqual(response.content, b"")
         call.assert_not_awaited()
         stored = case_store.load_case(case["case_id"])
         self.assertEqual(stored.info_units[0].id, valid["info_units"][0]["id"])
         self.assertEqual(stored.core_issue, valid["core_issue"])
-        self.assertEqual(stored.stage_runs[-1].status.value, "failed")
+        self.assertEqual((self.data_dir / case["case_id"] / "case.json").read_bytes(), before)
 
     def test_model_call_failures_are_502_and_raw_errors_are_redacted(self):
         case = self.registered_case()

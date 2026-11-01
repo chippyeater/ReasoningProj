@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -54,13 +55,43 @@ def _write_audit(case_id: str, run: StageRun, audit: dict) -> None:
     write_json(artifact_path(case_id, f"runs/{run.id}.stage.json"), run.model_dump(mode="json"))
 
 
+def pending_extraction_files(case: CaseData) -> list[str]:
+    """Only committed StageRuns establish file coverage; standalone audits do not."""
+    processed: set[str] = set()
+    missing: set[str] = set()
+    baselined: set[str] = set()
+    successful = [run for run in case.stage_runs
+                  if run.stage == PipelineStage.extraction and run.status == RunStatus.success]
+    known_files = {file.file_id for file in case.files}
+    for run in successful:
+        try:
+            snapshot = json.loads(artifact_path(case.case_id, run.input_snapshot_path).read_text(encoding="utf-8"))
+            ids = [file["file_id"] for file in snapshot["model_input"]["files"]]
+            covered_runs = snapshot.get("historical_run_ids", [])
+            if (not ids or any(not isinstance(fid, str) or fid not in known_files for fid in ids)
+                    or len(ids) != len(set(ids)) or not isinstance(covered_runs, list)
+                    or any(not isinstance(rid, str) for rid in covered_runs)):
+                raise ValueError("Missing file scope")
+            processed.update(ids)
+            baselined.update(covered_runs)
+        except (OSError, ValueError, TypeError, KeyError, AppError):
+            missing.add(run.id)
+    if missing - baselined or (case.info_units and not successful):
+        raise AppError(
+            "extraction_history_baseline_required",
+            "无法确定历史提取范围。请先使用 scripts/baseline_extraction.py 核对并登记旧文件；不会自动重提取已有材料。",
+            409)
+    return [file.file_id for file in case.files
+            if file.parse_status == ParseStatus.parsed and file.file_id not in processed]
+
+
 async def _validate_repair_and_materialize(
         payload: dict[str, Any], case: CaseData, *, config: llm_client.LLMConfig,
         repair_prompt: LoadedPrompt, run: StageRun, audit: dict,
-        trace: RunTrace) -> tuple[ExtractionOutput, list[dict]]:
+        trace: RunTrace, file_ids: list[str]) -> tuple[ExtractionOutput, list[dict]]:
     with trace.observation(
             "Extraction · validate candidates", as_type="guardrail", input=payload) as validation_span:
-        initial_report = validate_extraction_candidates(payload, case)
+        initial_report = validate_extraction_candidates(payload, case, file_ids=file_ids)
         initial_validation = initial_report.audit_payload()
         validation_span.update(
             output=initial_validation,
@@ -80,7 +111,7 @@ async def _validate_repair_and_materialize(
         repair_input = {
             "failed_items": repair_items(
                 initial_report.ordered_ids, initial_report.raw_by_id, initial_report.errors),
-            "evidence_candidates": extraction_repair_evidence(case, failed_items),
+            "evidence_candidates": extraction_repair_evidence(case, failed_items, file_ids=file_ids),
             "entity_dependencies": [
                 {
                     "local_id": item.local_id, "type": item.type,
@@ -162,7 +193,7 @@ async def _validate_repair_and_materialize(
         with trace.observation(
                 "Extraction Validation Repair · revalidate", as_type="guardrail",
                 input=combined_payload) as revalidation_span:
-            final_report = validate_extraction_candidates(combined_payload, case)
+            final_report = validate_extraction_candidates(combined_payload, case, file_ids=file_ids)
             revalidation = final_report.audit_payload()
             revalidation_span.update(
                 output=revalidation,
@@ -195,7 +226,7 @@ async def _validate_repair_and_materialize(
             "Extraction · materialize accepted candidates", as_type="guardrail",
             input=draft.model_dump(mode="json")) as materialize_span:
         try:
-            result, merges = materialize_extraction(draft, case, diagnostics)
+            result, merges = materialize_extraction(draft, case, diagnostics, file_ids=file_ids)
         except ExtractionFailure as exc:
             materialize_span.update(
                 output={"valid": False, "diagnostics": exc.diagnostics or diagnostics,
@@ -208,7 +239,11 @@ async def _validate_repair_and_materialize(
     return result, merges
 
 
-async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> ExtractionOutput:
+async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> ExtractionOutput | None:
+    # A no-op or unresolved historical scope is not a failed model run.
+    parsed_ids = pending_extraction_files(case)
+    if not parsed_ids:
+        return None
     run_id = f"run-{uuid4().hex}"
     workflow_id = workflow_id or f"workflow-{uuid4().hex}"
     run = StageRun(id=run_id, stage=PipelineStage.extraction, status=RunStatus.failed,
@@ -224,21 +259,13 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
                    "model_content": None, "parsed_result": None, "result": None, "errors": [],
                    "active_step": "preparation", "model_request_attempts": 0,
                    "initial_validation": None, "repair": None, "revalidation": None,
-                   "accepted_count": 0, "discarded_count": 0, "model_calls": []}
+                   "accepted_count": 0, "discarded_count": 0, "model_calls": [],
+                   "selected_file_ids": parsed_ids}
     initial_snapshot = _snapshot_bytes(case.case_id)
     try:
-        # This stage always sees every parsed file in the case; selection is not
-        # used to silently bypass an otherwise valid source.
-        if case.info_units:
-            raise AppError(
-                "extraction_existing_results_conflict",
-                "Extraction will not overwrite existing InfoUnits without a safe refresh strategy", 409)
-        parsed_ids = [f.file_id for f in case.files if f.parse_status == ParseStatus.parsed]
         audit["excluded_unparsed_files"] = [
             {"file_id": f.file_id, "parse_status": f.parse_status.value, "error_message": f.error_message}
             for f in case.files if f.parse_status != ParseStatus.parsed]
-        if not parsed_ids:
-            raise AppError("no_parsed_files", "The case has no successfully parsed files")
         quote_index_events: list[QuoteIndexEvent] = []
         model_input = build_quote_model_input(case, parsed_ids, quote_index_events)
         audit["input_quote_indexes"] = [event.model_dump(mode="json") for event in quote_index_events]
@@ -250,7 +277,7 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
             f.file_id: f.source_kind.value for f in case.files if f.file_id in parsed_ids}
         write_json(artifact_path(case.case_id, run.input_snapshot_path), llm_client.redact({
             "run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
-            "model_input": model_input, "system_prompt": prompt.content,
+            "model_input": model_input, "selected_file_ids": parsed_ids, "system_prompt": prompt.content,
             "validation_repair_prompt": repair_prompt.content,
             "prompts": {
                 item.name: item.metadata(config.model)
@@ -279,7 +306,7 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
         audit["parsed_result"] = payload
         result, merges = await _validate_repair_and_materialize(
             payload, case, config=config, repair_prompt=repair_prompt,
-            run=run, audit=audit, trace=trace)
+            run=run, audit=audit, trace=trace, file_ids=parsed_ids)
         audit["merges"] = merges
         audit["result"] = result.model_dump(mode="json")
         if _snapshot_bytes(case.case_id) != initial_snapshot:
@@ -291,7 +318,7 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
         try:
             candidate = CaseData.model_validate(candidate.model_dump(mode="json"))
         except ValidationError as exc:
-            raise AppError("extraction_state_conflict", "Replacing InfoUnits would invalidate existing case references", 409) from exc
+            raise AppError("extraction_state_conflict", "Merged InfoUnits would invalidate existing case references", 409) from exc
         run.status = RunStatus.success
         audit["active_step"] = "commit"
         audit["status"] = "success"
@@ -299,6 +326,8 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
         _write_audit(case.case_id, run, audit)
         candidate.stage_runs.append(run)
         candidate.updated_at = now_iso()
+        if _snapshot_bytes(case.case_id) != initial_snapshot:
+            raise AppError("case_changed_during_extraction", "Case changed before commit; result was not committed", 409)
         save_case(candidate, set_current=False)
         trace.finish_success({
             "status": audit["result_status"], "accepted_count": audit["accepted_count"],
@@ -333,7 +362,7 @@ async def run_extraction(case: CaseData, *, workflow_id: str | None = None) -> E
             if not artifact_path(case.case_id, run.input_snapshot_path).exists():
                 write_json(artifact_path(case.case_id, run.input_snapshot_path), {
                     "run_id": run_id, "run_name": trace.run_name, "workflow_id": workflow_id,
-                    "case_id": case.case_id, "input_preparation_failed": True})
+                    "case_id": case.case_id, "selected_file_ids": parsed_ids, "input_preparation_failed": True})
             _write_audit(case.case_id, run, audit)
             latest = load_case_snapshot(case.case_id)
             if latest is None:

@@ -260,7 +260,8 @@ def _validate_model_item(item_id: str, raw: dict[str, Any]) -> tuple[ModelInfoUn
         return None, pydantic_issues(item_id, exc)
 
 
-def validate_extraction_candidates(payload: dict[str, Any], case: CaseData) -> ExtractionCandidateReport:
+def validate_extraction_candidates(payload: dict[str, Any], case: CaseData,
+                                   *, file_ids: list[str] | None = None) -> ExtractionCandidateReport:
     """Validate locatable candidates independently, then propagate unsafe dependencies."""
     require_exact_fields(
         payload, {"core_issue", "issue_set", "info_units"},
@@ -280,7 +281,7 @@ def validate_extraction_candidates(payload: dict[str, Any], case: CaseData) -> E
             models_by_id[item_id] = model
 
     index_events: list[QuoteIndexEvent] = []
-    catalog = quote_catalog(case, index_events)
+    catalog = quote_catalog(case, index_events, file_ids=file_ids)
     stale_rebuild = any(event.reason in {"text_hash_changed", "segmentation_version_changed"}
                         for event in index_events)
     source_diagnostics: list[dict[str, Any]] = []
@@ -361,9 +362,10 @@ def _text_signatures(value: str) -> set[str]:
 
 
 def extraction_repair_evidence(case: CaseData, failed_items: list[dict[str, Any]],
-                               *, limit_per_item: int = 10) -> list[dict[str, Any]]:
+                               *, limit_per_item: int = 10,
+                               file_ids: list[str] | None = None) -> list[dict[str, Any]]:
     """Select a bounded, deterministic evidence neighborhood instead of resending all files."""
-    catalog = quote_catalog(case)
+    catalog = quote_catalog(case, file_ids=file_ids)
     selected_ids: set[str] = set()
     for raw in failed_items:
         query = _text_signatures(" ".join(str(raw.get(field) or "")
@@ -399,9 +401,23 @@ def _semantic_key(unit: InfoUnit) -> tuple:
             unit.actor, unit.target, unit.related_issue)
 
 
-def deduplicate_units(units: list[InfoUnit]) -> tuple[list[InfoUnit], list[dict]]:
-    """Conservatively merge exact meanings and repair entity references."""
-    entity_by_key: dict[tuple, InfoUnit] = {}
+def deduplicate_units(units: list[InfoUnit], existing: list[InfoUnit] | None = None) -> tuple[list[InfoUnit], list[dict]]:
+    """Merge incoming exact meanings without rewriting or deduplicating saved nodes."""
+    saved = [unit.model_copy(deep=True) for unit in existing or []]
+    by_key: dict[tuple, list[InfoUnit]] = {}
+    for unit in saved:
+        by_key.setdefault(_semantic_key(unit), []).append(unit)
+    # An ambiguous pair of saved nodes must retain both IDs and references.
+    unique_saved = {key: values[0] for key, values in by_key.items() if len(values) == 1}
+    entity_by_key = {key: unit for key, unit in unique_saved.items() if unit.type == InfoUnitType.entity}
+
+    def append_sources(kept: InfoUnit, incoming: InfoUnit) -> None:
+        keys = {(r.file_id, r.source_kind, r.quote, r.start, r.end) for r in kept.source_refs}
+        for ref in incoming.source_refs:
+            key = (ref.file_id, ref.source_kind, ref.quote, ref.start, ref.end)
+            if key not in keys:
+                kept.source_refs.append(ref)
+                keys.add(key)
     entity_id_map: dict[str, str] = {}
     first_pass: list[InfoUnit] = []
     merges: list[dict] = []
@@ -416,7 +432,7 @@ def deduplicate_units(units: list[InfoUnit]) -> tuple[list[InfoUnit], list[dict]
             first_pass.append(candidate)
         else:
             kept = entity_by_key[key]
-            kept.source_refs.extend(candidate.source_refs)
+            append_sources(kept, candidate)
             entity_id_map[candidate.id] = kept.id
             merges.append({"kept_id": kept.id, "merged_id": candidate.id})
     for unit in first_pass:
@@ -425,19 +441,21 @@ def deduplicate_units(units: list[InfoUnit]) -> tuple[list[InfoUnit], list[dict]
         if unit.target in entity_id_map:
             unit.target = entity_id_map[unit.target]
 
-    combined: dict[tuple, InfoUnit] = {}
+    combined = dict(unique_saved)
+    added: list[InfoUnit] = []
     for unit in first_pass:
         key = _semantic_key(unit)
         if key not in combined:
             combined[key] = unit
+            added.append(unit)
         elif combined[key].id != unit.id:
             existing = combined[key]
-            existing.source_refs.extend(unit.source_refs)
+            append_sources(existing, unit)
             merges.append({"kept_id": existing.id, "merged_id": unit.id})
-    for unit in combined.values():
+    for unit in added:
         refs = {(r.file_id, r.source_kind, r.quote, r.start, r.end): r for r in unit.source_refs}
         unit.source_refs = list(refs.values())
-    return list(combined.values()), merges
+    return [*saved, *added], merges
 
 
 _FULL_DATE = re.compile(r"(?<!\d)(\d{4})\s*(?:年|[-/.])\s*(\d{1,2})\s*(?:月|[-/.])\s*(\d{1,2})\s*日?")
@@ -485,10 +503,11 @@ def assess_evidence_support(content: str, references: list[SourceRef]) -> dict:
 
 
 def materialize_extraction(draft: ModelExtraction, case: CaseData,
-                           diagnostics: dict | None = None) -> tuple[ExtractionOutput, list[dict]]:
+                           diagnostics: dict | None = None, *,
+                           file_ids: list[str] | None = None) -> tuple[ExtractionOutput, list[dict]]:
     """Resolve Quote Unit IDs, allocate formal IDs, and validate atomically."""
     index_events: list[QuoteIndexEvent] = []
-    catalog = quote_catalog(case, index_events)
+    catalog = quote_catalog(case, index_events, file_ids=file_ids)
     stale_rebuild = any(event.reason in {"text_hash_changed", "segmentation_version_changed"}
                         for event in index_events)
     formal_ids = {unit.local_id: f"info-{uuid4().hex}" for unit in draft.info_units}
@@ -545,8 +564,10 @@ def materialize_extraction(draft: ModelExtraction, case: CaseData,
                                     "One or more Quote Unit references could not be materialized", errors=errors)
         failure.diagnostics = detail
         raise failure
-    units, merges = deduplicate_units(units)
-    result = ExtractionOutput(core_issue=draft.core_issue, issue_set=draft.issue_set, info_units=units)
+    units, merges = deduplicate_units(units, case.info_units)
+    result = ExtractionOutput(
+        core_issue=case.core_issue if case.info_units or case.issue_set else draft.core_issue,
+        issue_set=list(dict.fromkeys([*case.issue_set, *draft.issue_set])), info_units=units)
     validation = validate_extraction(case.case_id, ValidationInput(extraction=result, parsed_files=case.files))
     if not validation.valid:
         failure = ExtractionFailure("extraction_source_invalid", "Source validation failed",

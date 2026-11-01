@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
@@ -300,12 +300,14 @@ def pipeline_unavailable(stage: str) -> None:
     raise AppError("pipeline_not_implemented", f"v0.3 {stage} execution is not connected", 501)
 
 
-@app.post("/api/extraction/run", response_model=ExtractionOutput)
-async def extraction_run(payload: ExtractionRunInput) -> ExtractionOutput:
+@app.post("/api/extraction/run", response_model=ExtractionOutput,
+          responses={204: {"description": "没有尚未提取的已解析材料"}})
+async def extraction_run(payload: ExtractionRunInput):
     case = load_case_snapshot(payload.case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found")
-    return await run_extraction(case, workflow_id=payload.workflow_id)
+    result = await run_extraction(case, workflow_id=payload.workflow_id)
+    return Response(status_code=204) if result is None else result
 
 
 @app.post("/api/relation/run", response_model=RelationRunResponse)
