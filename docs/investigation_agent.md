@@ -16,7 +16,9 @@ Findings、Proposal 引用须属于当前案件并实际取得；初始选中/�
 
 首轮调查围绕具体信息需求搜索，不混合不同主题来覆盖全案。搜索过滤本次请求已可见的 InfoUnit，缓存按可见排除集隔离；`has_more` 不要求继续读完。取得的信息足以形成任务所需的探索性假设和缺口时，可以直接提交 Proposal 并结束检索。InfoUnit 内容足以支持探索性推理，原始来源只按具体措辞、时间、金额、主体或冲突核查需要读取；Evidence Link 和 Hypothesis Status 的来源要求保持不变，初始有效引用仍可使用。
 
-一个 Evidence Gap 对应一个具体、可独立核查的缺失条件，说明确认内容、判断影响和明确补证动作/材料类型；独立条件分别建缺口，多份材料验证同一条件可合并。多个竞争性假设可通过正式 Hypothesis ID 或本轮成功返回的 Hypothesis Proposal ID 关联同一个区分性缺口。粒度由 Prompt 和工具描述指导，未新增持久化字段或语义校验器；用户仍逐项采纳。
+一个 Evidence Gap 对应一个具体、可独立核查的缺失条件，说明确认内容、判断影响和明确补证动作/材料类型；独立条件分别建缺口，多份材料验证同一条件可合并。多个竞争性假设可通过正式 Hypothesis ID 或本轮成功返回的 Hypothesis Proposal ID 关联同一个区分性缺口。粒度由 Prompt 和工具描述指导，不引入语义校验器；用户仍逐项采纳。
+
+Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成依据，来源引用只能指向已取得的这些节点；不接受 `addressing_info_unit_ids`。正式 Gap 的回应列表初始为空，后续通过现有工作区编辑接口追加去重，材料关联不自动解决 Gap 或改变假设判断。上下文分别提供形成依据、回应材料及各自截断标记；这些引用本身不授予材料读取权限。Hypothesis、Evidence Link、Hypothesis Status 的 `info_unit_ids` 语义保持不变。已保存工作区的一次性迁移见 `docs/issue_reasoning.md`。
 
 ## 每轮上下文
 

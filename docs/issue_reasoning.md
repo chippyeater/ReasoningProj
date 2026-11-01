@@ -8,7 +8,7 @@
 
 从假设编辑器或右键“关联已有证据”，选择全案 InfoUnit，填写支持/反对/待核实语义与理由。支持为绿色实线，反对为红色虚线，待核实为灰色虚线；点击连线可修改或解除。来源原文在关联编辑器按需展开，可定位原信息。人工/Agent 建议已采纳的来源独立于关联语义，用户修改保留来源并标明人工修正。
 
-“新建证据缺口”或假设中的“添加证据缺口”支持关联多个假设、可选已有信息和未解决/已解决状态。缺口是问题，不是虚构的材料。正式节点复用当前画布选择、拖动、缩放、坐标与 Issue 恢复机制；新节点寻找空位，不重排已有节点。
+“新建证据缺口”或假设中的“添加证据缺口”支持关联多个假设、可选缺口形成依据和未解决/已解决状态。“用于回应缺口的信息”单独展示并可定位 InfoUnit，暂不提供手动编辑回应列表的界面。缺口是问题，不是虚构的材料。正式节点复用当前画布选择、拖动、缩放、坐标与 Issue 恢复机制；新节点寻找空位，不重排已有节点。
 
 保存用户修正后可“请 Agent 检查”，从现有灵动岛发送。Agent 继续按需调用同一组三个只读工具，可返回普通调查答案和可选建议；事实查询不强制生成建议。候选以半透明卡片预览，灵动岛可查看依据、采纳或忽略。采纳前不写正式推理数据，忽略只丢弃本次预览。刷新/切换不保留候选或对话历史。
 
@@ -17,13 +17,13 @@
 沿用 `issue_workspaces.json`，每个 Issue 增加默认空的 `reasoning`：
 
 - `hypotheses`：稳定 ID、内容、判断、工作状态、修订号、最近修改时间/来源、可选采纳凭据。
-- `gaps`：稳定 ID、问题、关联假设 IDs、可选 InfoUnit IDs、解决状态和修订元数据。
+- `gaps`：稳定 ID、问题、关联假设 IDs、`basis_info_unit_ids`（提出缺口的已有信息）、`addressing_info_unit_ids`（创建后累积的回应材料）、解决状态和修订元数据。两类引用独立，不自动复制；同一 InfoUnit 可经明确操作分别关联两种角色。
 - `links`：稳定 ID、InfoUnit 与 Hypothesis IDs、语义、理由、人工/Agent 来源及最近修改者。
 - `accepted_proposals`：服务端运行与建议索引到正式对象的幂等映射。
 
 所属 Issue 由工作区父键确定。业务 InfoUnits、Relations、SourceRefs 不复制、不修改；`HypothesisView` 等既有生成式视图不承担这些可编辑工作对象。旧文件缺少 `reasoning` 时读作空集合，旧坐标与字段保留。引用了某个 InfoUnit 的正式推理关联/缺口会阻止删除该共享信息，避免断开引用。
 
-`PATCH /api/cases/{case_id}/issue-reasoning` 每次接受一个人工操作：`hypothesis`、`gap`、`link` 或 `unlink_id`，绑定 `issue`，可附新节点 `position`。后端分配 ID、修订号和来源，校验所有引用、当前 Issue 归属及重复关联，并通过现有原子 JSON 写入统一保存。
+`PATCH /api/cases/{case_id}/issue-reasoning` 每次接受一个人工操作：`hypothesis`、`gap`、`link` 或 `unlink_id`，绑定 `issue`，可附新节点 `position`。后端分配 ID、修订号和来源，校验所有引用、当前 Issue 归属及重复关联，并通过现有原子 JSON 写入统一保存。Gap 创建时回应列表为空，非空回应只能追加到已有 Gap；编辑时传入 `addressing_info_unit_ids` 与原值按首次出现顺序合并去重，空列表也不会清空旧关联。省略 `basis_info_unit_ids` 或 `status` 时保留原值；显式传入依据列表可替换形成依据，显式传入状态才改变解决状态。追加回应不会改变 Hypothesis 的 judgment。两类引用都校验当前 Case ID 范围，都阻止删除被引用的 InfoUnit，引用类型分别为 `evidence_gap_basis` / `evidence_gap_addressing`。
 
 `POST /api/cases/{case_id}/reasoning-proposals/accept` 使用 `issue/run_id/proposal_id/position`，不接受客户端重新编写建议或证据。旧审计仍可用 proposal_index；两个引用字段必须恰选一个。后端从所属运行的已验证成果读取建议，核对 Issue、材料摘要和目标修订后原子写入正式对象、画布和幂等映射。重复采纳返回已有对象；材料或用户推理改变后旧建议返回冲突。修改关联或缺口同样推进假设修订。
 
@@ -35,11 +35,24 @@ hypothesis_ids 保留引用有限上下文中已有假设的方式。Evidence Ga
 
 新幂等键为 `run_id:proposal_id`，从已采纳映射找到真实假设 ID。依赖新假设的缺口或证据关联都必须等用户先采纳父假设，再独立采纳；不连带采纳、不猜测关联。父假设和材料须未过期；同轮其他已采纳缺口/关联引起的已知修订递增允许继续采纳。用户的其他修改仍会使旧建议失效。
 
-旧运行缺少 proposal_id 时仍按原顺序、hypothesis_proposal_indices 和 `run_id:index` 采纳，无迁移或历史改写；新工具不接收数组索引。正式工作区结构没有新增字段。
+Gap Proposal 只接收 `basis_info_unit_ids`，不接收通用 `info_unit_ids` 或回应列表；其他三类 Proposal 继续使用 `info_unit_ids`，不接收 Gap 专属字段。kind 判别的联合契约校验各自字段；形成依据参与已取得材料/SourceRef 校验和采纳前的材料哈希检查，正式 Gap 采纳后回应列表为空。所有建议仍需逐项采纳。
+
+符合当前字段契约的运行若缺少 proposal_id，仍可按原顺序、hypothesis_proposal_indices 和 `run_id:index` 采纳；新工具不接收数组索引。历史审计与 Trace 不改写，含旧 Gap 字段的待采纳建议不由运行时隐式转换，需重新调查。
 
 总结失败时，成功工具提交的合法成果独立保留，审计为 partial，界面明确显示总结失败；用户仍可明确采纳已验证建议。没有合法成果的失败不会显示成功结果，任何正式对象都不会因为工具调用或总结自动创建。
 
-请求可传最多 3 个 `selected_reasoning_ids`。上下文优先显式选择、其关联缺口、目标关键词与最新修改，最多 3 个工作对象候选、3 个相关假设和 5 条关联；内容摘要最多 300 字、理由最多 160 字，显式标记是否仍有省略。内容、判断、弃用状态和修订号来自最新用户保存值，不注入完整画布/全部推理/历史对话；其中引用的 InfoUnit IDs 不等于已读证据，仍需按需工具读取。Issue 状态仍完全由用户控制。
+请求可传最多 3 个 `selected_reasoning_ids`。上下文优先显式选择、其关联缺口、目标关键词与最新修改，最多 3 个工作对象候选、3 个相关假设和 5 条关联；内容摘要最多 300 字、理由最多 160 字，显式标记是否仍有省略。Gap 两类 InfoUnit 引用分别最多投影 5 条，各带 `basis_info_unit_ids_truncated` / `addressing_info_unit_ids_truncated`；完整列表仍保存在工作区中。内容、判断、弃用状态和修订号来自最新用户保存值，不注入完整画布/全部推理/历史对话；其中引用的 InfoUnit IDs 不等于已读证据，仍需按需工具读取。Issue 状态仍完全由用户控制。
+
+## 已保存 Gap 的一次性迁移
+
+工作区没有独立 Schema 版本注册；本次不修改 Extraction/CaseData Schema 版本。生产模型只接受拆分后的字段。迁移脚本先验证整份新工作区及当前案件 InfoUnit 引用，保留其他字段、稳定 ID、状态、修订、画布和采纳记录原值；`--apply` 前保存逐字节原文件备份 `issue_workspaces.json.before-gap-reference-split.bak`，通过现有原子写入保存。重复执行不再改写，混合新旧字段或备份冲突明确失败。应在停止该工作区写入时执行，脚本不会迁移历史运行审计。
+
+```powershell
+backend/.venv/Scripts/python.exe scripts/migrate_gap_references.py backend/data/<case_id>/issue_workspaces.json
+backend/.venv/Scripts/python.exe scripts/migrate_gap_references.py backend/data/<case_id>/issue_workspaces.json --apply
+```
+
+旧 Gap 的 `info_unit_ids` 原样转为 `basis_info_unit_ids`，`addressing_info_unit_ids` 初始化为空；无运行时别名或旧字段 fallback。
 
 所有模型输入、工具返回及最终建议沿用现有审计与 Langfuse 机制。错误按 JSON 解析、结构、Proposal 语义及引用分类记录字段路径和错误码；即使追踪不采集内容，也保留不含案件文本的错误位置及类别。调查阶段只写独立运行审计；正式工作区只能由人工编辑或明确采纳接口写入。
 
