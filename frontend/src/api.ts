@@ -378,17 +378,22 @@ export type Judgment = "unverified" | "verified" | "refuted";
 export type LinkMeaning = "support" | "oppose" | "verify";
 export type Hypothesis = { id: string; content: string; judgment: Judgment; work_status: "active" | "deprecated";
   revision: number; updated_at: string; last_edited_by: "user" | "agent_accepted"; proposal_key: string | null };
-export type EvidenceGap = { id: string; content: string; hypothesis_ids: string[]; info_unit_ids: string[];
+export type EvidenceGap = { id: string; content: string; hypothesis_ids: string[];
+  basis_info_unit_ids: string[]; addressing_info_unit_ids: string[];
   status: "open" | "resolved"; revision: number; updated_at: string; last_edited_by: "user" | "agent_accepted"; proposal_key: string | null };
 export type EvidenceLink = { id: string; hypothesis_id: string; info_unit_id: string; meaning: LinkMeaning;
   rationale: string; origin: "user" | "agent"; last_edited_by: "user" | "agent_accepted"; proposal_key: string | null };
 export type ReasoningState = { hypotheses: Hypothesis[]; gaps: EvidenceGap[]; links: EvidenceLink[]; accepted_proposals: Record<string, string> };
-export type ReasoningProposal = { kind: "hypothesis" | "evidence_link" | "evidence_gap" | "hypothesis_status";
-  content: string | null; hypothesis_ids: string[]; info_unit_ids: string[]; meaning: LinkMeaning | null;
+type ProposalFields = {
+  content: string | null; hypothesis_ids: string[]; meaning: LinkMeaning | null;
   judgment: Judgment | null; rationale: string; evidence_refs: AgentEvidenceRef[];
   proposal_id?: string | null; hypothesis_proposal_ids?: string[]; hypothesis_proposal_indices?: number[] };
+export type ReasoningProposal = ProposalFields & (
+  { kind: "evidence_gap"; basis_info_unit_ids: string[] } |
+  { kind: "hypothesis" | "evidence_link" | "hypothesis_status"; info_unit_ids: string[] });
 export type ReasoningEdit = { issue: string; hypothesis?: { id?: string; content: string; judgment: Judgment; work_status: "active" | "deprecated" };
-  gap?: { id?: string; content: string; hypothesis_ids: string[]; info_unit_ids: string[]; status: "open" | "resolved" };
+  gap?: { id?: string; content: string; hypothesis_ids: string[]; basis_info_unit_ids?: string[];
+    addressing_info_unit_ids?: string[]; status?: "open" | "resolved" };
   link?: { id?: string; hypothesis_id: string; info_unit_id: string; meaning: LinkMeaning; rationale: string };
   unlink_id?: string; position?: CardPosition };
 export type IssueCanvas = V03WorkspaceState & { visible_node_ids: string[] };
@@ -637,8 +642,10 @@ async function readJson<T>(response: Response): Promise<T> {
             if (!item || typeof item !== "object") return [];
             const ref = item as Record<string, unknown>;
             const kind = typeof ref.kind === "string" ? ref.kind : "reference";
-            if (kind === "hypothesis_evidence" || kind === "evidence_gap")
-              return [`议题「${typeof ref.issue === "string" ? ref.issue : "当前议题"}」中的${kind === "hypothesis_evidence" ? "假设证据关联" : "证据缺口"}`];
+            const reasoningKinds: Record<string, string> = { hypothesis_evidence: "假设证据关联",
+              evidence_gap_basis: "缺口形成依据", evidence_gap_addressing: "缺口回应材料" };
+            if (reasoningKinds[kind])
+              return [`议题「${typeof ref.issue === "string" ? ref.issue : "当前议题"}」中的${reasoningKinds[kind]}`];
             const id = typeof ref.id === "string" ? ref.id : "unknown";
             const field = typeof ref.field === "string" ? `.${ref.field}` : "";
             return [`${kind}:${id}${field}`];

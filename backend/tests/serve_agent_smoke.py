@@ -52,6 +52,16 @@ async def model(config, messages, definitions, schema=None, **kwargs):
             formal = state["reasoning"]["hypotheses"]
             if formal:
                 candidates.extend([suggestion("evidence_gap", formal[0]["id"]), suggestion("hypothesis_status", formal[0]["id"])])
+    # Explicit protocol scenarios used by reasoning-workspace-smoke.cjs.
+    if "同轮" in goal or "总结失败" in goal:
+        first, second = suggestion("hypothesis"), suggestion("hypothesis")
+        second["content"] = "同轮新假设：入住虽有间隔，但计租连续，租金可能未减少。"
+        gaps = []
+        for content in ("核对同轮假设的租金流水。", "核对同轮假设的交房记录。"):
+            gap = suggestion("evidence_gap")
+            gap.update(content=content, hypothesis_proposal_indices=[1])
+            gaps.append(gap)
+        candidates = [first, second, *gaps]
     if len(proposals) < len(candidates):
         return proposal_call(candidates[len(proposals)], [p["proposal_id"] for p in proposals], f"proposal-{len(proposals)}")
     if "总结失败" in goal:

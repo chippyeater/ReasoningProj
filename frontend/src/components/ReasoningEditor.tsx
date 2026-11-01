@@ -20,7 +20,7 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
   const [workStatus, setWorkStatus] = useState<"active" | "deprecated">(hypothesis?.work_status ?? "active");
   const [gapStatus, setGapStatus] = useState<"open" | "resolved">(gap?.status ?? "open");
   const [hypothesisIds, setHypothesisIds] = useState<string[]>(gap?.hypothesis_ids ?? [target.hypothesisId ?? state.hypotheses[0]?.id].filter(Boolean) as string[]);
-  const [infoIds, setInfoIds] = useState<string[]>(gap?.info_unit_ids ?? []);
+  const [infoIds, setInfoIds] = useState<string[]>(gap?.basis_info_unit_ids ?? []);
   const [hypothesisId, setHypothesisId] = useState(link?.hypothesis_id ?? target.hypothesisId ?? state.hypotheses[0]?.id ?? "");
   const [infoId, setInfoId] = useState(link?.info_unit_id ?? target.infoUnitId ?? caseData.info_units[0]?.id ?? "");
   const [meaning, setMeaning] = useState<LinkMeaning>(link?.meaning ?? "verify");
@@ -32,7 +32,7 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
   function submit() {
     const edit: ReasoningEdit = { issue };
     if (target.kind === "hypothesis") edit.hypothesis = { id: target.id, content, judgment, work_status: workStatus };
-    else if (target.kind === "gap") edit.gap = { id: target.id, content, hypothesis_ids: hypothesisIds, info_unit_ids: infoIds, status: gapStatus };
+    else if (target.kind === "gap") edit.gap = { id: target.id, content, hypothesis_ids: hypothesisIds, basis_info_unit_ids: infoIds, status: gapStatus };
     else edit.link = { id: target.id, hypothesis_id: hypothesisId, info_unit_id: infoId, meaning, rationale };
     onSave(edit);
   }
@@ -40,7 +40,7 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
     : Boolean(content.trim() && (target.kind !== "gap" || hypothesisIds.length));
   const dirty = target.kind === "hypothesis" ? content !== hypothesis?.content || judgment !== hypothesis?.judgment || workStatus !== hypothesis?.work_status
     : target.kind === "gap" ? content !== gap?.content || gapStatus !== gap?.status
-      || JSON.stringify(hypothesisIds) !== JSON.stringify(gap?.hypothesis_ids) || JSON.stringify(infoIds) !== JSON.stringify(gap?.info_unit_ids) : false;
+      || JSON.stringify(hypothesisIds) !== JSON.stringify(gap?.hypothesis_ids) || JSON.stringify(infoIds) !== JSON.stringify(gap?.basis_info_unit_ids) : false;
   return <div className="info-unit-editor-backdrop" onMouseDown={event => event.stopPropagation()}>
     <section className="info-unit-editor reasoning-editor" role="dialog" aria-modal="true" aria-label={`${target.id ? "编辑" : "新建"}${label}`}>
       <header><h2>{target.id ? "编辑" : "新建"}{label}</h2><button type="button" disabled={busy} onClick={onClose}>关闭推理编辑器</button></header>
@@ -69,7 +69,13 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
       {target.kind === "gap" ? <>
         <label>缺口状态<select aria-label="缺口状态" value={gapStatus} onChange={event => setGapStatus(event.target.value as typeof gapStatus)}><option value="open">未解决</option><option value="resolved">已解决</option></select></label>
         <fieldset><legend>关联假设（至少一个）</legend>{state.hypotheses.map(item => <label key={item.id}><input type="checkbox" checked={hypothesisIds.includes(item.id)} onChange={() => setHypothesisIds(toggle(hypothesisIds, item.id))} />{item.content}</label>)}</fieldset>
-        <details><summary>关联已有信息（可选）</summary>{caseData.info_units.map(item => <label key={item.id}><input type="checkbox" checked={infoIds.includes(item.id)} onChange={() => setInfoIds(toggle(infoIds, item.id))} />{item.title}</label>)}</details>
+        <details><summary>缺口形成依据（可选）</summary>{caseData.info_units.map(item => <label key={item.id}><input type="checkbox" checked={infoIds.includes(item.id)} onChange={() => setInfoIds(toggle(infoIds, item.id))} />{item.title}
+          {infoIds.includes(item.id) ? <button type="button" onClick={() => onLocate(item.id)}>定位信息</button> : null}</label>)}</details>
+        <section aria-label="用于回应缺口的信息"><h3>用于回应缺口的信息</h3>
+          {gap?.addressing_info_unit_ids.length ? gap.addressing_info_unit_ids.map(id =>
+            <button type="button" key={id} onClick={() => onLocate(id)}>{unitTitle(id)}</button>) : <p>尚未关联回应材料。</p>}
+          <p>关联材料不代表缺口已解决，状态由明确判断决定。</p>
+        </section>
       </> : null}
       {target.kind === "link" ? <>
         <label>关联假设<select aria-label="关联假设" value={hypothesisId} onChange={event => setHypothesisId(event.target.value)}>{state.hypotheses.map(item => <option value={item.id} key={item.id}>{item.content}</option>)}</select></label>

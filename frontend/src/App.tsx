@@ -3292,9 +3292,9 @@ export default function App() {
                 <strong>Agent 候选 · {item.kind === "hypothesis" ? "假设" : item.kind === "evidence_gap" ? "证据缺口" : item.kind === "evidence_link" ? meanings[item.meaning!] : "判断建议"}</strong>
                 <p>{link ? `「${currentCase?.info_units.find(u => u.id === link.sourceId)?.title ?? "相关材料"}」→「${currentCase ? reasoningText(link.title, currentCase, reasoning) : link.title}」`
                   : currentCase ? reasoningText(item.content ?? reasoning.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "待确认的推理建议", currentCase, reasoning, agentResult?.evidence) : "待确认建议"}</p>
-                <details id={`candidate-preview-${index}`}><summary>预览建议依据</summary>
+                <details id={`candidate-preview-${index}`}><summary>{item.kind === "evidence_gap" ? "预览缺口形成依据" : "预览建议依据"}</summary>
                   <p>{currentCase ? reasoningText(item.rationale, currentCase, reasoning, agentResult?.evidence) : item.rationale}</p>
-                  {item.info_unit_ids.map(id => <button type="button" key={id} onClick={() => locateAgentNode(id)}>定位{currentCase?.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}
+                  {(item.kind === "evidence_gap" ? item.basis_info_unit_ids : item.info_unit_ids).map(id => <button type="button" key={id} onClick={() => locateAgentNode(id)}>定位{currentCase?.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}
                 </details>
                 {!item.evidence_refs.length ? <p>尚无直接来源依据，待检验。</p> : null}
                 {pending ? <p>请先采纳关联假设；可在灵动岛查看关联。</p> : null}

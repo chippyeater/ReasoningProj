@@ -15,7 +15,7 @@ const api = 'http://127.0.0.1:8018';
     const before = (await (await page.request.get(`${api}/api/case`)).json()).case;
     const issue = before.issue_set[1];
     const stateUrl = `${api}/api/cases/${before.case_id}/issue-workspaces`;
-    await page.goto('http://127.0.0.1:5178');
+    await page.goto('http://127.0.0.1:5178', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => document.querySelector('[role=tab][aria-selected=true]'));
     const tab = name => page.getByRole('tab', { name, exact: true });
     async function saved() { await page.waitForFunction(() => !document.querySelector('.workspace-save-state')?.textContent); }
@@ -76,12 +76,37 @@ const api = 'http://127.0.0.1:8018';
     await editor.getByRole('button', { name: '添加证据缺口', exact: true }).click();
     await editor.getByLabel('缺口问题', { exact: true }).fill('是否存在替租人的实际入住记录和新租约？');
     await editor.getByLabel('房东可能没有实际空置损失，仍需核对。', { exact: true }).check();
-    await editor.getByText('关联已有信息（可选）', { exact: true }).click();
+    await editor.getByText('缺口形成依据（可选）', { exact: true }).click();
     await editor.getByLabel(before.info_units.find(u => u.id === 'U026').title, { exact: true }).check();
     await save();
     work = await current();
     const gap = work.reasoning.gaps.at(-1);
     assert.deepEqual([...gap.hypothesis_ids].sort(), [h1, h2].sort());
+    assert.deepEqual(gap.basis_info_unit_ids, ['U026']);
+    assert.deepEqual(gap.addressing_info_unit_ids, []);
+    // Addressing material accumulates through the existing API, independently
+    // of the editable basis and without automatically resolving the Gap.
+    const editUrl = `${api}/api/cases/${before.case_id}/issue-reasoning`;
+    for (const ids of [['U027'], ['U004', 'U027']]) {
+      const result = await page.request.patch(editUrl, { data: { issue, gap: {
+        id: gap.id, content: gap.content, hypothesis_ids: gap.hypothesis_ids, addressing_info_unit_ids: ids,
+      } } });
+      assert.equal(result.status(), 200);
+    }
+    await page.reload(); await saved();
+    work = await current();
+    const addressed = work.reasoning.gaps.find(g => g.id === gap.id);
+    assert.deepEqual(addressed.basis_info_unit_ids, ['U026']);
+    assert.deepEqual(addressed.addressing_info_unit_ids, ['U027', 'U004']);
+    assert.equal(addressed.status, 'open');
+    assert.equal(work.reasoning.hypotheses.find(h => h.id === h1).judgment, 'unverified');
+    await page.locator(`[data-node-id="${gap.id}"]`).getByRole('button', { name: '查看与编辑' }).click();
+    const addressing = editor.getByRole('region', { name: '用于回应缺口的信息' });
+    assert.equal(await addressing.getByRole('button').count(), 2);
+    assert.equal(await addressing.getByRole('checkbox').count(), 0);
+    await addressing.getByRole('button', { name: before.info_units.find(u => u.id === 'U027').title, exact: true }).click();
+    await editor.waitFor({ state: 'hidden' }); await saved();
+    assert.equal(await page.locator('[data-node-id="U027"]').count(), 1);
     await page.locator(`[data-node-id="${gap.id}"]`).getByRole('button', { name: '查看与编辑' }).click();
     await editor.getByLabel('缺口状态', { exact: true }).selectOption('resolved'); await save();
     // Move the second Hypothesis, and restore exact layout after Issue switches/reload.

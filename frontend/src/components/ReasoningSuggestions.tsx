@@ -33,7 +33,7 @@ export function ReasoningSuggestions({ result, state, caseData, dismissed, busy,
         : text(item.content ?? state.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "检查现有推理")}</p>
       {pending ? <p>请先采纳关联假设，再采纳此{item.kind === "evidence_link" ? "证据关联" : "缺口"}。若已忽略该假设，请重新调查。</p> : null}
       {targets.length ? <details><summary>关联假设</summary>{targets.map((target, offset) => <p key={offset}>{target.accepted ? "已采纳" : "待采纳"} · {text(target.title)}</p>)}</details> : null}
-      <details><summary>查看建议依据</summary><p>{text(item.rationale)}</p>{item.info_unit_ids.map(id => <button type="button" key={id} onClick={() => onLocate(id)}>{caseData.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}</details>
+      <details><summary>{item.kind === "evidence_gap" ? "缺口形成依据" : "查看建议依据"}</summary><p>{text(item.rationale)}</p>{(item.kind === "evidence_gap" ? item.basis_info_unit_ids : item.info_unit_ids).map(id => <button type="button" key={id} onClick={() => onLocate(id)}>{caseData.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}</details>
       <button type="button" disabled={busy || pending} onClick={() => onAccept(index)}>采纳建议</button><button type="button" disabled={busy} onClick={() => onIgnore(index)}>忽略建议</button>
     </article>; })}
     </details>{error ? <p role="alert">{error}</p> : null}
