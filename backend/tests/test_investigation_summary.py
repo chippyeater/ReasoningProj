@@ -6,12 +6,12 @@ import test_investigation_agent as fixture
 from test_reasoning_proposals import suggestion, proposal_call
 from app import investigation_agent as agent
 from app.errors import AppError
-from app.reasoning_models import ReasoningProposal
+from app.reasoning_models import PROPOSAL_ADAPTER
 
 
 class TestSummaryValidation(unittest.TestCase):
     def proposal(self, **values):
-        return ReasoningProposal.model_validate({**suggestion("hypothesis"), **values})
+        return PROPOSAL_ADAPTER.validate_python({**suggestion("hypothesis"), **values})
 
     def test_short_facts_and_modestly_longer_complex_answers_preserve_markdown(self):
         for answer in ("据张某陈述，替租人于 3 月 8 日搬入，尚未独立核实。",

@@ -1,7 +1,7 @@
 """Issue reasoning objects, deliberately separate from InfoUnit/Relation Schema."""
 from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
 from app.schemas import ContractModel, Point, Text
 
@@ -25,7 +25,8 @@ class EvidenceGap(ContractModel):
     id: Text
     content: ReasoningText
     hypothesis_ids: list[Text]
-    info_unit_ids: list[Text] = Field(default_factory=list)
+    basis_info_unit_ids: list[Text] = Field(default_factory=list)
+    addressing_info_unit_ids: list[Text] = Field(default_factory=list)
     status: Literal["open", "resolved"] = "open"
     revision: int = 1
     updated_at: Text
@@ -62,7 +63,8 @@ class ReasoningState(ContractModel):
         for gap in self.gaps:
             if not gap.hypothesis_ids or not set(gap.hypothesis_ids) <= hypotheses:
                 raise ValueError("Gap must refer to current Issue hypotheses")
-            if len(gap.hypothesis_ids) != len(set(gap.hypothesis_ids)) or len(gap.info_unit_ids) != len(set(gap.info_unit_ids)):
+            if any(len(ids) != len(set(ids)) for ids in (
+                    gap.hypothesis_ids, gap.basis_info_unit_ids, gap.addressing_info_unit_ids)):
                 raise ValueError("Duplicate gap references")
         if any(link.hypothesis_id not in hypotheses for link in self.links):
             raise ValueError("Unknown link Hypothesis")
@@ -80,7 +82,8 @@ class GapEdit(ContractModel):
     id: Text | None = None
     content: ReasoningText
     hypothesis_ids: list[Text]
-    info_unit_ids: list[Text] = Field(default_factory=list)
+    basis_info_unit_ids: list[Text] = Field(default_factory=list)
+    addressing_info_unit_ids: list[Text] = Field(default_factory=list)
     status: Literal["open", "resolved"] = "open"
 
 
@@ -113,16 +116,14 @@ class ProposalEvidenceRef(ContractModel):
     source_ref_index: Annotated[int, Field(ge=0)]
 
 
-class ReasoningProposal(ContractModel):
+class ProposalBase(ContractModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    kind: Literal["hypothesis", "evidence_link", "evidence_gap", "hypothesis_status"]
     proposal_id: Annotated[str, Field(pattern=r"^proposal-[a-f0-9]{32}$")] | None = None
     content: ReasoningText | None
     hypothesis_ids: Annotated[list[Text], Field(max_length=5)]
     # Relative only to the immutable proposals array in the enclosing run.
     hypothesis_proposal_indices: Annotated[list[Annotated[int, Field(ge=0, lt=6)]], Field(max_length=5)] = Field(default_factory=list)
     hypothesis_proposal_ids: Annotated[list[Annotated[str, Field(pattern=r"^proposal-[a-f0-9]{32}$")]], Field(max_length=5)] = Field(default_factory=list)
-    info_unit_ids: Annotated[list[Text], Field(max_length=5)]
     meaning: LinkMeaning | None
     judgment: Judgment | None
     rationale: ReasoningText
@@ -132,7 +133,8 @@ class ReasoningProposal(ContractModel):
     def shape(self):
         if self.kind in {"evidence_link", "hypothesis_status"} and (not self.info_unit_ids or not self.evidence_refs):
             raise ValueError("Evidence Link and status proposals require info_unit_ids and evidence_refs")
-        for field in ("hypothesis_ids", "info_unit_ids"):
+        material_field = "basis_info_unit_ids" if self.kind == "evidence_gap" else "info_unit_ids"
+        for field in ("hypothesis_ids", material_field):
             if len(getattr(self, field)) != len(set(getattr(self, field))):
                 raise ValueError(f"Duplicate {field}")
         if len(self.hypothesis_proposal_indices) != len(set(self.hypothesis_proposal_indices)):
@@ -161,6 +163,25 @@ class ReasoningProposal(ContractModel):
         if not valid:
             raise ValueError("Proposal fields do not match kind: check content, hypothesis_ids / hypothesis_proposal_indices, meaning and judgment")
         return self
+
+
+class MaterialProposal(ProposalBase):
+    kind: Literal["hypothesis", "evidence_link", "hypothesis_status"]
+    info_unit_ids: Annotated[list[Text], Field(max_length=5)]
+
+
+class EvidenceGapProposal(ProposalBase):
+    kind: Literal["evidence_gap"]
+    basis_info_unit_ids: Annotated[list[Text], Field(max_length=5)]
+
+
+ReasoningProposal = Annotated[MaterialProposal | EvidenceGapProposal, Field(discriminator="kind")]
+PROPOSAL_ADAPTER = TypeAdapter(ReasoningProposal)
+
+
+def proposal_material_ids(proposal: ReasoningProposal) -> list[str]:
+    """References used for citation validation and adoption staleness checks."""
+    return proposal.basis_info_unit_ids if proposal.kind == "evidence_gap" else proposal.info_unit_ids
 
 
 class AcceptReasoningProposal(ContractModel):

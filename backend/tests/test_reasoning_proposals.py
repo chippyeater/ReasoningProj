@@ -12,7 +12,8 @@ from app.issue_workspaces import get_issue_workspaces, investigation_context
 
 def suggestion(kind, hid=None):
     return {"kind": kind, "content": "房东是否存在可核实的空置损失？" if kind in {"hypothesis", "evidence_gap"} else None,
-            "hypothesis_ids": [hid] if hid else [], "info_unit_ids": ["U029"],
+            "hypothesis_ids": [hid] if hid else [],
+            ("basis_info_unit_ids" if kind == "evidence_gap" else "info_unit_ids"): ["U029"],
             "meaning": "oppose" if kind == "evidence_link" else None,
             "judgment": "unverified" if kind == "hypothesis_status" else None,
             "rationale": "张某陈述无损失，仍应核对入住和收租材料。",
@@ -30,7 +31,8 @@ def proposal_call(source, prior_ids, call_id):
                         prior_ids[index] if index < len(prior_ids) else "proposal-" + "f" * 32
                         for index in source.get("hypothesis_proposal_indices", [])]))
     else:
-        args["info_unit_ids"] = source["info_unit_ids"]
+        field = "basis_info_unit_ids" if kind == "evidence_gap" else "info_unit_ids"
+        args[field] = source[field]
         if kind in {"hypothesis", "evidence_gap"}:
             args["content"] = source["content"]
         if kind == "hypothesis_status":
@@ -333,7 +335,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
 
     def test_ungrounded_exploration_still_requires_separate_user_approval(self):
         h = {**suggestion("hypothesis"), "info_unit_ids": [], "evidence_refs": [], "rationale": "探索性解释尚待验证。"}
-        gap = {**suggestion("evidence_gap"), "info_unit_ids": [], "evidence_refs": [], "hypothesis_proposal_indices": [0]}
+        gap = {**suggestion("evidence_gap"), "basis_info_unit_ids": [], "evidence_refs": [], "hypothesis_proposal_indices": [0]}
         response, _ = self.investigate([h, gap])
         self.assertEqual(response.status_code, 200, response.text)
         run = response.json()["run_id"]
@@ -345,17 +347,17 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertEqual(adopted.status_code, 200, adopted.text)
         state = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
         self.assertEqual(state.gaps[0].hypothesis_ids, [parent])
-        self.assertEqual(state.gaps[0].info_unit_ids, [])
+        self.assertEqual(state.gaps[0].basis_info_unit_ids, [])
         self.assertTrue(self.accept(run, 1).json()["already_accepted"])
 
     def test_legacy_audit_without_proposal_ids_remains_adoptable(self):
-        from app.reasoning_models import ReasoningProposal
+        from app.reasoning_models import PROPOSAL_ADAPTER
         from app.reasoning_proposals import proposal_receipt
         old = self.dependent_proposals()[:2]
         run = "investigation-" + "a" * 32
         audit = {"run_id": run, "status": "success", "result": {"run_id": run, "proposals": old},
                  "proposal_receipt": proposal_receipt(self.case, self.issue, {"reasoning": {"hypotheses": []}},
-                     [ReasoningProposal.model_validate(p) for p in old])}
+                     [PROPOSAL_ADAPTER.validate_python(p) for p in old])}
         path = case_dir(self.case.case_id) / f"runs/{run}.output.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(audit), encoding="utf-8")

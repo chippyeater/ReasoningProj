@@ -141,8 +141,10 @@ def reasoning_references(case: CaseData, info_unit_id: str) -> list[dict]:
             if link.info_unit_id == info_unit_id:
                 refs.append({"kind": "hypothesis_evidence", "id": link.id, "issue": issue})
         for gap in workspace.reasoning.gaps:
-            if info_unit_id in gap.info_unit_ids:
-                refs.append({"kind": "evidence_gap", "id": gap.id, "issue": issue})
+            if info_unit_id in gap.basis_info_unit_ids:
+                refs.append({"kind": "evidence_gap_basis", "id": gap.id, "issue": issue})
+            if info_unit_id in gap.addressing_info_unit_ids:
+                refs.append({"kind": "evidence_gap_addressing", "id": gap.id, "issue": issue})
     return refs
 
 
@@ -205,10 +207,15 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
     hids = {obj.id for obj in hypotheses}
     result["reasoning"] = {
         "hypotheses": [{**h.model_dump(), "content": h.content[:300], "content_truncated": len(h.content) > 300} for h in hypotheses],
-        "gaps": [{**g.model_dump(), "content": g.content[:300], "info_unit_ids": g.info_unit_ids[:5],
+        "gaps": [{**g.model_dump(), "content": g.content[:300],
+                  "basis_info_unit_ids": g.basis_info_unit_ids[:5],
+                  "addressing_info_unit_ids": g.addressing_info_unit_ids[:5],
+                  "basis_info_unit_ids_truncated": len(g.basis_info_unit_ids) > 5,
+                  "addressing_info_unit_ids_truncated": len(g.addressing_info_unit_ids) > 5,
                   "hypothesis_ids": [hid for hid in g.hypothesis_ids if hid in hids],
                   "content_truncated": len(g.content) > 300,
-                  "references_truncated": len(g.info_unit_ids) > 5 or not set(g.hypothesis_ids) <= hids}
+                  "references_truncated": (len(g.basis_info_unit_ids) > 5 or len(g.addressing_info_unit_ids) > 5
+                                           or not set(g.hypothesis_ids) <= hids)}
                  for g in chosen if hasattr(g, "hypothesis_ids")][:3],
         "links": [{**link.model_dump(), "rationale": link.rationale[:160], "rationale_truncated": len(link.rationale) > 160}
                   for link in sorted(reasoning.links, key=lambda link: (link.info_unit_id in priority_ids, link.info_unit_id in uids), reverse=True)

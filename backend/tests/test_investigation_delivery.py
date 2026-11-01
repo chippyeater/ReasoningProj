@@ -35,7 +35,7 @@ class TestInvestigationDelivery(unittest.TestCase):
             if len(proposals) == 2:
                 return f.tool("propose_evidence_gap", {"content": "新旧租约的计租期间与实际收款能否衔接？",
                     "hypothesis_ids": [], "hypothesis_proposal_ids": [p["proposal_id"] for p in proposals],
-                    "rationale": "收款与计租记录可以区分是否实际少收租金。", "info_unit_ids": [], "evidence_refs": []}, "gap")
+                    "rationale": "收款与计租记录可以区分是否实际少收租金。", "basis_info_unit_ids": [], "evidence_refs": []}, "gap")
             self.assertEqual(len(state["materials"]["source_refs"]["items"]), 3)
             return f.finish(goal, status="completed", answer="已提出两个待检验解释及一个共同缺口，请逐项审阅采纳。")
         result, calls = self.run_script(goal, respond, work_context=self.context(), issue_key=self.case.issue_set[1])
@@ -75,7 +75,7 @@ class TestInvestigationDelivery(unittest.TestCase):
             if len(proposals) == 2:
                 return f.tool("propose_evidence_gap", {"content": "新租客的计租起点是否覆盖原租客搬离当日？",
                     "rationale": "核对新租约中的计租起点，可区分租金承接与计租中断两种解释。",
-                    "info_unit_ids": ["U029", "U036"], "evidence_refs": [], "hypothesis_ids": [],
+                    "basis_info_unit_ids": ["U029", "U036"], "evidence_refs": [], "hypothesis_ids": [],
                     "hypothesis_proposal_ids": [p["proposal_id"] for p in proposals]}, "gap")
             return f.finish(goal, status="completed", answer="已提交两种待检验解释及一个共同核查条件，请审阅。")
         result, calls = self.run_script(goal, respond, work_context=self.context(), issue_key=self.case.issue_set[1])

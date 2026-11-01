@@ -5,7 +5,7 @@ from uuid import uuid4
 from pydantic import TypeAdapter
 
 from app.errors import AppError
-from app.reasoning_models import ReasoningProposal
+from app.reasoning_models import PROPOSAL_ADAPTER, proposal_material_ids
 
 
 def artifacts(case, seen, context, goal, proposals, findings, questions, status):
@@ -14,7 +14,7 @@ def artifacts(case, seen, context, goal, proposals, findings, questions, status)
     findings = [f.model_dump(mode="json") for f in TypeAdapter(list[Finding]).validate_python(findings, strict=True)]
     units, relations, refs = [], [], []
     for item in [*findings, *(p.model_dump(mode="json") for p in proposals)]:
-        for uid in item["info_unit_ids"]:
+        for uid in item["basis_info_unit_ids"] if item.get("kind") == "evidence_gap" else item["info_unit_ids"]:
             if uid not in units:
                 units.append(uid)
         for rid in item.get("relation_ids", []):
@@ -33,7 +33,7 @@ def artifacts(case, seen, context, goal, proposals, findings, questions, status)
 def _propose(case, seen, context, proposals, kind, **values):
     if len(proposals) >= 6:
         raise AppError("proposal_limit", "At most six pending proposals per run")
-    proposal = ReasoningProposal.model_validate({
+    proposal = PROPOSAL_ADAPTER.validate_python({
         "kind": kind, "content": None, "hypothesis_ids": [], "meaning": None, "judgment": None,
         **values, "proposal_id": f"proposal-{uuid4().hex}",
     })
@@ -60,11 +60,11 @@ def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info
 
 
 def propose_evidence_gap(case, seen, context, proposals, *, content, hypothesis_ids, hypothesis_proposal_ids,
-                         rationale, info_unit_ids, evidence_refs):
-    """Propose one specific, independently verifiable missing fact or condition. State what must be confirmed and why it affects the Hypotheses, with a concrete evidence action or material type. Split independently useful conditions into separate Gaps; several materials checking the same condition can share one Gap. Do not bundle a new lease, payment records, move-out proof and expense receipts into a broad request. A shared Gap may link multiple competing existing Hypothesis IDs or this run's returned Hypothesis proposal IDs; explain how it distinguishes them rather than duplicate it for each. Obtained InfoUnit content is sufficient for an exploratory Gap without get_evidence; evidence_refs may be empty, as may info_unit_ids when no direct material exists. Describe uncertainty, not a proven fact."""
+                         rationale, basis_info_unit_ids, evidence_refs):
+    """Propose one specific, independently verifiable missing fact or condition. State what must be confirmed and why it affects the Hypotheses, with a concrete evidence action or material type. Split independently useful conditions into separate Gaps; several materials checking the same condition can share one Gap. Do not bundle a new lease, payment records, move-out proof and expense receipts into a broad request. A shared Gap may link multiple competing existing Hypothesis IDs or this run's returned Hypothesis proposal IDs; explain how it distinguishes them rather than duplicate it for each. Obtained InfoUnit content is sufficient for an exploratory Gap without get_evidence; evidence_refs may be empty, as may basis_info_unit_ids when no direct material exists. basis_info_unit_ids records existing material that prompted this Gap, not later addressing material; a new Gap starts with no addressing material. Describe uncertainty, not a proven fact."""
     return _propose(case, seen, context, proposals, "evidence_gap", content=content, hypothesis_ids=hypothesis_ids,
                     hypothesis_proposal_ids=hypothesis_proposal_ids, rationale=rationale,
-                    info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
+                    basis_info_unit_ids=basis_info_unit_ids, evidence_refs=evidence_refs)
 
 
 def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, judgment, rationale, info_unit_ids, evidence_refs):
@@ -81,7 +81,7 @@ def finish_investigation(case, seen, context, goal, proposals, *, answer, findin
     acquisition = knowledge.acquisition()
     if answer_basis not in {"general", "case_metadata", "case_material"}:
         raise AppError("invalid_tool_arguments", "Unknown answer_basis")
-    if findings or any(p.info_unit_ids or p.evidence_refs for p in proposals):
+    if findings or any(proposal_material_ids(p) or p.evidence_refs for p in proposals):
         if answer_basis != "case_material":
             raise AppError("invalid_answer_basis", "Material-backed artifacts require case_material answer_basis")
     if answer_basis == "case_material":

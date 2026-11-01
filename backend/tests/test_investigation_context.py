@@ -28,7 +28,7 @@ class TestInvestigationContext(unittest.TestCase):
     def test_actual_request_contains_conflict_direction_focus_and_user_judgments_not_layout(self):
         h = self.hypothesis("尚不能确认租金损失")
         self.edit(link={"hypothesis_id": h, "info_unit_id": "U029", "meaning": "oppose", "rationale": "当事人陈述尚未核实"})
-        self.edit(gap={"content": "实际计租和收款如何", "hypothesis_ids": [h], "info_unit_ids": ["U036"], "status": "open"})
+        self.edit(gap={"content": "实际计租和收款如何", "hypothesis_ids": [h], "basis_info_unit_ids": ["U036"], "status": "open"})
         self.canvas(["U029", "U036", h], ["U029"], h)
         requests = []
         responses = [replies.finish("核查损失", ["U029", "U036"], ["R010"], [("U029", 0), ("U036", 0)],

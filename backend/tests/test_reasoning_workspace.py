@@ -40,7 +40,7 @@ class TestReasoningWorkspace(unittest.TestCase):
         for uid, target, meaning in (("U029", a, "oppose"), ("U029", b, "support"), ("U026", a, "verify")):
             result = self.edit(link={"hypothesis_id": target, "info_unit_id": uid, "meaning": meaning, "rationale": "材料陈述，尚需核实"})
             self.assertEqual(result.status_code, 200, result.text)
-        gap = self.edit(gap={"content": "是否存在替租人的实际入住记录？", "hypothesis_ids": [a, b], "info_unit_ids": ["U026"]})
+        gap = self.edit(gap={"content": "是否存在替租人的实际入住记录？", "hypothesis_ids": [a, b], "basis_info_unit_ids": ["U026"]})
         self.assertEqual(gap.status_code, 200, gap.text)
         gid = gap.json()["object_id"]
         self.assertEqual(self.edit(gap={"id": gid, "content": "核对实际入住记录", "hypothesis_ids": [a, b], "status": "resolved"}).status_code, 200)

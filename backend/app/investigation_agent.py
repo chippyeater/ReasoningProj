@@ -17,7 +17,8 @@ from app.errors import AppError
 from app.observability import RunTrace
 from app.prompt_loader import load_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
-from app.reasoning_models import ProposalEvidenceRef, ReasoningProposal
+from app.reasoning_models import (ProposalEvidenceRef, ReasoningProposal, MaterialProposal,
+                                  EvidenceGapProposal, proposal_material_ids)
 from app.investigation_state import KnowledgeState, case_info_directory, model_context
 
 MAX_TOOL_CALLS = 8  # Read attempts, reserved independently from artifact submissions.
@@ -103,7 +104,7 @@ def tool_definitions() -> list[dict]:
         }),
     ]
     from app.investigation_actions import PROPOSAL_TOOLS, finish_investigation
-    schema = ReasoningProposal.model_json_schema()
+    schema = MaterialProposal.model_json_schema()
     props = schema["properties"]
     common = {key: props[key] for key in ("rationale", "info_unit_ids", "evidence_refs")}
     grounded = {**common, "info_unit_ids": {**props["info_unit_ids"], "minItems": 1},
@@ -116,8 +117,9 @@ def tool_definitions() -> list[dict]:
             "hypothesis_proposal_ids": {**props["hypothesis_proposal_ids"], "maxItems": 1},
             "meaning": next(p for p in props["meaning"]["anyOf"] if p.get("type") != "null"),
             "rationale": props["rationale"], "evidence_refs": grounded["evidence_refs"]},
-        "propose_evidence_gap": {**common, "content": content, "hypothesis_ids": props["hypothesis_ids"],
-            "hypothesis_proposal_ids": props["hypothesis_proposal_ids"]},
+        "propose_evidence_gap": {"rationale": props["rationale"], "evidence_refs": props["evidence_refs"],
+            "basis_info_unit_ids": EvidenceGapProposal.model_json_schema()["properties"]["basis_info_unit_ids"],
+            "content": content, "hypothesis_ids": props["hypothesis_ids"], "hypothesis_proposal_ids": props["hypothesis_proposal_ids"]},
         "propose_hypothesis_status": {**grounded, "hypothesis_id": text_id,
             "judgment": next(p for p in props["judgment"]["anyOf"] if p.get("type") != "null")},
     }
@@ -240,7 +242,7 @@ def _validation_details(exc: ValidationError) -> dict:
         code = error["type"]
         if "Duplicate" in error["msg"]:
             code = "duplicate_reference"
-            loc += [next((field for field in ("hypothesis_proposal_ids", "hypothesis_proposal_indices", "info_unit_ids", "hypothesis_ids")
+            loc += [next((field for field in ("hypothesis_proposal_ids", "hypothesis_proposal_indices", "basis_info_unit_ids", "info_unit_ids", "hypothesis_ids")
                           if field in error["msg"]), "references")]
         if "proposals require info_unit_ids and evidence_refs" in error["msg"]:
             code, loc = "evidence_required", [*loc, "evidence_refs"]
@@ -313,10 +315,11 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
     for offset, proposal in enumerate(result.proposals):
         if not work_context:
             invalid("invalid_reasoning_proposal", "proposal_semantics", ["proposals", offset], "Proposals require a bound Issue")
-        check(proposal.info_unit_ids, set(result.relevant_info_unit_ids), ["proposals", offset, "info_unit_ids"])
+        material_field = "basis_info_unit_ids" if proposal.kind == "evidence_gap" else "info_unit_ids"
+        check(proposal_material_ids(proposal), set(result.relevant_info_unit_ids), ["proposals", offset, material_field])
         check(proposal.hypothesis_ids, hypothesis_ids & targets, ["proposals", offset, "hypothesis_ids"])
         check([(p.info_unit_id, p.source_ref_index) for p in proposal.evidence_refs], set(pointers), ["proposals", offset, "evidence_refs"])
-        if any(p.info_unit_id not in proposal.info_unit_ids for p in proposal.evidence_refs):
+        if any(p.info_unit_id not in proposal_material_ids(proposal) for p in proposal.evidence_refs):
             invalid("invalid_reasoning_proposal", "reference", ["proposals", offset, "evidence_refs"], "Proposal evidence must refer to its retrieved InfoUnits")
     if issues:
         first = issues[0]
@@ -345,6 +348,9 @@ def _tool_recovery(response, name):
     for item in details["errors"]:
         loc = item.get("loc", [])
         argument_loc = loc[2:] if loc[:1] == ["proposals"] else list(loc)
+        # Discriminated-union tags describe a variant, not a native argument.
+        if argument_loc[:1] in (["hypothesis"], ["evidence_gap"], ["evidence_link"], ["hypothesis_status"]):
+            argument_loc = argument_loc[1:]
         if argument_loc[:1] == ["relevant_info_unit_ids"]:
             argument_loc[0] = "info_unit_ids"
         if name == "propose_evidence_link" and argument_loc[:1] in (["info_unit_ids"], ["hypothesis_ids"]):

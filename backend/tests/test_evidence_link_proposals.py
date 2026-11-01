@@ -5,7 +5,7 @@ import unittest
 import test_reasoning_proposals as fixture
 from app.case_store import case_dir
 from app.issue_workspaces import get_issue_workspaces
-from app.reasoning_models import ReasoningProposal
+from app.reasoning_models import PROPOSAL_ADAPTER
 from pydantic import ValidationError
 
 
@@ -117,13 +117,13 @@ class TestEvidenceLinkProposals(unittest.TestCase):
 
     def test_legacy_formal_link_shape_and_new_single_target_constraints(self):
         formal = fixture.suggestion("evidence_link", "hyp-existing")
-        self.assertEqual(ReasoningProposal.model_validate(formal).hypothesis_ids, ["hyp-existing"])
+        self.assertEqual(PROPOSAL_ADAPTER.validate_python(formal).hypothesis_ids, ["hyp-existing"])
         for changes in ({"hypothesis_proposal_ids": ["proposal-" + "a" * 32]},
                         {"hypothesis_ids": [], "hypothesis_proposal_ids": []},
                         {"hypothesis_ids": [], "hypothesis_proposal_ids": ["proposal-" + "a" * 32, "proposal-" + "b" * 32]},
                         {"hypothesis_ids": [], "hypothesis_proposal_indices": [0]}):
             with self.subTest(changes=changes), self.assertRaises(ValidationError):
-                ReasoningProposal.model_validate({**formal, **changes})
+                PROPOSAL_ADAPTER.validate_python({**formal, **changes})
 
 
 if __name__ == "__main__":

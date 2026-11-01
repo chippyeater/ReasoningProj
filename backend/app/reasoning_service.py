@@ -36,6 +36,16 @@ def edit_reasoning(case: CaseData, edit: ReasoningEdit, *, proposal_key: str | N
         prefix = "hyp" if edit.hypothesis else "gap" if edit.gap else "elink"
         values = {**draft.model_dump(exclude={"id"}), "id": draft.id or f"{prefix}-{uuid4().hex}",
                   "last_edited_by": editor, "proposal_key": proposal_key or (existing.proposal_key if existing else None)}
+        if edit.gap:
+            if existing:
+                if "basis_info_unit_ids" not in draft.model_fields_set:
+                    values["basis_info_unit_ids"] = list(existing.basis_info_unit_ids)
+                values["addressing_info_unit_ids"] = list(dict.fromkeys([
+                    *existing.addressing_info_unit_ids, *draft.addressing_info_unit_ids]))
+                if "status" not in draft.model_fields_set:
+                    values["status"] = existing.status
+            elif draft.addressing_info_unit_ids:
+                raise AppError("gap_addressing_requires_existing", "Create the Gap before adding addressing material")
         if edit.link:
             if any(link.hypothesis_id == draft.hypothesis_id and link.info_unit_id == draft.info_unit_id
                    and link.id != draft.id for link in collection):
@@ -64,14 +74,16 @@ def edit_reasoning(case: CaseData, edit: ReasoningEdit, *, proposal_key: str | N
             if obj.id not in canvas.node_positions:
                 canvas.node_positions[obj.id] = edit.position or Point(x=800, y=200)
         # Show linked evidence without copying it. SourceRefs stay case-owned.
-        evidence_ids = [obj.info_unit_id] if edit.link else obj.info_unit_ids if edit.gap else []
+        evidence_ids = ([obj.info_unit_id] if edit.link else
+                        list(dict.fromkeys([*obj.basis_info_unit_ids, *obj.addressing_info_unit_ids])) if edit.gap else [])
         for index, uid in enumerate(evidence_ids):
             if uid not in workspace.canvas.visible_node_ids:
                 workspace.canvas.visible_node_ids.append(uid)
                 workspace.canvas.node_positions.setdefault(uid, Point(x=120, y=120 + index * 180))
     workspace.reasoning = ReasoningState.model_validate(state.model_dump())
     known = {u.id for u in case.info_units}
-    if any(link.info_unit_id not in known for link in state.links) or any(not set(gap.info_unit_ids) <= known for gap in state.gaps):
+    if any(link.info_unit_id not in known for link in state.links) or any(
+            not set(gap.basis_info_unit_ids + gap.addressing_info_unit_ids) <= known for gap in state.gaps):
         raise AppError("unknown_reasoning_evidence", "Evidence must belong to the current case")
     current.active_issue = edit.issue
     if persist:

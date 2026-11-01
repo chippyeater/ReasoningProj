@@ -149,7 +149,9 @@ def model_context(initial, knowledge, recovery=None):
         return {"items": kept, "context_truncated": bool(omitted), "omitted_ids": omitted}
     workspace = knowledge.work_context
     fields = {"hypotheses": ("id", "content", "judgment", "work_status", "content_truncated"),
-              "gaps": ("id", "content", "hypothesis_ids", "info_unit_ids", "status", "content_truncated", "references_truncated"),
+              "gaps": ("id", "content", "hypothesis_ids", "basis_info_unit_ids", "addressing_info_unit_ids",
+                       "basis_info_unit_ids_truncated", "addressing_info_unit_ids_truncated",
+                       "status", "content_truncated", "references_truncated"),
               "links": ("id", "hypothesis_id", "info_unit_id", "meaning", "rationale", "rationale_truncated")}
     reasoning = {kind: [{k:deepcopy(row[k]) for k in keys if k in row}
                         for row in workspace.get("reasoning", {}).get(kind, [])] for kind, keys in fields.items()}

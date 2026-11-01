@@ -5,7 +5,7 @@ import json
 from app.case_store import artifact_path
 from app.errors import AppError
 from app.issue_workspaces import get_issue_workspaces, persist_issue_workspaces
-from app.reasoning_models import GapEdit, HypothesisEdit, LinkEdit, ReasoningEdit, ReasoningProposal
+from app.reasoning_models import GapEdit, HypothesisEdit, LinkEdit, ReasoningEdit, PROPOSAL_ADAPTER, proposal_material_ids
 from app.reasoning_service import edit_reasoning
 
 
@@ -19,7 +19,7 @@ def proposal_receipt(case, issue_key, context, proposals):
         raise AppError("invalid_reasoning_proposal", "No Issue is bound to the proposal")
     return {"issue": issue_key,
             "target_revisions": {h["id"]: h["revision"] for h in context.get("reasoning", {}).get("hypotheses", [])},
-            "evidence_hashes": [evidence_hash(case, p.info_unit_ids) for p in proposals]}
+            "evidence_hashes": [evidence_hash(case, proposal_material_ids(p)) for p in proposals]}
 
 
 def validate_proposal_dependencies(proposals):
@@ -59,7 +59,7 @@ def accept_proposal(case, request):
         if (audit["status"] not in {"success", "partial"} or receipt["issue"] != request.issue
                 or audit["run_id"] != request.run_id or audit["result"]["run_id"] != request.run_id):
             raise ValueError("Proposal belongs to a different Issue or run")
-        proposals = [ReasoningProposal.model_validate(p) for p in audit["result"]["proposals"]]
+        proposals = [PROPOSAL_ADAPTER.validate_python(p) for p in audit["result"]["proposals"]]
         index = request.proposal_index if request.proposal_id is None else next(
             (i for i, p in enumerate(proposals) if p.proposal_id == request.proposal_id), len(proposals))
         proposal = proposals[index]
@@ -74,7 +74,7 @@ def accept_proposal(case, request):
     key = proposal_key(request.run_id, proposals, index)
     if key in state.accepted_proposals:
         return {"workspaces": current, "object_id": state.accepted_proposals[key], "already_accepted": True}
-    if evidence_hash(case, proposal.info_unit_ids) != receipt["evidence_hashes"][index]:
+    if evidence_hash(case, proposal_material_ids(proposal)) != receipt["evidence_hashes"][index]:
         raise AppError("stale_reasoning_proposal", "Evidence changed; investigate again before adopting", 409)
     targets = {h.id: h for h in state.hypotheses}
     for hid in proposal.hypothesis_ids:
@@ -107,7 +107,7 @@ def accept_proposal(case, request):
     if proposal.kind == "hypothesis":
         edit.hypothesis = HypothesisEdit(content=proposal.content)
     elif proposal.kind == "evidence_gap":
-        edit.gap = GapEdit(content=proposal.content, hypothesis_ids=hypothesis_ids, info_unit_ids=proposal.info_unit_ids)
+        edit.gap = GapEdit(content=proposal.content, hypothesis_ids=hypothesis_ids, basis_info_unit_ids=proposal.basis_info_unit_ids)
     elif proposal.kind == "evidence_link":
         edit.link = LinkEdit(hypothesis_id=hypothesis_ids[0], info_unit_id=proposal.info_unit_ids[0],
                              meaning=proposal.meaning, rationale=proposal.rationale)
