@@ -10,17 +10,19 @@
 
 Findings、Proposal 引用须属于当前案件并实际取得；初始选中/Issue 调查材料提供的来源片段继续由缓存 TXT 核验。证据不足须列明未解条件；completed 不可同时宣称 Goal 仍有未解条件。答复保留原文、Markdown，长度上限与工具 Schema 一致为1000字符；非法答复不截断、不发布，成功 Proposal 不因之后模型失败而丢失。
 
-读取与所有 Proposal 共享8次非 Finish 调用预算，失败、重复和缓存调用均计数；每轮最多6个有效 Proposal。finish 独立最多3次，总预算11次，最多14次模型调用（含不遵循工具协议的纠正余量）；重复无进展最多3次。预算与完整活动只由后端记录，耗尽的工具从下次 Schema 移除。连续非法调用/重复读取、模型失败和审计写入失败均有显式结束或异常，不自动重试付费请求。普通文本不能冒充已验证交付，下一轮提示通过 finish 提交。
+读取与所有 Proposal 共享8次非 Finish 调用预算，失败、重复和缓存调用均计数；每轮最多6个有效 Proposal。finish 独立最多3次，总预算11次，最多14次模型调用（含不遵循工具协议的纠正余量）；重复无进展最多3次。预算与完整活动只由后端记录，耗尽的工具从下次 Schema 移除。连续非法调用/重复读取、模型失败和审计写入失败均有显式结束或异常，不自动重试付费请求。普通文本不能冒充已验证交付：产生 `finish_required` 后，后端持续关闭读取和 Proposal 工具，仅开放 Finish，越界调用在执行前拒绝；Finish 参数错误不会重新开放调查。
 
 读取进展按工具合并后、下一轮模型实际可见的材料 ID 与本次请求比较：新增 InfoUnit、Relation 或 SourceRef，以及重新恢复被省略的材料均计为进展；空结果、仅返回已可见节点、仅调整排序或错误/统计更新不计进展。有效材料恢复会清零无进展计数，成功提交 Proposal 也会清零；连续3次读取/Proposal 无进展后关闭调查工具，仍保留 Finish；Finish 无论成功失败都不增加或重置无进展计数，失败后可在剩余3次 Finish 预算内修正重交。每次工具调用在本地审计和 Langfuse 记录 `read_progress/no_progress`，搜索还记录实际排除 ID。
 
-共享8次非 Finish 预算耗尽后只提供 Finish；`budget_exhausted` 只按共享预算判断，6个有效 Proposal 上限不代表调查总预算耗尽。传给 Finish 的 `read_budget_exhausted` 表示读取阶段已关闭（共享预算耗尽或 no_progress_limit），`budget_exhausted` 仅表示共享8次已用尽。模型越界发出的第9次非 Finish 请求被拒绝，不执行；最终模型调用上限仍防止无限协议纠正。
+共享8次非 Finish 预算耗尽后只提供 Finish；`budget_exhausted` 只按共享预算判断，6个有效 Proposal 上限不代表调查总预算耗尽。传给 Finish 的 `read_budget_exhausted` 表示读取阶段已关闭（共享预算耗尽、no_progress_limit 或 finish_required），`budget_exhausted` 仅表示共享8次已用尽。模型越界发出的第9次非 Finish 请求被拒绝，不执行；最终模型调用上限仍防止无限协议纠正。
 
 错误恢复同时提供 `recovery_hint` 和 `next_action.steps`；每项包含错误位置、已知的 InfoUnit ID/标题、适用的来源索引、建议读取工具及修复动作。模型必须实际读取缺失材料，再修正原工具调用；错误提示中的目录信息不授予引用权限。模型上下文最多保留前8条错误及相应步骤，省略数量明确记录，本地审计保留完整错误。
 
 首轮调查围绕具体信息需求搜索，不混合不同主题来覆盖全案。搜索过滤本次请求已可见的 InfoUnit，缓存按可见排除集隔离；`has_more` 不要求继续读完。取得的信息足以形成任务所需的探索性假设和缺口时，可以直接提交 Proposal 并结束检索。InfoUnit 内容足以支持探索性推理，原始来源只按具体措辞、时间、金额、主体或冲突核查需要读取；Evidence Link 和 Hypothesis Status 的来源要求保持不变，初始有效引用仍可使用。
 
-一个 Evidence Gap 对应一个具体、可独立核查的缺失条件，说明确认内容、判断影响和明确补证动作/材料类型；独立条件分别建缺口，多份材料验证同一条件可合并。多个竞争性假设可通过正式 Hypothesis ID 或本轮成功返回的 Hypothesis Proposal ID 关联同一个区分性缺口。粒度由 Prompt 和工具描述指导，不引入语义校验器；用户仍逐项采纳。
+一个 Evidence Gap 对应一个具体、可独立核查的缺失条件，说明确认内容、判断影响和明确补证动作/材料类型；独立条件分别建缺口，多份材料验证同一条件可合并。多个竞争性假设应先取得真实 ID，再关联一个共同区分性缺口。创建工具使用 `hypothesis_targets` 对象，内含 `hypothesis_ids` 与 `hypothesis_proposal_ids`；嵌套 `anyOf` 保证至少一项非空，后端再次校验结构、最多5个目标及当前 Issue/Run 的目标真实性，再映射回原有 Proposal 字段。Proposal 类型和采纳契约不变。
+
+模型每次创建前须对照正式 reasoning 和本轮全部成功 proposals，按解释/缺失条件判断语义重复。后端另做有限文本归一化检查（忽略标点、核查指令前缀、明确的命题标题及 Gap 的标签/附注），检查当前 Issue 的完整正式对象，包括模型投影省略的对象，以及本轮成功 Proposal。命中时返回 `duplicate_proposal`、原对象来源和 ID，不追加、合并、改写或采纳对象；不同主体、日期或不同条件不按相似度合并。该检查不替代模型的语义比较，不能保证识别任意同义改写；用户仍逐项审阅。
 
 Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成依据，来源引用只能指向已取得的这些节点；不接受 `addressing_info_unit_ids`。正式 Gap 的回应列表初始为空，后续通过现有工作区编辑接口追加去重，材料关联不自动解决 Gap 或改变假设判断。上下文分别提供形成依据、回应材料及各自截断标记；这些引用本身不授予材料读取权限。Hypothesis、Evidence Link、Hypothesis Status 的 `info_unit_ids` 语义保持不变。已保存工作区的一次性迁移见 `docs/issue_reasoning.md`。
 
@@ -42,7 +44,7 @@ Extraction 在提交 CaseData 前初始化已有 Workspace 的基线；初始化
 
 - `goal`、`current_issue`、必要案件背景 `core_issue`。
 - `case_info_directory`：总数、稳定 ID、标题、类型、截断及省略数量；按 ID 确定排序，最多80项、条目累计6000字符，标题最多120字符。
-- `materials.info_units/relations/source_refs`：本轮实际取得的去重工具投影，各自带 `items/context_truncated/omitted_ids`。
+- `materials.info_units/relations/source_refs`：本轮实际取得的去重工具投影，各自带 `items/context_truncated/omitted_ids`。成功搜索摘要进入后续轮次；InfoUnit 的 `obtained_source_ref_indices` 只来自本轮实际取得的 SourceRef，空数组表示没有可用来源索引，搜索命中不等于已读取该节点全部来源。来源正文仍取自 source_refs，裁剪不会丢失完整工作记忆。
 - `recent_extraction`：最近成功批次的范围和来源指针，不替代 materials 中的内容或来源校验。
 - `reasoning`：当前 Issue 中相关的正式假设、缺口和证据关联，保留用户判断、弃用/解决状态，不发送修订号、时间戳和显示布局。
 - `proposals`：本轮成功提交的完整提案，保留实际返回 ID 和依赖。
