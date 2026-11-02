@@ -490,6 +490,39 @@ def _tool_recovery(response, name, args=None, case=None):
     error["recoverable"] = True
 
 
+def _finish_only_recovery(recovery):
+    """Constrain executable recovery actions without losing validation diagnostics."""
+    recovery["constraints"] = {"allowed_tools": ["finish_investigation"],
+        "instruction": "Investigation tools are closed. Only finish_investigation is available; correct its listed errors using obtained material, without further reads or Proposals."}
+
+    def constrain(step):
+        if step.get("tool") in {None, "finish_investigation"}:
+            return step
+        step = deepcopy(step)
+        step["unavailable_tool"] = step["tool"]
+        if "arguments" in step:
+            step["unavailable_arguments"] = step.pop("arguments")
+        step["tool"] = "finish_investigation"
+        step["instruction"] = (f"Correct {step.get('loc', [])} ({step.get('code', 'tool_error')}) in finish_investigation "
+            "using only already obtained valid IDs and SourceRefs for the indicated material. "
+            "Do not call the unavailable tool or invent references. Remove unsupported Findings or put unresolved conditions in open_questions, then resubmit Finish.")
+        return step
+
+    action = recovery.setdefault("next_action", {"steps": []})
+    action["steps"] = [constrain(step) for step in action["steps"]]
+    action["retry_tool"] = "finish_investigation"
+    for error in recovery.get("validation_details", {}).get("errors", []):
+        if "next_action" in error:
+            revised = constrain(error["next_action"])
+            if revised is not error["next_action"]:
+                error.setdefault("original_fix", error["fix"])
+                error["fix"] = revised["instruction"]
+                error["next_action"] = revised
+    if any("unavailable_tool" in step for step in action["steps"]):
+        recovery.setdefault("original_recovery_hint", recovery.get("recovery_hint"))
+        recovery["recovery_hint"] = recovery["constraints"]["instruction"] + " Follow the field-specific next_action steps."
+
+
 def _validate_summary(text, proposals):
     """Reject report-sized or verbatim Proposal replies; never truncate or rewrite."""
     issues = []
@@ -635,10 +668,8 @@ async def run_investigation(case: CaseData, goal: str,
                     "Investigation tools are unavailable; submit the answer with current material through finish_investigation"))
                 _tool_recovery(response, "finish_investigation")
                 recovery = response["error"]
-            elif investigation_closed():
-                recovery["next_action"] = {"steps": [{"tool": "finish_investigation",
-                    "instruction": "Investigation tools are closed. Correct any Finish validation errors using obtained material, or remove unsupported Findings and describe unresolved conditions in open_questions. Submit finish_investigation; do not request more reads or Proposals."}],
-                    "retry_tool": "finish_investigation"}
+            if investigation_closed():
+                _finish_only_recovery(recovery)
             state = model_context(initial_input, knowledge, recovery)
             visible_units = frozenset(row["id"] for row in state["materials"]["info_units"]["items"])
             request_messages = [{"role": "system", "content": prompt.content},
