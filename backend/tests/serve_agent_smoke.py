@@ -72,6 +72,10 @@ async def model(config, messages, definitions, schema=None, **kwargs):
             gap.update(content=content, hypothesis_proposal_indices=[1])
             gaps.append(gap)
         candidates = [first, second, *gaps]
+        if "同轮证据关联" in goal:
+            candidates = [first, second, *[
+                {**suggestion("evidence_link"), "meaning": meaning, "hypothesis_proposal_indices": [parent]}
+                for parent, meaning in ((0, "oppose"), (1, "support"), (0, "related"))]]
     if len(proposals) < len(candidates):
         return proposal_call(candidates[len(proposals)], [p["proposal_id"] for p in proposals], f"proposal-{len(proposals)}")
     if "总结失败" in goal:

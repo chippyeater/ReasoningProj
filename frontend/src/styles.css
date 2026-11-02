@@ -2491,7 +2491,7 @@ button,
 .canvas-node.reasoning-deprecated { opacity: .5; border-style: dashed; }
 .canvas-link.reasoning-support { stroke: #a8d981; stroke-dasharray: none; }
 .canvas-link.reasoning-oppose { stroke: #f39b9b; stroke-dasharray: 8 5; }
-.canvas-link.reasoning-verify, .canvas-link.reasoning-gap { stroke: #a9a5b7; stroke-dasharray: 4 5; }
+.canvas-link.reasoning-related, .canvas-link.reasoning-gap { stroke: #a9a5b7; stroke-dasharray: 4 5; }
 .canvas-link.reasoning-pending { stroke-dasharray: 3 7; opacity: .65; }
 .pending-reasoning-edge .edge-label-box { fill: #514466; stroke: #ad98cc; stroke-dasharray: 3 3; }
 .pending-reasoning-edge .edge-label-text { fill: #eee5ff; }

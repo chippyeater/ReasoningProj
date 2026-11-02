@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { CaseData, EvidenceGap, EvidenceLink, Hypothesis, Judgment, LinkMeaning, ReasoningEdit, ReasoningState } from "../api";
 
 export const judgments = { unverified: "未证实", verified: "已证实", refuted: "已证伪" };
-export const meanings = { support: "支持", oppose: "反对", verify: "待核实" };
+export const meanings = { support: "支持", oppose: "反对", related: "相关" };
 export type ReasoningEditorTarget = { kind: "hypothesis" | "gap" | "link"; id?: string; hypothesisId?: string; infoUnitId?: string };
 
 export function ReasoningEditor({ target, state, caseData, issue, busy, error, onSave, onClose, onEdit, onLocate, onInvestigate }: {
@@ -23,7 +23,7 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
   const [infoIds, setInfoIds] = useState<string[]>(gap?.basis_info_unit_ids ?? []);
   const [hypothesisId, setHypothesisId] = useState(link?.hypothesis_id ?? target.hypothesisId ?? state.hypotheses[0]?.id ?? "");
   const [infoId, setInfoId] = useState(link?.info_unit_id ?? target.infoUnitId ?? caseData.info_units[0]?.id ?? "");
-  const [meaning, setMeaning] = useState<LinkMeaning>(link?.meaning ?? "verify");
+  const [meaning, setMeaning] = useState<LinkMeaning>(link?.meaning ?? "related");
   const [rationale, setRationale] = useState(link?.rationale ?? "关联依据尚需进一步核实。");
   const label = target.kind === "hypothesis" ? "假设" : target.kind === "gap" ? "证据缺口" : "证据关联";
   const toggle = (ids: string[], id: string) => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id];
@@ -82,6 +82,7 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
         <label>关联假设<select aria-label="关联假设" value={hypothesisId} onChange={event => setHypothesisId(event.target.value)}>{state.hypotheses.map(item => <option value={item.id} key={item.id}>{item.content}</option>)}</select></label>
         <label>案件信息<select aria-label="关联案件信息" value={infoId} onChange={event => setInfoId(event.target.value)}>{caseData.info_units.map(item => <option value={item.id} key={item.id}>{item.title}</option>)}</select></label>
         <label>关联语义<select aria-label="关联语义" value={meaning} onChange={event => setMeaning(event.target.value as LinkMeaning)}>{Object.entries(meanings).map(([value, text]) => <option key={value} value={value}>{text}</option>)}</select></label>
+        <p className="reasoning-caution">相关：材料与假设有关，但不明确支持或反对。</p>
         <label>判断依据<textarea aria-label="关联判断依据" maxLength={600} value={rationale} onChange={event => setRationale(event.target.value)} /></label>
         <details><summary>核对来源原文</summary>{caseData.info_units.find(unit => unit.id === infoId)?.source_refs.map((ref, index) => <article key={index}>
           <button type="button" onClick={() => onLocate(infoId)}>{caseData.files.find(file => file.file_id === ref.file_id)?.filename ?? "来源材料"}</button><blockquote>{ref.quote}</blockquote>

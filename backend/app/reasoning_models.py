@@ -7,7 +7,20 @@ from app.schemas import ContractModel, Point, Text
 
 ReasoningText = Annotated[str, Field(min_length=1, max_length=600, pattern=r"\S")]
 Judgment = Literal["unverified", "verified", "refuted"]
-LinkMeaning = Literal["support", "oppose", "verify"]
+LinkMeaning = Literal["support", "oppose", "related"]
+
+
+def migrate_stored_evidence_link(value):
+    """Normalize a stored Link/Proposal in memory; never rewrite historical audits."""
+    if isinstance(value, dict) and value.get("meaning") == "verify":
+        return {**value, "meaning": "related"}
+    return value
+
+
+def migrate_stored_reasoning_state(value):
+    if isinstance(value, dict) and isinstance(value.get("links"), list):
+        return {**value, "links": [migrate_stored_evidence_link(link) for link in value["links"]]}
+    return value
 
 
 class Hypothesis(ContractModel):
@@ -38,7 +51,7 @@ class EvidenceLink(ContractModel):
     id: Text
     hypothesis_id: Text
     info_unit_id: Text
-    meaning: LinkMeaning
+    meaning: LinkMeaning = "related"
     rationale: ReasoningText
     origin: Literal["user", "agent"] = "user"
     last_edited_by: Literal["user", "agent_accepted"] = "user"
@@ -91,7 +104,7 @@ class LinkEdit(ContractModel):
     id: Text | None = None
     hypothesis_id: Text
     info_unit_id: Text
-    meaning: LinkMeaning
+    meaning: LinkMeaning = "related"
     rationale: ReasoningText
 
 

@@ -5,7 +5,9 @@ import json
 from app.case_store import artifact_path
 from app.errors import AppError
 from app.issue_workspaces import get_issue_workspaces, persist_issue_workspaces
-from app.reasoning_models import GapEdit, HypothesisEdit, LinkEdit, ReasoningEdit, ReasoningState, PROPOSAL_ADAPTER, proposal_material_ids
+from app.reasoning_models import (GapEdit, HypothesisEdit, LinkEdit, ReasoningEdit, ReasoningState,
+                                  PROPOSAL_ADAPTER, proposal_material_ids, migrate_stored_evidence_link,
+                                  migrate_stored_reasoning_state)
 from app.reasoning_service import edit_reasoning
 
 
@@ -85,11 +87,11 @@ def _expected_reasoning(case, current, issue, run_id, proposals, receipt):
     """
     shadow = current.model_copy(deep=True)
     workspace = shadow.workspaces[issue]
-    workspace.reasoning = ReasoningState.model_validate(receipt.get("target_state", {
+    workspace.reasoning = ReasoningState.model_validate(migrate_stored_reasoning_state(receipt.get("target_state", {
         # Existing receipts contain revision baselines but no full Gap values.
         # Hypothesis increments remain provable; Gap append no-ops do not.
         "hypotheses": [{**h.model_dump(), "revision": receipt["target_revisions"][h.id]}
-                       for h in workspace.reasoning.hypotheses if h.id in receipt["target_revisions"]]}))
+                       for h in workspace.reasoning.hypotheses if h.id in receipt["target_revisions"]]})))
     for obj in [*workspace.reasoning.hypotheses, *workspace.reasoning.gaps]:
         revisions = receipt["target_revisions"] if hasattr(obj, "judgment") else receipt.get("target_gap_revisions", {})
         if obj.revision != revisions.get(obj.id, obj.revision):
@@ -132,7 +134,7 @@ def accept_proposal(case, request):
         if (audit["status"] not in {"success", "partial"} or receipt["issue"] != request.issue
                 or audit["run_id"] != request.run_id or audit["result"]["run_id"] != request.run_id):
             raise ValueError("Proposal belongs to a different Issue or run")
-        proposals = [PROPOSAL_ADAPTER.validate_python(p) for p in audit["result"]["proposals"]]
+        proposals = [PROPOSAL_ADAPTER.validate_python(migrate_stored_evidence_link(p)) for p in audit["result"]["proposals"]]
         index = request.proposal_index if request.proposal_id is None else next(
             (i for i, p in enumerate(proposals) if p.proposal_id == request.proposal_id), len(proposals))
         proposal = proposals[index]

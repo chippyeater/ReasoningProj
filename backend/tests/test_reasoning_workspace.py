@@ -37,7 +37,7 @@ class TestReasoningWorkspace(unittest.TestCase):
 
     def test_edit_link_gap_and_restore_without_business_copies(self):
         a, b = self.hypothesis(), self.hypothesis("房东可能没有实际空置损失")
-        for uid, target, meaning in (("U029", a, "oppose"), ("U029", b, "support"), ("U026", a, "verify")):
+        for uid, target, meaning in (("U029", a, "oppose"), ("U029", b, "support"), ("U026", a, "related")):
             result = self.edit(link={"hypothesis_id": target, "info_unit_id": uid, "meaning": meaning, "rationale": "材料陈述，尚需核实"})
             self.assertEqual(result.status_code, 200, result.text)
         gap = self.edit(gap={"content": "是否存在替租人的实际入住记录？", "hypothesis_ids": [a, b], "basis_info_unit_ids": ["U026"]})
@@ -53,7 +53,7 @@ class TestReasoningWorkspace(unittest.TestCase):
         self.assertFalse(state.workspaces[self.case.core_issue].reasoning.hypotheses)
         self.assertEqual(len(workspace.reasoning.links), 3)
         link = workspace.reasoning.links[0]
-        self.assertEqual(self.edit(link={"id": link.id, "hypothesis_id": a, "info_unit_id": "U029", "meaning": "verify", "rationale": "暂不判断支持力度"}).status_code, 200)
+        self.assertEqual(self.edit(link={"id": link.id, "hypothesis_id": a, "info_unit_id": "U029", "meaning": "related", "rationale": "暂不判断支持力度"}).status_code, 200)
         self.assertEqual(self.edit(unlink_id=link.id).status_code, 200)
         self.assertEqual(self.edit(hypothesis={"id": a, "content": "损失金额仍需核实", "work_status": "active"}).status_code, 200)
         self.assertEqual(get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses[0].work_status, "active")
@@ -92,7 +92,7 @@ class TestReasoningWorkspace(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         self.assertFalse(get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses)
         hid = self.hypothesis()
-        self.edit(link={"hypothesis_id": hid, "info_unit_id": "U029", "meaning": "verify", "rationale": "需核实"})
+        self.edit(link={"hypothesis_id": hid, "info_unit_id": "U029", "meaning": "related", "rationale": "需核实"})
         from app.issue_workspaces import reasoning_references
         self.assertEqual(reasoning_references(self.case, "U029")[0]["kind"], "hypothesis_evidence")
         rejected = self.client.delete(f"/api/cases/{self.case.case_id}/info-units/U029")

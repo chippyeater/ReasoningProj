@@ -29,7 +29,7 @@ class TestEvidenceLinkProposals(unittest.TestCase):
         first["content"], second["content"] = "可能发生短暂空置且少收租金", "入住间隔可能没有导致少收租金"
         gap = {**fixture.suggestion("evidence_gap"), "hypothesis_proposal_indices": [0, 1]}
         response, _ = self.investigate([first, second, self.dependent(0, "oppose"),
-            self.dependent(1, "support"), self.dependent(0, "verify", "U036"), gap], read_ids=["U029", "U036"])
+            self.dependent(1, "support"), self.dependent(0, "related", "U036"), gap], read_ids=["U029", "U036"])
         self.assertEqual(response.status_code, 200, response.text)
         result = response.json()
         self.assertEqual(len(result["proposals"]), 6)
@@ -51,7 +51,7 @@ class TestEvidenceLinkProposals(unittest.TestCase):
         self.assertTrue(again.json()["already_accepted"])
         self.assertEqual(again.json()["object_id"], accepted.json()["object_id"])
         self.assertEqual({(l.hypothesis_id, l.info_unit_id, l.meaning) for l in self.state().links},
-                         {(a, "U029", "oppose"), (b, "U029", "support"), (a, "U036", "verify")})
+                         {(a, "U029", "oppose"), (b, "U029", "support"), (a, "U036", "related")})
         self.assertFalse(get_issue_workspaces(self.case).workspaces[self.case.core_issue].reasoning.links)
 
     def test_tool_rejects_foreign_wrong_type_unknown_evidence_and_dual_targets(self):
@@ -107,7 +107,7 @@ class TestEvidenceLinkProposals(unittest.TestCase):
                     self.edit(hypothesis={"id": h, "content": "用户修正", "judgment": "unverified"})
                 elif change == "sibling_link":
                     link_id = self.accept(run, 2).json()["object_id"]
-                    self.edit(link={"id": link_id, "hypothesis_id": h, "info_unit_id": "U029", "meaning": "verify", "rationale": "用户修正关系含义"})
+                    self.edit(link={"id": link_id, "hypothesis_id": h, "info_unit_id": "U029", "meaning": "related", "rationale": "用户修正关系含义"})
                 else:
                     unit.content = "材料已更新，须重新核对"
                 rejected = self.accept(run, 1)

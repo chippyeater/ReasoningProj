@@ -111,7 +111,7 @@ class TestSameRunProposalAdoption(unittest.TestCase):
                     self.assertEqual(self.edit(hypothesis={"id": hid, "content": "用户修正后的解释"}).status_code, 200)
                 elif change == "link_edit":
                     self.assertEqual(self.edit(link={"id": first.json()["object_id"], "hypothesis_id": hid,
-                        "info_unit_id": "U029", "meaning": "verify", "rationale": "用户修正关联"}).status_code, 200)
+                        "info_unit_id": "U029", "meaning": "related", "rationale": "用户修正关联"}).status_code, 200)
                 elif change == "unlink":
                     self.assertEqual(self.edit(unlink_id=first.json()["object_id"]).status_code, 200)
                 elif change == "gap":

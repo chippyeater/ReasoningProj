@@ -1,0 +1,57 @@
+"""Stored legacy links migrate on read; new requests use the current meaning."""
+import json
+import unittest
+
+import test_reasoning_proposals as fixture
+from app.case_store import case_dir
+from app.issue_workspaces import get_issue_workspaces, persist_issue_workspaces
+
+
+class TestEvidenceLinkMigration(unittest.TestCase):
+    setUp = fixture.TestReasoningProposals.setUp
+    tearDown = fixture.TestReasoningProposals.tearDown
+    edit = fixture.TestReasoningProposals.edit
+    hypothesis = fixture.TestReasoningProposals.hypothesis
+    investigate = fixture.TestReasoningProposals.investigate
+    accept = fixture.TestReasoningProposals.accept
+
+    def test_stored_link_is_migrated_on_read_then_saved_with_stable_id(self):
+        hid = self.hypothesis()
+        self.edit(hypothesis={"id": hid, "content": "用户已判断的假设", "judgment": "verified"})
+        response = self.edit(link={"hypothesis_id": hid, "info_unit_id": "U029", "rationale": "材料有关，方向不明确。"})
+        self.assertEqual(response.status_code, 200, response.text)
+        lid = response.json()["object_id"]
+        path = case_dir(self.case.case_id) / "issue_workspaces.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["workspaces"][self.issue]["reasoning"]["links"][0]["meaning"] = "verify"
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        before = path.read_bytes()
+        state = get_issue_workspaces(self.case)
+        reasoning = state.workspaces[self.issue].reasoning
+        self.assertEqual(reasoning.links[0].meaning, "related")
+        self.assertEqual(reasoning.links[0].id, lid)
+        self.assertEqual(reasoning.hypotheses[0].judgment, "verified")
+        self.assertEqual(path.read_bytes(), before)
+        persist_issue_workspaces(self.case, state)
+        saved = json.loads(path.read_text(encoding="utf-8"))["workspaces"][self.issue]["reasoning"]
+        self.assertEqual(saved["links"][0]["meaning"], "related")
+        self.assertEqual(saved["hypotheses"][0]["judgment"], "verified")
+        self.assertEqual(self.edit(link={"id": lid, "hypothesis_id": hid, "info_unit_id": "U029",
+            "meaning": "verify", "rationale": "旧请求不合法"}).status_code, 422)
+
+    def test_stored_proposal_can_be_adopted_without_rewriting_historical_audit(self):
+        hid = self.hypothesis()
+        proposal = {**fixture.suggestion("evidence_link", hid), "meaning": "related"}
+        response, _ = self.investigate([proposal], [hid])
+        self.assertEqual(response.status_code, 200, response.text)
+        run_id = response.json()["run_id"]
+        path = case_dir(self.case.case_id) / f"runs/{run_id}.output.json"
+        audit = json.loads(path.read_text(encoding="utf-8"))
+        audit["result"]["proposals"][0]["meaning"] = "verify"
+        path.write_text(json.dumps(audit, ensure_ascii=False), encoding="utf-8")
+        before = path.read_bytes()
+        accepted = self.accept(run_id)
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        link = get_issue_workspaces(self.case).workspaces[self.issue].reasoning.links[0]
+        self.assertEqual(link.meaning, "related")
+        self.assertEqual(path.read_bytes(), before)

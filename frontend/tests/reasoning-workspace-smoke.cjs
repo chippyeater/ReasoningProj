@@ -46,6 +46,8 @@ const api = 'http://127.0.0.1:8018';
     async function addLink(hid, uid, meaning) {
       await editHypothesis(hid);
       await editor.getByRole('button', { name: '关联已有证据', exact: true }).click();
+      assert.equal(await editor.getByLabel('关联语义', { exact: true }).inputValue(), 'related');
+      assert.equal(await editor.getByText('相关：材料与假设有关，但不明确支持或反对。', { exact: true }).isVisible(), true);
       await editor.getByLabel('关联案件信息', { exact: true }).selectOption(uid);
       await editor.getByLabel('关联语义', { exact: true }).selectOption(meaning);
       await save();
@@ -53,16 +55,16 @@ const api = 'http://127.0.0.1:8018';
     // A single source remains case-owned while supporting different reasoning.
     await addLink(h1, 'U026', 'support');
     await addLink(h2, 'U026', 'oppose');
-    await addLink(h1, 'U029', 'verify');
+    await addLink(h1, 'U029', 'related');
     let work = await current();
     assert.equal(work.reasoning.links.length, 3);
     assert.equal(await page.locator('.reasoning-support').count(), 1);
     assert.equal(await page.locator('.reasoning-oppose').count(), 1);
-    assert.equal(await page.locator('.reasoning-verify').count(), 1);
+    assert.equal(await page.locator('.reasoning-related').count(), 1);
     // Existing line hit targets open semantic editing with exact source text.
     const firstLink = work.reasoning.links[0];
     await page.locator(`[data-reasoning-link-id="${firstLink.id}"] .relation-edge-hit`).dispatchEvent('click', { bubbles: true });
-    await editor.getByLabel('关联语义', { exact: true }).selectOption('verify');
+    await editor.getByLabel('关联语义', { exact: true }).selectOption('related');
     await editor.getByText('核对来源原文', { exact: true }).click();
     assert.match(await editor.innerText(), /张某笔录.docx/);
     assert.match(await editor.innerText(), /3 月 8 号/);
@@ -71,7 +73,7 @@ const api = 'http://127.0.0.1:8018';
     await editor.getByRole('button', { name: '解除关联', exact: true }).click();
     await editor.waitFor({ state: 'hidden' }); await saved();
     assert.equal((await current()).reasoning.links.length, 2);
-    await addLink(h1, 'U026', 'verify');
+    await addLink(h1, 'U026', 'related');
     await editHypothesis(h1);
     await editor.getByRole('button', { name: '添加证据缺口', exact: true }).click();
     await editor.getByLabel('缺口问题', { exact: true }).fill('是否存在替租人的实际入住记录和新租约？');

@@ -375,7 +375,8 @@ type V03WorkspaceState = {
 
 export type IssueStatus = "pending" | "investigating" | "closed";
 export type Judgment = "unverified" | "verified" | "refuted";
-export type LinkMeaning = "support" | "oppose" | "verify";
+// related：材料与假设有关，但不明确支持或反对。
+export type LinkMeaning = "support" | "oppose" | "related";
 export type Hypothesis = { id: string; content: string; judgment: Judgment; work_status: "active" | "deprecated";
   revision: number; updated_at: string; last_edited_by: "user" | "agent_accepted"; proposal_key: string | null };
 export type EvidenceGap = { id: string; content: string; hypothesis_ids: string[];

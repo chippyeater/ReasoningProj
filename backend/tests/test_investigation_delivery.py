@@ -95,7 +95,7 @@ class TestInvestigationDelivery(unittest.TestCase):
             with self.subTest(name=name):
                 common = {"hypothesis_id": "formal-hypothesis", "rationale": "核对陈述的具体依据", "evidence_refs": []}
                 if name == "propose_evidence_link":
-                    common.update(info_unit_id="U029", meaning="verify", hypothesis_proposal_ids=[])
+                    common.update(info_unit_id="U029", meaning="related", hypothesis_proposal_ids=[])
                 else:
                     common.update(info_unit_ids=["U029"], judgment="unverified")
                 cited = {**common, "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}

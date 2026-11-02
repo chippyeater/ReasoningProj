@@ -11,7 +11,7 @@ from pydantic import Field, ValidationError, model_validator
 from app.case_store import artifact_path, case_dir, write_json
 from app.errors import AppError
 from app.schemas import CaseData, ContractModel, ParseStatus, PipelineStage, RunStatus, Text, WorkspaceState
-from app.reasoning_models import ReasoningState
+from app.reasoning_models import ReasoningState, migrate_stored_reasoning_state
 
 IssueStatus = Literal["pending", "investigating", "closed"]
 
@@ -64,7 +64,12 @@ def _read(case: CaseData) -> IssueWorkspaces:
     if not path.exists():
         return IssueWorkspaces()
     try:
-        return IssueWorkspaces.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and isinstance(payload.get("workspaces"), dict):
+            for workspace in payload["workspaces"].values():
+                if isinstance(workspace, dict) and "reasoning" in workspace:
+                    workspace["reasoning"] = migrate_stored_reasoning_state(workspace["reasoning"])
+        return IssueWorkspaces.model_validate(payload)
     except (ValueError, UnicodeError, ValidationError) as exc:
         raise AppError("invalid_issue_workspaces", "Stored Issue workspace cannot be read; it has not been overwritten", 409) from exc
 

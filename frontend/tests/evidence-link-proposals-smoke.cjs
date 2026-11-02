@@ -36,7 +36,7 @@ const api = 'http://127.0.0.1:8018';
     await page.waitForFunction(() => document.querySelectorAll('.pending-reasoning-edge').length === 3);
     assert.equal(await page.locator('.reasoning-candidate').count(), 5);
     assert.equal(await page.locator('[data-reasoning-link-id]').count(), 0);
-    for (const meaning of ['反对', '支持', '待核实'])
+    for (const meaning of ['反对', '支持', '相关'])
       assert.match(await page.locator('.pending-reasoning-edge').allTextContents().then(t => t.join(' ')), new RegExp(meaning));
     const candidate = index => page.locator(`.reasoning-candidate[data-proposal-index="${index}"]`);
     const suggestion = index => page.locator(`.reasoning-suggestion[data-proposal-index="${index}"]`);
