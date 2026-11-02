@@ -22,7 +22,7 @@ Findings、Proposal 引用须属于当前案件并实际取得；初始选中/Is
 
 一个 Evidence Gap 对应一个具体、可独立核查的缺失条件，说明确认内容、判断影响和明确补证动作/材料类型；独立条件分别建缺口，多份材料验证同一条件可合并。多个竞争性假设应先取得真实 ID，再关联一个共同区分性缺口。创建工具使用 `hypothesis_targets` 对象，内含 `hypothesis_ids` 与 `hypothesis_proposal_ids`；嵌套 `anyOf` 保证至少一项非空，后端再次校验结构、最多5个目标及当前 Issue/Run 的目标真实性，再映射回原有 Proposal 字段。Proposal 类型和采纳契约不变。
 
-模型每次创建前须对照正式 reasoning 和本轮全部成功 proposals，按解释/缺失条件判断语义重复。后端另做有限文本归一化检查（忽略标点、核查指令前缀、明确的命题标题及 Gap 的标签/附注），检查当前 Issue 的完整正式对象，包括模型投影省略的对象，以及本轮成功 Proposal。命中时返回 `duplicate_proposal`、原对象来源和 ID，不追加、合并、改写或采纳对象；不同主体、日期或不同条件不按相似度合并。该检查不替代模型的语义比较，不能保证识别任意同义改写；用户仍逐项审阅。
+模型每次创建前须对照正式 reasoning 和本轮全部成功 proposals，按解释/缺失条件判断语义重复。后端另做有限文本归一化检查：保留 NFKC、casefold、明确的开头核查指令词清理及常规分隔标点/空白归一化；完整保留冒号后和括号内的命题、主体、身份及成立条件，不删除小数点、正负号、比例、比较符号或英文词间边界。检查范围为当前 Issue 的完整正式对象（包括模型投影省略的对象）及本轮成功 Proposal，且仅适用于 Hypothesis 与 Evidence Gap。命中时返回 `duplicate_proposal`、原对象来源和 ID，不追加、合并、改写或采纳对象。该检查不使用模糊相似度，也不能保证识别任意同义改写；优先避免错误拦截不同命题，用户仍逐项审阅。
 
 Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成依据，来源引用只能指向已取得的这些节点；不接受 `addressing_info_unit_ids`。正式 Gap 的回应列表初始为空，后续通过现有工作区编辑接口追加去重，材料关联不自动解决 Gap 或改变假设判断。上下文分别提供形成依据、回应材料及各自截断标记；这些引用本身不授予材料读取权限。Hypothesis、Evidence Link、Hypothesis Status 的 `info_unit_ids` 语义保持不变。已保存工作区的一次性迁移见 `docs/issue_reasoning.md`。
 

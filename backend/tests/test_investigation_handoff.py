@@ -7,6 +7,7 @@ from unittest.mock import patch
 import test_investigation_agent as f
 from app import investigation_agent as agent, investigation_actions as actions
 from app.errors import AppError
+from app import investigation_tools as tools
 
 
 class TestInvestigationHandoff(unittest.TestCase):
@@ -29,6 +30,145 @@ class TestInvestigationHandoff(unittest.TestCase):
         return f.tool("propose_evidence_gap", {"content": content, "rationale": "同一时间条件可共同区分两种解释。",
             "basis_info_unit_ids": ["U029", "U036"], "evidence_refs": [],
             "hypothesis_targets": {"hypothesis_ids": [], "hypothesis_proposal_ids": ids}, **kwargs}, call_id)
+
+    def comparison_context(self):
+        context = self.context()
+        context["reasoning"]["hypotheses"] = [
+            {"id": "formal-a", "content": "原有解释甲", "revision": 1},
+            {"id": "formal-b", "content": "原有解释乙", "revision": 1}]
+        context["reasoning"]["gaps"] = [{"id": "formal-gap", "content": "原有核查问题",
+            "hypothesis_ids": ["formal-a"], "basis_info_unit_ids": [], "revision": 1}]
+        response = tools.get_evidence(self.case, ["U029", "U036"])
+        self.assertIn(response["status"], {"ok", "truncated"})
+        refs = [{"info_unit_id": row["info_unit_id"], "source_ref_index": row["source_ref_index"]}
+                for row in response["items"]]
+        seen = {"units": {ref["info_unit_id"] for ref in refs}, "relations": set(),
+                "evidence": {(ref["info_unit_id"], ref["source_ref_index"]) for ref in refs}}
+        return context, seen, refs
+
+    def submit_pending(self, kind, content, proposals, context, seen, refs, **changes):
+        values = {"content": content, "rationale": "根据已取得的材料提出待核查命题。", "evidence_refs": refs}
+        if kind == "hypothesis":
+            values["info_unit_ids"] = ["U029", "U036"]
+        else:
+            values.update(basis_info_unit_ids=["U029", "U036"], hypothesis_ids=["formal-a"])
+        values.update(changes)
+        return actions._propose(self.case, seen, context, proposals, kind, **values)
+
+    def test_exact_and_format_only_duplicates_return_original_pending_id_without_mutation(self):
+        context, seen, refs = self.comparison_context()
+        pairs = [
+            ("实际租金损失仍待核实", "实际租金损失仍待核实"),
+            ("房东，发生损失。", "房东 发生损失!"),
+            ("房东：可能存在损失（有待核实）。", "房东: 可能存在损失 (有待核实)!"),
+            ("确认实际腾退日期", "核实实际腾退日期"),
+            ("核对实际腾退日期", "查明实际腾退日期"),
+            ("confirm Tenant ACME has paid", "verify tenant acme has paid"),
+            ("tenant pays rent", " tenant  pays   rent "),
+            ("ＡＣＭＥ已支付１０００元", "acme已支付1000元")]
+        before_files = self.fixture.disk_snapshot()
+        before_context, before_seen = deepcopy(context), deepcopy(seen)
+        for kind in ("hypothesis", "evidence_gap"):
+            for first, duplicate in pairs:
+                with self.subTest(kind=kind, first=first, duplicate=duplicate):
+                    proposals = []
+                    original = self.submit_pending(kind, first, proposals, context, seen, refs)
+                    before = [p.model_dump(mode="json") for p in proposals]
+                    with self.assertRaises(AppError) as caught:
+                        self.submit_pending(kind, duplicate, proposals, context, seen, refs)
+                    self.assertEqual(caught.exception.code, "duplicate_proposal")
+                    existing = caught.exception.details["errors"][0]["existing_object"]
+                    self.assertEqual(existing["id"], original["proposal_id"])
+                    self.assertEqual(existing["source"], "proposals")
+                    self.assertEqual([p.model_dump(mode="json") for p in proposals], before)
+                    self.assertEqual(context, before_context)
+                    self.assertEqual(seen, before_seen)
+                    self.assertEqual(self.fixture.disk_snapshot(), before_files)
+
+    def test_substantive_subjects_conditions_and_numeric_symbols_create_distinct_proposals(self):
+        context, seen, refs = self.comparison_context()
+        pairs = [
+            ("租金损失：提前退租造成空置", "租金损失：新租约租金较低产生差额"),
+            ("房东实际租金损失：提前退租造成空置", "房东实际租金损失：新租约租金较低产生差额"),
+            ("确认实际承租人（张某）的腾退日期", "确认实际承租人（李某）的腾退日期"),
+            ("确认承租人（甲公司）的腾退日期", "确认承租人（乙公司）的腾退日期"),
+            ("确认业主（张某）的腾退日期", "确认租客（张某）的腾退日期"),
+            ("承租人腾退日期（3月5日）需核实", "承租人腾退日期（3月8日）需核实"),
+            ("少收租金1000元", "少收租金2000元"),
+            ("空置3天", "空置5天"),
+            ("存在实际租金损失", "不存在实际租金损失"),
+            ("租金损失（已收租）", "租金损失（未收租）"),
+            ("新租金低于原租金", "新租金高于原租金"),
+            ("因空置导致少收租金", "因少收租金导致空置"),
+            ("租金差额1.5元", "租金差额15元"),
+            ("租金差额.5元", "租金差额5元"),
+            ("租金差额-100元", "租金差额100元"),
+            ("租金差额+100元", "租金差额-100元"),
+            ("新租金<原租金", "新租金>原租金"),
+            ("新租金!=原租金", "新租金=原租金"),
+            ("新租金 ! = 原租金", "新租金=原租金"),
+            ("空置天数≤3", "空置天数≥3"),
+            ("租金降幅5%", "租金降幅5"),
+            ("应付租金为原租金的1/2", "应付租金为原租金的12"),
+            ("租金比例1:2", "租金比例12"),
+            ("租金比例1 : 2", "租金比例12"),
+            ("金额1,5元", "金额15元"),
+            ("金额1 , 5元", "金额15元"),
+            ("金额1 . 5元", "金额15元"),
+            ("损失金额1*(2+3)", "损失金额1*2+3"),
+            ("待核数量5!", "待核数量5"),
+            ("待核数量(1;2)", "待核数量(12)"),
+            ("tenant is not able to pay", "tenant is notable to pay")]
+        before_context, before_seen = deepcopy(context), deepcopy(seen)
+        before_files = self.fixture.disk_snapshot()
+        for kind in ("hypothesis", "evidence_gap"):
+            for first, second in pairs:
+                with self.subTest(kind=kind, first=first, second=second):
+                    proposals = []
+                    a = self.submit_pending(kind, first, proposals, context, seen, refs)
+                    b = self.submit_pending(kind, second, proposals, context, seen, refs)
+                    self.assertEqual([p.content for p in proposals], [first, second])
+                    self.assertNotEqual(a["proposal_id"], b["proposal_id"])
+        self.assertEqual(context, before_context)
+        self.assertEqual(seen, before_seen)
+        self.assertEqual(self.fixture.disk_snapshot(), before_files)
+
+    def test_rationale_reference_order_and_associations_do_not_rename_a_proposition(self):
+        context, seen, refs = self.comparison_context()
+        for kind in ("hypothesis", "evidence_gap"):
+            with self.subTest(kind=kind):
+                proposals = []
+                original = self.submit_pending(kind, "需要核查的完整命题：条件仍待确认", proposals, context, seen, refs)
+                before = [p.model_dump(mode="json") for p in proposals]
+                changes = {"rationale": "换一种理由仍然是同一命题。"}
+                changes["info_unit_ids" if kind == "hypothesis" else "basis_info_unit_ids"] = ["U036", "U029"]
+                if kind == "evidence_gap":
+                    changes["hypothesis_ids"] = ["formal-b"]
+                with self.assertRaises(AppError) as caught:
+                    self.submit_pending(kind, proposals[0].content, proposals, context, seen, list(reversed(refs)), **changes)
+                self.assertEqual(caught.exception.code, "duplicate_proposal")
+                self.assertEqual(caught.exception.details["errors"][0]["existing_object"]["id"], original["proposal_id"])
+                self.assertEqual([p.model_dump(mode="json") for p in proposals], before)
+
+    def test_duplicate_guard_does_not_extend_to_links_status_or_gap_updates(self):
+        context, seen, refs = self.comparison_context()
+        ref = [next(ref for ref in refs if ref["info_unit_id"] == "U029")]
+        cases = {
+            "evidence_link": {"content": None, "hypothesis_ids": ["formal-a"], "info_unit_ids": ["U029"], "meaning": "related"},
+            "hypothesis_status": {"content": None, "hypothesis_ids": ["formal-a"], "info_unit_ids": ["U029"], "judgment": "unverified"},
+            "evidence_gap_update": {"gap_id": "formal-gap", "addressing_info_unit_ids": ["U029"], "status": "open"}}
+        before_context, before_seen = deepcopy(context), deepcopy(seen)
+        before_files = self.fixture.disk_snapshot()
+        for kind, values in cases.items():
+            with self.subTest(kind=kind):
+                proposals = []
+                for _ in range(2):
+                    actions._propose(self.case, seen, context, proposals, kind, rationale="单独审阅该建议。", evidence_refs=ref, **values)
+                self.assertEqual(len(proposals), 2)
+                self.assertNotEqual(proposals[0].proposal_id, proposals[1].proposal_id)
+        self.assertEqual(context, before_context)
+        self.assertEqual(seen, before_seen)
+        self.assertEqual(self.fixture.disk_snapshot(), before_files)
 
     def test_three_search_hits_remain_available_but_unread_sources_cannot_be_cited(self):
         hits = ["U006", "U008", "U010"]
@@ -59,7 +199,7 @@ class TestInvestigationHandoff(unittest.TestCase):
         self.assertEqual(result["summary_status"], "completed")
         self.assertEqual(result["tool_budget_used"], {"read": 2, "proposal": 0, "finish": 2})
 
-    def test_competing_hypotheses_share_one_gap_and_synonymous_retries_do_not_append(self):
+    def test_competing_hypotheses_share_one_gap_and_format_only_retries_do_not_append(self):
         contents = [
             "不存在实际租金损失：若新旧租约计租与实收连续覆盖，则没有租金断档。",
             "存在实际租金损失：若实际腾退后新租约延后计租且未收取租金，则存在断档损失。"]
@@ -76,14 +216,14 @@ class TestInvestigationHandoff(unittest.TestCase):
                 return self.gap(gap, ids, "shared-gap")
             if turn == 5:
                 # Same proposition with different rationale and material order.
-                return self.hypothesis("不存在实际租金损失：新租客已接替入住；若计租连续，则无实收断档。", "synonym-hyp",
+                return self.hypothesis(contents[0].replace("：", ": ").replace("。", "！"), "same-hyp",
                     info_unit_ids=["U036", "U029"], rationale="补充理由也不构成新的假设。")
             if turn == 6:
                 step = state["recovery"]["next_action"]["steps"][0]
                 self.assertEqual(step["code"], "duplicate_proposal")
                 self.assertEqual(step["existing_object"]["id"], ids[0])
-                return self.gap("核实张某实际腾退（搬出）房屋的具体日期与时间：要求物业出入记录、钥匙交接凭证。",
-                    list(reversed(ids)), "synonym-gap")
+                return self.gap(gap.replace("确认", "核实", 1).replace("（", "(").replace("）", ")"),
+                    list(reversed(ids)), "same-gap")
             step = state["recovery"]["next_action"]["steps"][0]
             self.assertEqual(step["code"], "duplicate_proposal")
             self.assertEqual(step["existing_object"]["id"], proposals[2]["proposal_id"])

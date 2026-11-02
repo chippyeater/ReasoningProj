@@ -21,20 +21,18 @@ def _check_duplicate(proposal, context, proposals, case):
     from app.issue_workspaces import get_issue_workspaces
 
     def key(content):
-        text = _normalized(content)
+        text = re.sub(r"\s+", " ", _normalized(content).strip())
         text = re.sub(r"^(确认|核实|核对|查明|confirm\s+|verify\s+)", "", text)
-        # A trailing explanation/evidence request does not rename a condition.
-        parts = re.split(r"[:：]", text, maxsplit=1)
-        if len(parts[0]) >= 6 and not re.search(r"假设|解释|hypothesis|explanation", parts[0]):
-            text = parts[0]
-        if proposal.kind == "evidence_gap":
-            # Resolve a leading short label(alias), retaining the named subject.
-            # Do not use a similarity score: nearby wording can describe a
-            # different party, date or condition and must remain independent.
-            text = re.sub(r"^[^()]{1,4}\(([^()\d]{1,8})\)", r"\1", text)
-            text = re.sub(r"\(([^)]*)\)",
-                          lambda match: match[1] if re.search(r"\d", match[1]) else "", text)
-        return re.sub(r"[\W_]", "", text)
+        # Keep all clause/parenthesis content and grouping. Numeric separators,
+        # signs, ratios and comparison operators may change the proposition.
+        def separator(match):
+            left, right = text[:match.start()].rstrip(), text[match.end():].lstrip()
+            numeric = left and left[-1].isdigit() or right and right[0].isdigit()
+            comparison = match[0] == "!" and right.startswith("=")
+            return match[0] if numeric or comparison else ""
+        text = re.sub(r"""[.,:;!?'"“”‘’。、]""", separator, text)
+        # Latin word boundaries distinguish e.g. 'not able' from 'notable'.
+        return re.sub(r"(?<![a-z0-9])\s+|\s+(?![a-z0-9])", "", text)
 
     section = "hypotheses" if proposal.kind == "hypothesis" else "gaps"
     formal = list((context or {}).get("reasoning", {}).get(section, []))
