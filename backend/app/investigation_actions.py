@@ -1,11 +1,61 @@
 """Validated investigation artifacts. These tools never write the Issue workspace."""
 import json
+import re
 from uuid import uuid4
 
 from pydantic import TypeAdapter
 
 from app.errors import AppError
 from app.reasoning_models import PROPOSAL_ADAPTER, proposal_material_ids
+
+
+def _check_duplicate(proposal, context, proposals, case):
+    """A conservative text guard, alongside the model's semantic comparison.
+
+    Compare the stated proposition/question, not rationale, citation order or
+    chosen associations. Never merge, rewrite or adopt an existing object.
+    """
+    if proposal.kind not in {"hypothesis", "evidence_gap"}:
+        return
+    from app.investigation_tools import _normalized
+    from app.issue_workspaces import get_issue_workspaces
+
+    def key(content):
+        text = _normalized(content)
+        text = re.sub(r"^(确认|核实|核对|查明|confirm\s+|verify\s+)", "", text)
+        # A trailing explanation/evidence request does not rename a condition.
+        parts = re.split(r"[:：]", text, maxsplit=1)
+        if len(parts[0]) >= 6 and not re.search(r"假设|解释|hypothesis|explanation", parts[0]):
+            text = parts[0]
+        if proposal.kind == "evidence_gap":
+            # Resolve a leading short label(alias), retaining the named subject.
+            # Do not use a similarity score: nearby wording can describe a
+            # different party, date or condition and must remain independent.
+            text = re.sub(r"^[^()]{1,4}\(([^()\d]{1,8})\)", r"\1", text)
+            text = re.sub(r"\(([^)]*)\)",
+                          lambda match: match[1] if re.search(r"\d", match[1]) else "", text)
+        return re.sub(r"[\W_]", "", text)
+
+    section = "hypotheses" if proposal.kind == "hypothesis" else "gaps"
+    formal = list((context or {}).get("reasoning", {}).get(section, []))
+    # The model receives a bounded workspace projection. Check omitted formal
+    # objects too, without injecting the full workspace into model context.
+    workspace = get_issue_workspaces(case).workspaces.get((context or {}).get("current_issue"))
+    if workspace:
+        formal = [obj.model_dump(mode="json") for obj in getattr(workspace.reasoning, section)] + formal
+    candidates = [("reasoning", obj) for obj in formal if not obj.get("content_truncated")]
+    candidates += [("proposals", p.model_dump(mode="json")) for p in proposals if p.kind == proposal.kind]
+    current = key(proposal.content)
+    for source, obj in candidates:
+        previous = key(obj["content"])
+        duplicate = current == previous
+        if duplicate:
+            existing = {"source": source, "kind": proposal.kind,
+                        "id": obj.get("proposal_id") or obj["id"], "content": obj["content"]}
+            raise AppError("duplicate_proposal", "This Hypothesis or missing condition already exists", details={
+                "category": "proposal_semantics", "errors": [{"loc": ["content"], "code": "duplicate_proposal",
+                    "message": "Reuse the existing object instead of creating a synonymous Proposal",
+                    "existing_object": existing}]})
 
 
 def artifacts(case, seen, context, goal, proposals, findings, questions, status):
@@ -41,6 +91,7 @@ def _propose(case, seen, context, proposals, kind, **values):
     })
     # No append until every citation and current-run dependency has passed.
     artifacts(case, seen, context, "validate pending suggestion", [*proposals, proposal], [], [], "evidence_insufficient")
+    _check_duplicate(proposal, context, proposals, case)
     proposals.append(proposal)
     return {"status": "ok", "proposal_id": proposal.proposal_id, "pending": True,
             "evidence_status": "traceable_source" if proposal.evidence_refs else "not_directly_evidenced",
@@ -48,7 +99,7 @@ def _propose(case, seen, context, proposals, kind, **values):
 
 
 def propose_hypothesis(case, seen, context, proposals, *, content, rationale, info_unit_ids, evidence_refs):
-    """Propose a testable explanation, pending user approval, never verified by default. Obtained InfoUnit content can support exploratory reasoning without get_evidence; evidence_refs may be empty. If no direct material exists info_unit_ids may also be empty; explain uncertainty in rationale. Cite validated initial source_refs or get_evidence results when available; source location alone does not prove the hypothesis."""
+    """Propose a testable explanation, pending user approval, never verified by default. Before calling compare reasoning and every successful same-run Proposal: reuse synonymous Hypotheses; competing explanations must state substantively different conditions or distinguishing evidence. Obtained InfoUnit content can support exploratory reasoning without get_evidence; evidence_refs may be empty. If no direct material exists info_unit_ids may also be empty; explain uncertainty in rationale. Cite validated initial source_refs or get_evidence results when available; source location alone does not prove the hypothesis."""
     return _propose(case, seen, context, proposals, "hypothesis", content=content, rationale=rationale,
                     info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
 
@@ -63,7 +114,7 @@ def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info
 
 def propose_evidence_gap(case, seen, context, proposals, *, content, hypothesis_ids, hypothesis_proposal_ids,
                          rationale, basis_info_unit_ids, evidence_refs):
-    """Propose one specific, independently verifiable missing fact or condition. State what must be confirmed and why it affects the Hypotheses, with a concrete evidence action or material type. Split independently useful conditions into separate Gaps; several materials checking the same condition can share one Gap. Do not bundle a new lease, payment records, move-out proof and expense receipts into a broad request. A shared Gap may link multiple competing existing Hypothesis IDs or this run's returned Hypothesis proposal IDs; explain how it distinguishes them rather than duplicate it for each. Obtained InfoUnit content is sufficient for an exploratory Gap without get_evidence; evidence_refs may be empty, as may basis_info_unit_ids when no direct material exists. basis_info_unit_ids records existing material that prompted this Gap, not later addressing material; a new Gap starts with no addressing material. Describe uncertainty, not a proven fact."""
+    """Propose one specific, independently verifiable missing fact or condition. hypothesis_targets contains hypothesis_ids and hypothesis_proposal_ids: at least one array MUST be nonempty, with at most five targets total. Use actual current-Issue Hypothesis IDs or first submit propose_hypothesis successfully and use its returned proposal_id in hypothesis_proposal_ids; never guess IDs or send two empty arrays. Compare reasoning and all successful same-run Proposals before calling: reuse existing equivalent conditions, and create a shared Gap once, after obtaining IDs of all relevant competing Hypotheses. State what must be confirmed and why it affects the Hypotheses, with a concrete evidence action or material type. Split independently useful conditions into separate Gaps; several materials checking the same condition can share one Gap. Do not bundle a new lease, payment records, move-out proof and expense receipts into a broad request. Obtained InfoUnit content is sufficient for an exploratory Gap without get_evidence; evidence_refs and basis_info_unit_ids may be empty when no direct material exists. basis_info_unit_ids records existing forming material, not later addressing material; a new Gap starts with no addressing material. Describe uncertainty, not a proven fact."""
     return _propose(case, seen, context, proposals, "evidence_gap", content=content, hypothesis_ids=hypothesis_ids,
                     hypothesis_proposal_ids=hypothesis_proposal_ids, rationale=rationale,
                     basis_info_unit_ids=basis_info_unit_ids, evidence_refs=evidence_refs)

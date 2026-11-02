@@ -95,25 +95,37 @@ class TestEvidenceLinkProposals(unittest.TestCase):
         self.assertEqual(self.accept(a, 1).status_code, 200)
 
     def test_user_edits_and_stale_child_or_parent_evidence_block_links(self):
-        for change in ("hypothesis", "sibling_link", "child_evidence", "parent_evidence"):
-            with self.subTest(change=change):
-                response, _ = self.investigate([fixture.suggestion("hypothesis"),
-                    self.dependent(uid="U036"), self.dependent(meaning="oppose")], read_ids=["U029", "U036"])
-                run = response.json()["run_id"]
-                h = self.accept(run).json()["object_id"]
-                unit = next(u for u in self.case.info_units if u.id == ("U036" if change == "child_evidence" else "U029"))
-                old = unit.content
-                if change == "hypothesis":
-                    self.edit(hypothesis={"id": h, "content": "用户修正", "judgment": "unverified"})
-                elif change == "sibling_link":
-                    link_id = self.accept(run, 2).json()["object_id"]
-                    self.edit(link={"id": link_id, "hypothesis_id": h, "info_unit_id": "U029", "meaning": "related", "rationale": "用户修正关系含义"})
-                else:
-                    unit.content = "材料已更新，须重新核对"
-                rejected = self.accept(run, 1)
-                self.assertEqual(rejected.status_code, 409, rejected.text)
-                self.assertEqual(rejected.json()["detail"]["code"], "stale_reasoning_proposal")
-                unit.content = old
+        self.assert_stale_link("hypothesis")
+
+    def test_user_edited_sibling_link_blocks_pending_link(self):
+        self.assert_stale_link("sibling_link")
+
+    def test_changed_child_evidence_blocks_pending_link(self):
+        self.assert_stale_link("child_evidence")
+
+    def test_changed_parent_evidence_blocks_pending_link(self):
+        self.assert_stale_link("parent_evidence")
+
+    def assert_stale_link(self, change):
+        # Each scenario needs its own workspace: an adopted Hypothesis must not
+        # be recreated merely to set up the next stale-receipt check.
+        response, _ = self.investigate([fixture.suggestion("hypothesis"),
+            self.dependent(uid="U036"), self.dependent(meaning="oppose")], read_ids=["U029", "U036"])
+        run = response.json()["run_id"]
+        h = self.accept(run).json()["object_id"]
+        unit = next(u for u in self.case.info_units if u.id == ("U036" if change == "child_evidence" else "U029"))
+        old = unit.content
+        if change == "hypothesis":
+            self.edit(hypothesis={"id": h, "content": "用户修正", "judgment": "unverified"})
+        elif change == "sibling_link":
+            link_id = self.accept(run, 2).json()["object_id"]
+            self.edit(link={"id": link_id, "hypothesis_id": h, "info_unit_id": "U029", "meaning": "related", "rationale": "用户修正关系含义"})
+        else:
+            unit.content = "材料已更新，须重新核对"
+        rejected = self.accept(run, 1)
+        self.assertEqual(rejected.status_code, 409, rejected.text)
+        self.assertEqual(rejected.json()["detail"]["code"], "stale_reasoning_proposal")
+        unit.content = old
 
     def test_legacy_formal_link_shape_and_new_single_target_constraints(self):
         formal = fixture.suggestion("evidence_link", "hyp-existing")

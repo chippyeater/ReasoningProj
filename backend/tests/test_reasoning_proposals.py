@@ -40,9 +40,9 @@ def proposal_call(source, prior_ids, call_id):
         if kind == "hypothesis_status":
             args.update(hypothesis_id=source["hypothesis_ids"][0], judgment=source["judgment"])
         if kind == "evidence_gap":
-            args.update(hypothesis_ids=source["hypothesis_ids"], hypothesis_proposal_ids=source.get("hypothesis_proposal_ids", [
+            args.update(hypothesis_targets={"hypothesis_ids": source["hypothesis_ids"], "hypothesis_proposal_ids": source.get("hypothesis_proposal_ids", [
                 prior_ids[index] if index < len(prior_ids) else "proposal-" + "f" * 32
-                for index in source.get("hypothesis_proposal_indices", [])]))
+                for index in source.get("hypothesis_proposal_indices", [])])})
     return replies.tool("propose_" + kind, args, call_id)
 
 
@@ -269,6 +269,24 @@ class TestReasoningProposals(TestReasoningWorkspace):
         self.assertNotEqual(parent_a, parent_b)
         self.assertEqual(state.gaps[0].hypothesis_ids, [parent_a])
 
+    def test_duplicate_formal_hypothesis_omitted_from_model_projection_is_rejected_without_write(self):
+        content = "租约始终连续计租，没有实际租金断档"
+        hidden = self.hypothesis(content)
+        visible = [self.hypothesis(f"独立解释条件{index}") for index in range(3)]
+        context = investigation_context(self.case, self.issue, "其他事项", selected_reasoning_ids=visible)
+        self.assertNotIn(hidden, {h["id"] for h in context["reasoning"]["hypotheses"]})
+        path = case_dir(self.case.case_id) / "issue_workspaces.json"
+        before = path.read_bytes()
+        proposal = {**suggestion("hypothesis"), "content": content + "。"}
+        response, requests = self.investigate([proposal], selected=visible)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["proposals"], [])
+        recovery = json.loads(requests[2]["messages"][1]["content"])["recovery"]
+        existing = recovery["next_action"]["steps"][0]["existing_object"]
+        self.assertEqual(existing["id"], hidden)
+        self.assertEqual(existing["source"], "reasoning")
+        self.assertEqual(path.read_bytes(), before)
+
     def test_returned_id_from_another_run_is_rejected_by_tool_and_adoption(self):
         first, _ = self.investigate([suggestion("hypothesis")])
         foreign_id = first.json()["proposals"][0]["proposal_id"]
@@ -313,7 +331,9 @@ class TestReasoningProposals(TestReasoningWorkspace):
         stale = self.accept(run, 2)
         self.assertEqual(stale.status_code, 409)
         self.assertEqual(stale.json()["detail"]["code"], "stale_reasoning_proposal")
-        fresh, _ = self.investigate(self.dependent_proposals())
+        fresh_proposals = self.dependent_proposals()
+        fresh_proposals[0]["content"] = "新租约租金降低，可能产生租金差额损失"
+        fresh, _ = self.investigate(fresh_proposals)
         new_run = fresh.json()["run_id"]
         parent = self.accept(new_run).json()["object_id"]
         self.edit(hypothesis={"id": parent, "content": "用户修正假设", "judgment": "unverified", "work_status": "active"})

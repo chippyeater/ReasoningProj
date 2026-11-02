@@ -147,7 +147,9 @@ class TestInvestigationResultContract(unittest.TestCase):
             self.assertNotIn("kind", schema["properties"])
             self.assertNotIn("proposal_id", schema["properties"])
             self.assertNotIn("hypothesis_proposal_indices", schema["properties"])
-        self.assertIn("hypothesis_proposal_ids", definitions["propose_evidence_gap"]["properties"])
+        branches = definitions["propose_evidence_gap"]["properties"]["hypothesis_targets"]["anyOf"]
+        self.assertEqual(len(branches), 2)
+        self.assertTrue(all("hypothesis_proposal_ids" in branch["properties"] for branch in branches))
         self.assertEqual(definitions["propose_evidence_link"]["properties"]["hypothesis_proposal_ids"]["maxItems"], 1)
         old = PROPOSAL_ADAPTER.validate_python(self.result()["proposals"][0])
         self.assertIsNone(old.proposal_id)

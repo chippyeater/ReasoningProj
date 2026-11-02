@@ -110,6 +110,15 @@ def tool_definitions() -> list[dict]:
                 "evidence_refs": {**props["evidence_refs"], "minItems": 1}}
     content = next(part for part in props["content"]["anyOf"] if part.get("type") != "null")
     text_id = {"type": "string", "minLength": 1, "pattern": r"\S"}
+    # A nested union expresses the cross-field requirement within the native
+    # strict schema: the root remains an object, and neither branch permits
+    # two empty association lists. Domain Proposal fields remain unchanged.
+    gap_targets = {"anyOf": [
+        {"type": "object", "properties": {
+            "hypothesis_ids": {**props["hypothesis_ids"], **({"minItems": 1} if field == "hypothesis_ids" else {})},
+            "hypothesis_proposal_ids": {**props["hypothesis_proposal_ids"], **({"minItems": 1} if field == "hypothesis_proposal_ids" else {})}},
+         "required": ["hypothesis_ids", "hypothesis_proposal_ids"], "additionalProperties": False}
+        for field in ("hypothesis_ids", "hypothesis_proposal_ids")]}
     specifications = {
         "propose_hypothesis": {**common, "content": content},
         "propose_evidence_link": {"hypothesis_id": {"anyOf": [text_id, {"type": "null"}]}, "info_unit_id": text_id,
@@ -118,7 +127,7 @@ def tool_definitions() -> list[dict]:
             "rationale": props["rationale"], "evidence_refs": grounded["evidence_refs"]},
         "propose_evidence_gap": {"rationale": props["rationale"], "evidence_refs": props["evidence_refs"],
             "basis_info_unit_ids": EvidenceGapProposal.model_json_schema()["properties"]["basis_info_unit_ids"],
-            "content": content, "hypothesis_ids": props["hypothesis_ids"], "hypothesis_proposal_ids": props["hypothesis_proposal_ids"]},
+            "content": content, "hypothesis_targets": gap_targets},
         "propose_hypothesis_status": {**grounded, "hypothesis_id": text_id,
             "judgment": next(p for p in props["judgment"]["anyOf"] if p.get("type") != "null")},
         "propose_evidence_gap_update": {"gap_id": text_id,
@@ -196,6 +205,16 @@ def _arguments(name: str, raw: str) -> dict:
         args.setdefault("types" if name == "search_info_units" else "relation_types", None)
     if name == "propose_evidence_link":
         args.setdefault("hypothesis_proposal_ids", [])
+    if name == "propose_evidence_gap":
+        targets = args["hypothesis_targets"]
+        fields = {"hypothesis_ids", "hypothesis_proposal_ids"}
+        if (not isinstance(targets, dict) or set(targets) != fields
+                or any(not isinstance(targets[field], list) for field in fields)
+                or not any(targets.values())):
+            raise AppError("invalid_tool_arguments", "A Gap must be associated with a Hypothesis", details={
+                "category": "structure", "errors": [{"loc": ["hypothesis_targets"], "code": "hypothesis_target_required",
+                    "message": "hypothesis_targets must contain both ID arrays and at least one actual target",
+                    "fix": "Use current reasoning Hypothesis IDs in hypothesis_ids, or first call propose_hypothesis and put its successfully returned proposal_id in hypothesis_proposal_ids; never send two empty lists."}]})
     return args
 
 
@@ -400,6 +419,8 @@ def _tool_recovery(response, name, args=None, case=None):
             argument_loc[0] = "info_unit_ids"
         if name == "propose_evidence_link" and argument_loc[:1] in (["info_unit_ids"], ["hypothesis_ids"]):
             argument_loc = ["info_unit_id" if argument_loc[0] == "info_unit_ids" else "hypothesis_id"]
+        if name == "propose_evidence_gap" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_proposal_ids"]):
+            argument_loc = ["hypothesis_targets", *argument_loc]
         if name == "finish_investigation" and argument_loc[:1] in (["info_unit_ids"], ["relevant_relation_ids"], ["evidence_refs"]):
             argument_loc = ["findings"]
         item.setdefault("argument_loc", argument_loc)
@@ -420,7 +441,8 @@ def _tool_recovery(response, name, args=None, case=None):
             unit = next((u for u in case.info_units if u.id == item["info_unit_id"]), None)
             if unit:
                 item.setdefault("info_unit_title", unit.title)
-        if item["code"] in {"reference_not_obtained", "reference_not_found"} and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_id"]):
+        if item["code"] in {"reference_not_obtained", "reference_not_found"} and (
+                argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_id"]) or argument_loc[:2] == ["hypothesis_targets", "hypothesis_ids"]):
             item["code"] = "invalid_hypothesis_target"
         item.setdefault("message", error.get("message", item["code"]))
         code = item["code"]
@@ -456,6 +478,11 @@ def _tool_recovery(response, name, args=None, case=None):
                     step["arguments"] = {"query": title}
         elif code == "finding_basis_required" or "Each finding requires a retrieved basis" in item["message"]:
             step.update(tool=name, instruction="For this Finding add obtained InfoUnit IDs, Relation IDs or SourceRefs; actually read missing material first. If no basis exists remove the Finding and put the unresolved question in open_questions, then resubmit finish_investigation.")
+        elif code == "hypothesis_target_required":
+            step.update(tool=name, instruction=item["fix"])
+        elif code == "duplicate_proposal":
+            step.update(existing_object=deepcopy(item["existing_object"]),
+                instruction="Reuse the identified formal object or successful pending Proposal and its actual ID; do not create a synonym. For a genuinely competing Hypothesis, state its different condition or distinguishing evidence explicitly. One shared Gap should target all relevant Hypotheses; do not recreate it for each target. No object was modified or adopted.")
         elif code in {"invalid_hypothesis_target", "invalid_hypothesis_proposal_target"}:
             step.update(tool=name, instruction="Use a real Hypothesis ID from the current Issue, or a Hypothesis Proposal ID successfully returned in this run in the appropriate dependency field, then resubmit.")
         elif code == "duplicate_query":
@@ -750,7 +777,10 @@ async def run_investigation(case: CaseData, goal: str,
                                 _remember(name, response, seen)
                         elif name in actions.PROPOSAL_TOOLS:
                             draft = list(proposals)
-                            response = actions.PROPOSAL_TOOLS[name](bound_case, seen, work_context, draft, **args)
+                            action_args = deepcopy(args)
+                            if name == "propose_evidence_gap":
+                                action_args.update(action_args.pop("hypothesis_targets"))
+                            response = actions.PROPOSAL_TOOLS[name](bound_case, seen, work_context, draft, **action_args)
                             proposals = draft
                         else:
                             finished = actions.finish_investigation(bound_case, seen, work_context, goal, proposals,
