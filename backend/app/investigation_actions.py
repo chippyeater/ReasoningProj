@@ -107,10 +107,25 @@ def finish_investigation(case, seen, context, goal, proposals, *, answer, findin
     if completion_status == "budget_exhausted" and not budget_exhausted:
         raise AppError("budget_available", "Use an accurate completion_status; execution budget remains available")
     result = artifacts(case, seen, context, goal, proposals, findings, open_questions, completion_status)
+    units = {unit.id: unit for unit in case.info_units}
+    errors = []
     for index, finding in enumerate(result.findings):
-        if not finding.evidence_refs and any(uid == ref[0] for uid in finding.info_unit_ids for ref in seen["evidence"]):
-            raise AppError("finding_sources_missing", "Include obtained source pointers with factual Findings", details={
-                "errors": [{"loc": ["findings", index, "evidence_refs"], "code": "finding_sources_missing"}]})
+        if finding.evidence_refs:
+            continue
+        for uid in finding.info_unit_ids:
+            unit = units[uid]
+            indices = sorted(source_index for obtained_uid, source_index in seen["evidence"]
+                             if obtained_uid == uid and 0 <= source_index < len(unit.source_refs))
+            if indices:
+                errors.append({"loc": ["findings", index, "evidence_refs"], "code": "finding_sources_missing",
+                    "finding_index": index, "info_unit_id": uid, "info_unit_title": unit.title,
+                    "obtained_source_ref_indices": indices,
+                    "available_evidence_refs": [{"info_unit_id": uid, "source_ref_index": i} for i in indices],
+                    "message": f"Finding {index} omits already obtained SourceRefs for {uid} ({unit.title}): {indices}",
+                    "fix": "Add the available obtained source pointers to this Finding if they support it; otherwise remove the unsupported Finding or put unresolved conditions in open_questions."})
+    if errors:
+        raise AppError("finding_sources_missing", "Include obtained source pointers with factual Findings",
+                       details={"category": "reference", "errors": errors})
     return result, _validate_summary(answer, proposals)
 
 

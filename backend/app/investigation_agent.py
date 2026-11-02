@@ -425,11 +425,19 @@ def _tool_recovery(response, name, args=None, case=None):
         item.setdefault("message", error.get("message", item["code"]))
         code = item["code"]
         uid, title = item.get("info_unit_id"), item.get("info_unit_title")
-        target = {key: item[key] for key in ("info_unit_id", "info_unit_title", "source_ref_index", "relation_id", "hypothesis_id", "gap_id") if key in item}
+        target = {key: item[key] for key in ("info_unit_id", "info_unit_title", "source_ref_index", "relation_id", "hypothesis_id", "gap_id",
+                                             "finding_index", "obtained_source_ref_indices") if key in item}
         step = {"loc": argument_loc, "code": code, **target}
-        if code == "reference_not_found":
+        if code == "finding_sources_missing" and item.get("available_evidence_refs"):
+            step.update(tool="finish_investigation", evidence_refs=deepcopy(item["available_evidence_refs"]),
+                instruction="Use these already obtained valid evidence_refs to correct this Finding at loc, then resubmit finish_investigation; no additional read is needed for these pointers. Cite them only if they support the statement. Otherwise remove the unsupported Finding or put unresolved conditions in open_questions; never invent a citation.")
+        elif code == "finding_sources_missing":
+            step.update(tool="get_evidence", instruction="No obtained source pointer is available for this material. If this Finding needs its original source, call get_evidence for the indicated InfoUnit before resubmitting Finish. Otherwise remove the unsupported Finding or put unresolved conditions in open_questions; never invent an index.")
+            if uid:
+                step["arguments"] = {"info_unit_ids": [uid]}
+        elif code == "reference_not_found":
             step.update(tool="search_info_units", instruction="Search the current case for valid IDs by title/keywords; never guess an ID. Use returned materials before resubmitting.")
-        elif code == "reference_out_of_range" or code == "evidence_required" or code == "finding_sources_missing" or code == "reference_not_obtained" and "source_ref_index" in item:
+        elif code == "reference_out_of_range" or code == "evidence_required" or code == "reference_not_obtained" and "source_ref_index" in item:
             step.update(tool="get_evidence", instruction="Actually read the indicated source with get_evidence; use only successfully returned SourceRef indices and resubmit the corrected tool call.")
             if uid:
                 step["arguments"] = {"info_unit_ids": [uid]}
@@ -471,6 +479,8 @@ def _tool_recovery(response, name, args=None, case=None):
         hint = "删除指出字段中的重复引用，保留原始有效 ID；不要原样重试。"
     elif "finding_basis_required" in codes:
         hint = "为对应 Finding 补充实际取得的 InfoUnit、Relation 或 SourceRef；确无依据时删除该 Finding，将未解决问题放入 open_questions。"
+    elif "finding_sources_missing" in codes:
+        hint = "优先将错误详情中已取得的有效来源引用补入对应 Finding；确需新来源且读取工具可用时才补读。无可用依据时删除无依据结论或写入 open_questions，不得编造引用。"
     elif "reference_out_of_range" in codes or "reference_not_found" in codes:
         hint = "ID 不存在时使用当前案件检索工具取得有效 ID；来源下标越界时对对应 InfoUnit 调用 get_evidence，使用返回的有效索引。不得猜测。"
     elif "reference_not_obtained" in codes or "evidence_required" in codes:
