@@ -182,7 +182,7 @@ class TestInvestigationAgent(unittest.TestCase):
         self.assertEqual(result["completion_status"], "evidence_insufficient")
         self.assertEqual(result["stop_reason"], "finish_investigation")
 
-    def test_budget_exhaustion_leaves_proposal_and_finish_available(self):
+    def test_budget_exhaustion_leaves_only_finish_available(self):
         case = self.case.model_copy(deep=True)
         case.info_units = [case.info_units[0].model_copy(update={"id": f"budget-{i}",
             "title": f"预算材料{i}", "content": "独立信息", "source_refs": []}) for i in range(8)]
@@ -191,14 +191,14 @@ class TestInvestigationAgent(unittest.TestCase):
         result, calls = self.run_script("核对", [*reads, finish("核对", status="budget_exhausted")], case=case)
         self.assertEqual(result["completion_status"], "budget_exhausted")
         self.assertEqual({d["function"]["name"] for d in calls[-1]["definitions"]}, {
-            "finish_investigation", "propose_hypothesis", "propose_evidence_gap", "propose_evidence_link", "propose_hypothesis_status", "propose_evidence_gap_update"})
+            "finish_investigation"})
 
-    def test_repeated_read_stops_without_publishing_an_answer(self):
-        result, _ = self.run_script("核对", [tool("get_evidence", {"info_unit_ids": ["U029"]}, str(i)) for i in range(4)])
-        self.assertEqual(result["stop_reason"], "no_progress_limit")
-        self.assertEqual(result["summary_status"], "failed")
-        self.assertIsNone(result["answer"])
-        self.assertEqual(sum(t["executed"] for t in self.audits()[0]["tool_calls"]), 1)
+    def test_repeated_read_keeps_finish_available(self):
+        result, _ = self.run_script("核对", [tool("get_evidence", {"info_unit_ids": ["U029"]}, str(i)) for i in range(4)] + [finish("核对")])
+        self.assertEqual(result["stop_reason"], "finish_investigation")
+        self.assertEqual(result["summary_status"], "completed")
+        self.assertIsNotNone(result["answer"])
+        self.assertEqual(sum(t["executed"] for t in self.audits()[0]["tool_calls"]), 2)
 
     def test_search_excludes_selected_and_cached_visible_nodes(self):
         _, calls = self.run_script("查月租", [tool("search_info_units", {"query": "月租"}, str(i)) for i in range(3)]
@@ -221,19 +221,19 @@ class TestInvestigationAgent(unittest.TestCase):
         material = json.loads(calls[1]["messages"][1]["content"])["materials"]["info_units"]["items"]
         self.assertEqual([r["id"] for r in material], ["U004"])
 
-    def test_different_empty_searches_stop_before_read_budget_is_spent(self):
-        result, _ = self.run_script("查凭证", [tool("search_info_units", {"query": f"不存在的凭证{i}"}, str(i)) for i in range(3)])
-        self.assertEqual(result["stop_reason"], "no_progress_limit")
+    def test_different_empty_searches_close_reads_but_allow_finish(self):
+        result, _ = self.run_script("查凭证", [tool("search_info_units", {"query": f"不存在的凭证{i}"}, str(i)) for i in range(3)] + [finish("查凭证")])
+        self.assertEqual(result["stop_reason"], "finish_investigation")
         self.assertEqual(result["tool_budget_used"]["read"], 3)
-        self.assertEqual([t["no_progress"] for t in self.audits()[0]["tool_calls"]], [1, 2, 3])
+        self.assertEqual([t["no_progress"] for t in self.audits()[0]["tool_calls"]], [1, 2, 3, 3])
 
     def test_successful_duplicate_material_does_not_reset_no_progress(self):
         response = tools.search_info_units(self.case, "月租")
         # Even a successful tool response cannot turn existing IDs/reordering into progress.
         with patch.object(tools, "search_info_units", return_value=response):
-            result, _ = self.run_script("查月租", [tool("search_info_units", {"query": f"不同查询{i}"}, str(i)) for i in range(4)])
-        self.assertEqual(result["stop_reason"], "no_progress_limit")
-        reads = self.audits()[0]["tool_calls"]
+            result, _ = self.run_script("查月租", [tool("search_info_units", {"query": f"不同查询{i}"}, str(i)) for i in range(4)] + [finish("查月租")])
+        self.assertEqual(result["stop_reason"], "finish_investigation")
+        reads = self.audits()[0]["tool_calls"][:-1]
         self.assertTrue(all(r["result"]["status"] == "ok" for r in reads))
         self.assertEqual([r["read_progress"] for r in reads], [True, False, False, False])
 
@@ -244,7 +244,7 @@ class TestInvestigationAgent(unittest.TestCase):
             tool("search_info_units", {"query": "月租"}, "new"),
             tool("search_info_units", {"query": "不存在凭证丙"}, "empty-c"),
             tool("search_info_units", {"query": "不存在凭证丁"}, "empty-d"), finish("查月租")])
-        self.assertEqual([t["no_progress"] for t in self.audits()[0]["tool_calls"]], [1, 2, 0, 1, 2, 0])
+        self.assertEqual([t["no_progress"] for t in self.audits()[0]["tool_calls"]], [1, 2, 0, 1, 2, 2])
 
     def test_new_relation_and_source_each_reset_no_progress(self):
         self.run_script("比较依据", [
@@ -287,11 +287,11 @@ class TestInvestigationAgent(unittest.TestCase):
     def test_empty_read_cannot_gain_progress_by_reordering_existing_memory(self):
         case, context = self.large_material_case()
         result, calls = self.run_script("比较条件", [tool("get_evidence", {"info_unit_ids": [f"large-{i}"]}, str(n))
-            for n, i in enumerate((1, 0, 1))], case=case, work_context=context)
+            for n, i in enumerate((1, 0, 1))] + [finish("比较条件")], case=case, work_context=context)
         views = [json.loads(c["messages"][1]["content"])["materials"]["info_units"] for c in calls]
         self.assertNotEqual(views[0]["items"], views[1]["items"])
-        self.assertEqual(result["stop_reason"], "no_progress_limit")
-        self.assertEqual([t["no_progress"] for t in self.audits()[0]["tool_calls"]], [1, 2, 3])
+        self.assertEqual(result["stop_reason"], "finish_investigation")
+        self.assertEqual([t["no_progress"] for t in self.audits()[0]["tool_calls"]], [1, 2, 3, 3])
 
     def test_plain_prose_requires_delivery_but_does_not_become_accepted_answer(self):
         result, calls = self.run_script("介绍能力", [final("尚未提交的回答"), finish("介绍能力", status="completed", basis="general", answer="可检索并核对案件材料。")])

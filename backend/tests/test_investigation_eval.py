@@ -243,7 +243,7 @@ class TestInvestigationEval(unittest.TestCase):
         self.assertFalse(report["semantic_quality_scored"])
         self.assertEqual(len(set(report["trace_ids"])), 3)
         self.assertEqual(len({i["initial_case_data_sha256"] for i in report["items"]}), 1)
-        self.assertEqual(report["maximum_live_model_calls"], 60)
+        self.assertEqual(report["maximum_live_model_calls"], 42)
         self.assertTrue(all(i["metrics"]["model_call_count"] == 2 for i in report["items"]))
 
     def test_single_task_dry_run_invokes_full_agent_exactly_once(self):
@@ -252,7 +252,7 @@ class TestInvestigationEval(unittest.TestCase):
             report = runner.dry_run(task_id="A1")
         self.assertEqual([item["task_id"] for item in report["items"]], ["A1"])
         self.assertEqual(len(report["trace_ids"]), 1)
-        self.assertEqual(report["maximum_live_model_calls"], 20)
+        self.assertEqual(report["maximum_live_model_calls"], 14)
         self.assertEqual(report["paid_model_calls"], 0)
         self.assertEqual(run.await_count, 1)
         self.assertEqual(model.call_count, 2)
