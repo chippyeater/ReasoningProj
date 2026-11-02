@@ -936,3 +936,114 @@ type CaseData = {
 ### 本轮边界
 
 当前已完成 Pydantic Schema、单次 Extraction、可选 Evidence Repair、Quote Unit 来源定位和案件 A Gold v1.8 的迁移。正式 Extraction 不执行二次 LLM 合并复核；多轮 Agent Tools、独立 LLM 语义裁判与状态核验工作流仍属于后续独立实现和评测。
+
+## Issue Reasoning Workspace
+
+本节记录 `backend/app/reasoning_models.py` 和 `issue_workspaces.py` 已实现的**独立运行时扩展**，不改变上文基础 CaseData Schema，不把这些对象并入 InfoUnit、Relation 或旧 ReasoningView。每个 Issue 的正式 `ReasoningState` 保存在案件的 `issue_workspaces.json`；调查产生的 Proposal 保存在该次运行审计中，待用户逐项采纳。
+
+### 枚举与引用边界
+
+```typescript
+type Judgment = "unverified" | "verified" | "refuted";
+type LinkMeaning = "support" | "oppose" | "related";
+```
+
+- **Relation** 是基础 CaseData 中 InfoUnit → InfoUnit 的关系，类型为 `about / support / contradict`。
+- **EvidenceLink** 是本扩展中 InfoUnit → Hypothesis 的关联，语义为 `support`（支持）、`oppose`（反对）、`related`（相关：材料与假设有关，但不明确支持或反对）。默认语义是 `related`。
+- **Judgment** 是 Hypothesis 的判断状态，与 LinkMeaning 不同。`event.subtype` 中的 `verified` 也不属于 LinkMeaning。引用可定位并不证明假设成立；缺少支持不能直接得出已证伪。
+
+以下 `Text` 是至少1字符、包含非空白字符的字符串；`ReasoningText` 为1–600字符且含非空白字符。字段未写默认值即为必填；`null` 不代表字段可省略。所有模型禁止额外字段，Proposal 和 ProposalEvidenceRef 还启用严格类型校验。
+
+### 正式对象
+
+**Hypothesis**
+
+| 字段 | 类型 | 默认值 |
+| --- | --- | --- |
+| id | Text | 必填 |
+| content | ReasoningText | 必填 |
+| judgment | Judgment | `"unverified"` |
+| work_status | `"active" / "deprecated"` | `"active"` |
+| revision | int | `1` |
+| updated_at | Text | 必填 |
+| last_edited_by | `"user" / "agent_accepted"` | `"user"` |
+| proposal_key | string / null | `null` |
+
+**EvidenceGap**
+
+| 字段 | 类型 | 默认值 |
+| --- | --- | --- |
+| id | Text | 必填 |
+| content | ReasoningText | 必填 |
+| hypothesis_ids | Text[] | 必填，至少一个当前 Issue 的 Hypothesis ID，不重复 |
+| basis_info_unit_ids | Text[] | `[]` |
+| addressing_info_unit_ids | Text[] | `[]` |
+| status | `"open" / "resolved"` | `"open"` |
+| revision | int | `1` |
+| updated_at | Text | 必填 |
+| last_edited_by | `"user" / "agent_accepted"` | `"user"` |
+| proposal_key | string / null | `null` |
+
+`basis_info_unit_ids` 记录提出缺口时已有的形成依据；`addressing_info_unit_ids` 记录创建缺口后累积的回应材料。两者不能互换，各列表不能重复，必须引用当前案件 InfoUnit。新建缺口不允许带回应材料；后续更新保留稳定 ID 并追加去重后的回应材料。回应材料存在不自动意味着缺口已解决。多个竞争性 Hypothesis 可以通过同一 Gap 的 `hypothesis_ids` 共享一个缺失条件。
+
+**EvidenceLink**
+
+| 字段 | 类型 | 默认值 |
+| --- | --- | --- |
+| id | Text | 必填 |
+| hypothesis_id | Text | 必填，当前 Issue 的 Hypothesis ID |
+| info_unit_id | Text | 必填，当前案件 InfoUnit ID |
+| meaning | LinkMeaning | `"related"` |
+| rationale | ReasoningText | 必填 |
+| origin | `"user" / "agent"` | `"user"` |
+| last_edited_by | `"user" / "agent_accepted"` | `"user"` |
+| proposal_key | string / null | `null` |
+
+同一个 `(hypothesis_id, info_unit_id)` 只能有一条 EvidenceLink；一个 InfoUnit 可以分别关联多个 Hypothesis。人工修改 Agent 来源的关联会保留 `origin="agent"`，同时记录 `last_edited_by="user"`。
+
+**ReasoningState**
+
+| 字段 | 类型 | 默认值 |
+| --- | --- | --- |
+| hypotheses | Hypothesis[] | `[]` |
+| gaps | EvidenceGap[] | `[]` |
+| links | EvidenceLink[] | `[]` |
+| accepted_proposals | dict[string, string] | `{}` |
+
+Hypothesis、Gap、Link 的 ID 在同一 State 内统一去重；Gap 和 Link 的 Hypothesis 引用必须属于该 Issue。`accepted_proposals` 将运行/Proposal 标识映射到采纳后的正式对象 ID，用于幂等采纳与依赖校验。
+
+### ReasoningProposal 与 ProposalEvidenceRef
+
+Proposal 是待用户确认的建议。工具成功只写入本次运行的待采纳结果，**用户采纳后**才通过正式编辑服务修改 ReasoningState；依赖新 Hypothesis 的 Link/Gap 必须在用户先采纳父 Hypothesis 后单独采纳。每轮最多6个有效 Proposal，引用必须属于当前案件且已实际取得。
+
+**ProposalEvidenceRef**：`info_unit_id: Text`、`source_ref_index: int >= 0`，均必填。它指向该 InfoUnit 的 `source_refs` 数组下标，不复制来源。后端校验索引有效且引用已由初始核验来源或 `get_evidence` 实际提供。
+
+**ReasoningProposal** 是按 `kind` 区分的 `MaterialProposal | EvidenceGapProposal | EvidenceGapUpdateProposal` 联合，公共字段如下：
+
+| 字段 | 类型 | 默认值/限制 |
+| --- | --- | --- |
+| proposal_id | string / null | `null`；非空时匹配 `^proposal-[a-f0-9]{32}$`，运行工具成功时由后端生成 |
+| content | ReasoningText / null | 必填 |
+| hypothesis_ids | Text[] | 必填，最多5个，不重复 |
+| hypothesis_proposal_indices | int[] | `[]`；每项 `0 <= index < 6`，最多5个，不重复 |
+| hypothesis_proposal_ids | string[] | `[]`；每项匹配上述 Proposal ID 格式，最多5个，不重复 |
+| meaning | LinkMeaning / null | 必填 |
+| judgment | Judgment / null | 必填 |
+| rationale | ReasoningText | 必填 |
+| evidence_refs | ProposalEvidenceRef[] | 必填，最多8个 |
+
+各变体的实际字段与形状约束：
+
+| kind | 变体新增字段（均必填） | 公共字段约束 |
+| --- | --- | --- |
+| hypothesis | `info_unit_ids: Text[]`，最多5个、不重复 | content 非空；hypothesis_ids 为空；meaning、judgment 为 null；允许无直接材料/来源的探索性解释 |
+| evidence_link | `info_unit_ids: Text[]`，最多5个、不重复 | content、judgment 为 null；正式 hypothesis_ids 与同轮 hypothesis_proposal_ids 合计恰好1个；info_unit_ids 恰好1个；meaning 非空；evidence_refs 非空 |
+| hypothesis_status | `info_unit_ids: Text[]`，最多5个、不重复 | content、meaning 为 null；hypothesis_ids 恰好1个；judgment 非空；info_unit_ids、evidence_refs 非空 |
+| evidence_gap | `basis_info_unit_ids: Text[]`，最多5个、不重复 | content 非空；meaning、judgment 为 null；正式与同轮 Hypothesis 依赖合计1–5个；形成依据和 evidence_refs 可空 |
+| evidence_gap_update | `gap_id: Text`；`addressing_info_unit_ids: Text[]`，1–5个、不重复；`status: "open" / "resolved"` | content、meaning、judgment 为 null；hypothesis_ids 为空；evidence_refs 非空；仅更新当前 Issue 已有 Gap，保留内容、形成依据和假设关联 |
+
+`hypothesis_proposal_ids` 仅用于 Link/Gap，必须指向本轮实际成功返回的 Hypothesis Proposal。既有持久化数据仍支持仅 Gap 使用的 `hypothesis_proposal_indices`（相对同一运行不可变 Proposal 数组），不能与 ID 依赖混用；这不是基础 CaseData 的关系模型。采纳时校验目标修订、材料哈希和依赖，不自动覆盖用户修改。
+
+### 关联语义的持久化迁移
+
+读取既有 Workspace Link 或待采纳 Proposal 时，将旧 `meaning="verify"` 转为 `related`；下一次保存 Workspace/采纳时只使用新值。读取不会原地改写历史运行审计，新的编辑和工具请求不接受旧值。Hypothesis 的 Judgment 和 InfoUnit 的 `event.subtype` 保持各自原有定义。
