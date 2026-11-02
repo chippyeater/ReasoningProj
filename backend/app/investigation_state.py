@@ -156,11 +156,16 @@ def model_context(initial, knowledge, recovery=None):
     reasoning = {kind: [{k:deepcopy(row[k]) for k in keys if k in row}
                         for row in workspace.get("reasoning", {}).get(kind, [])] for kind, keys in fields.items()}
     reasoning["has_more"] = workspace.get("reasoning", {}).get("has_more", False)
+    # Reading a summary grants its content, never all sources attached to the
+    # domain node. These indices come exclusively from actual successful reads.
+    units = [(key, {**row, "obtained_source_ref_indices": sorted(
+        ref["source_ref_index"] for ref in knowledge.source_refs.values() if ref["info_unit_id"] == key)})
+        for key, row in knowledge.info_units.items()]
     result = {"goal": goal, "current_issue": workspace.get("current_issue"),
         "core_issue": initial.get("core_issue"),
         "case_info_directory": deepcopy(initial["case_info_directory"]),
         "materials": {
-            "info_units": section(sorted(knowledge.info_units.items(), key=lambda kv:rank(kv[1])), 6500),
+            "info_units": section(sorted(units, key=lambda kv:rank(kv[1])), 6500),
             "relations": section(sorted(knowledge.relations.items(), key=relation_rank), 3500),
             "source_refs": section(sorted(knowledge.source_refs.items(), key=lambda kv:rank(kv[1])), 7500)},
         "reasoning": deepcopy(reasoning),

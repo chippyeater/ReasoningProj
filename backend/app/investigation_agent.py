@@ -460,7 +460,7 @@ def _tool_recovery(response, name, args=None, case=None):
             step.update(tool=name, instruction="Use a real Hypothesis ID from the current Issue, or a Hypothesis Proposal ID successfully returned in this run in the appropriate dependency field, then resubmit.")
         elif code == "duplicate_query":
             step.update(instruction="Reuse existing results; do not repeat the identical call. Correct failed parameters only after obtaining new relevant material, or finish with the limitation.")
-        elif code in {"tool_budget_exhausted", "no_progress_limit"}:
+        elif code in {"tool_budget_exhausted", "no_progress_limit", "finish_required"}:
             step.update(tool="finish_investigation", instruction="Stop further investigation. Call finish_investigation using only obtained material and state the limitation in answer/open_questions. Use budget_exhausted only when the shared eight non-Finish attempts are spent.")
         elif code == "investigation_tool_failed":
             step.update(instruction="Do not unconditionally repeat the failed call. Try other available material or call finish_investigation explicitly describing the unavailable source and limitation.")
@@ -600,6 +600,7 @@ async def run_investigation(case: CaseData, goal: str,
     used = {"read": 0, "proposal": 0, "finish": 0}
     attempts = executed = no_progress = 0
     stop_reason, recovery, answer_basis = None, None, None
+    finish_required = False
     completion = "evidence_insufficient"
 
     def bucket(name):
@@ -610,7 +611,7 @@ async def run_investigation(case: CaseData, goal: str,
         return used["read"] + used["proposal"] >= MAX_NON_FINISH_TOOL_CALLS
 
     def investigation_closed():
-        return non_finish_exhausted() or no_progress >= MAX_NO_PROGRESS
+        return finish_required or non_finish_exhausted() or no_progress >= MAX_NO_PROGRESS
 
     def snapshot(answer=None, summary_status="pending"):
         result = actions.artifacts(bound_case, seen, work_context, goal, proposals, findings, open_questions, completion)
@@ -674,7 +675,7 @@ async def run_investigation(case: CaseData, goal: str,
                              (d["function"]["name"] not in actions.PROPOSAL_TOOLS or len(proposals) < 6))]
             if investigation_closed() and recovery is None:
                 response = tools._failure(AppError(
-                    "tool_budget_exhausted" if non_finish_exhausted() else "no_progress_limit",
+                    "finish_required" if finish_required else "tool_budget_exhausted" if non_finish_exhausted() else "no_progress_limit",
                     "Investigation tools are unavailable; submit the answer with current material through finish_investigation"))
                 _tool_recovery(response, "finish_investigation")
                 recovery = response["error"]
@@ -699,7 +700,11 @@ async def run_investigation(case: CaseData, goal: str,
             call_audit.update(raw_response=reply.response, message=deepcopy(reply.message))
             calls = reply.message.get("tool_calls")
             if not calls:
-                recovery = {"code": "finish_required", "message": "Deliver the answer through finish_investigation, with accurate answer_basis and unresolved conditions."}
+                finish_required = True
+                if recovery is None:
+                    response = tools._failure(AppError("finish_required", "Deliver the answer through finish_investigation, with accurate answer_basis and unresolved conditions."))
+                    _tool_recovery(response, "finish_investigation")
+                    recovery = response["error"]
                 persist()
                 continue
             if not isinstance(calls, list) or len(calls) != 1:
@@ -728,7 +733,8 @@ async def run_investigation(case: CaseData, goal: str,
                     if name == "search_info_units":
                         tool_audit["excluded_info_unit_ids"] = sorted(visible_units)
                     if not permitted:
-                        raise AppError("tool_budget_exhausted", "This tool budget is exhausted; choose a remaining tool or finish")
+                        raise AppError("finish_required" if finish_required else "tool_budget_exhausted",
+                                       "Investigation tools are closed; only finish_investigation may be called")
                     prior = fingerprints.get(fingerprint)
                     if prior and prior["successful"] and name in READ_TOOLS:
                         response = {**deepcopy(prior["result"]), "cached": True}
