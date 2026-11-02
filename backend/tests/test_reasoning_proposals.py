@@ -84,6 +84,44 @@ class TestReasoningProposals(TestReasoningWorkspace):
         return self.client.post(f"/api/cases/{self.case.case_id}/reasoning-proposals/accept", json={
             "issue": issue or self.issue, "run_id": run_id, **reference, "position": {"x": 1500, "y": 500}})
 
+    def test_manual_gap_addressing_noop_allows_append_but_real_edits_invalidate_pending_update(self):
+        hid = self.hypothesis()
+        draft = {"content": "实际收租是否连续？", "hypothesis_ids": [hid], "basis_info_unit_ids": ["U026"]}
+        gid = self.edit(gap=draft).json()["object_id"]
+        manual = {"id": gid, **draft, "addressing_info_unit_ids": ["U029"]}
+        self.assertEqual(self.edit(gap=manual).status_code, 200)
+        proposal = {"kind": "evidence_gap_update", "gap_id": gid, "addressing_info_unit_ids": ["U036"],
+            "content": None, "hypothesis_ids": [], "meaning": None, "judgment": None, "status": "open",
+            "rationale": "材料部分回应缺口，仍需核实。", "evidence_refs": [{"info_unit_id": "U036", "source_ref_index": 0}]}
+        response, _ = self.investigate([proposal], [gid], read_ids=["U029", "U036"])
+        self.assertEqual(response.status_code, 200, response.text)
+        run = response.json()["run_id"]
+        before = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        self.assertEqual(self.edit(gap=manual).status_code, 200)
+        self.assertEqual(get_issue_workspaces(self.case).workspaces[self.issue].reasoning, before)
+        accepted = self.accept(run)
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        state = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        gap = next(g for g in state.gaps if g.id == gid)
+        self.assertEqual(gap.addressing_info_unit_ids, ["U029", "U036"])
+        for field, value in {"id": gid, **draft, "status": "open"}.items():
+            self.assertEqual(getattr(gap, field), value)
+        self.assertEqual(gap.revision, before.gaps[0].revision + 1)
+        self.assertEqual(state.hypotheses[0].revision, before.hypotheses[0].revision + 1)
+        path = case_dir(self.case.case_id) / "issue_workspaces.json"
+        saved = path.read_bytes()
+        self.assertTrue(self.accept(run).json()["already_accepted"])
+        self.assertEqual(path.read_bytes(), saved)
+        for changes in ({"remove_addressing_info_unit_ids": ["U029"]}, {"addressing_info_unit_ids": ["U026"]}):
+            pending, _ = self.investigate([proposal], [gid], read_ids=["U029", "U036"])
+            self.assertEqual(pending.status_code, 200, pending.text)
+            self.assertEqual(self.edit(gap={"id": gid, **draft, **changes}).status_code, 200)
+            saved = path.read_bytes()
+            stale = self.accept(pending.json()["run_id"])
+            self.assertEqual(stale.status_code, 409, stale.text)
+            self.assertEqual(stale.json()["detail"]["code"], "stale_reasoning_proposal")
+            self.assertEqual(path.read_bytes(), saved)
+
     def test_validated_proposals_remain_preview_until_atomic_idempotent_adoption(self):
         hid = self.hypothesis()
         path = case_dir(self.case.case_id) / "issue_workspaces.json"

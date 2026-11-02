@@ -97,6 +97,7 @@ class GapEdit(ContractModel):
     hypothesis_ids: list[Text]
     basis_info_unit_ids: list[Text] = Field(default_factory=list)
     addressing_info_unit_ids: list[Text] = Field(default_factory=list)
+    remove_addressing_info_unit_ids: list[Text] = Field(default_factory=list)
     status: Literal["open", "resolved"] = "open"
 
 

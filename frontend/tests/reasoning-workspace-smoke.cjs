@@ -77,6 +77,7 @@ const api = 'http://127.0.0.1:8018';
     await editHypothesis(h1);
     await editor.getByRole('button', { name: '添加证据缺口', exact: true }).click();
     await editor.getByLabel('缺口问题', { exact: true }).fill('是否存在替租人的实际入住记录和新租约？');
+    assert.equal(await editor.getByRole('button', { name: '添加回应材料', exact: true }).count(), 0);
     await editor.getByLabel('房东可能没有实际空置损失，仍需核对。', { exact: true }).check();
     await editor.getByText('缺口形成依据（可选）', { exact: true }).click();
     const basisCheckbox = editor.getByLabel(before.info_units.find(u => u.id === 'U026').title, { exact: true });
@@ -100,30 +101,75 @@ const api = 'http://127.0.0.1:8018';
     await editor.getByRole('button', { name: '定位信息', exact: true }).click();
     await editor.waitFor({ state: 'hidden' }); await saved();
     await page.locator('[data-node-id="U026"].node-selected').waitFor();
-    // Addressing material accumulates through the existing API, independently
-    // of the editable basis and without automatically resolving the Gap.
-    const editUrl = `${api}/api/cases/${before.case_id}/issue-reasoning`;
-    for (const ids of [['U027'], ['U004', 'U027']]) {
-      const result = await page.request.patch(editUrl, { data: { issue, gap: {
-        id: gap.id, content: gap.content, hypothesis_ids: gap.hypothesis_ids, addressing_info_unit_ids: ids,
-      } } });
-      assert.equal(result.status(), 200);
+    // Manage addressing material through the editor. Requests carry deltas;
+    // basis, status, shared Hypotheses and case-owned sources remain independent.
+    const beforeAddressing = (await current()).reasoning;
+    const editGap = () => page.locator(`[data-node-id="${gap.id}"]`).getByRole('button', { name: '查看与编辑' }).click();
+    await editGap();
+    const addressing = editor.getByRole('region', { name: '用于回应缺口的信息' });
+    const picker = addressing.getByRole('group', { name: '选择回应材料', exact: true });
+    const title = id => before.info_units.find(u => u.id === id).title;
+    const agentCheck = editor.getByRole('button', { name: '请 Agent 检查', exact: true });
+    async function saveGapDelta(added, removed) {
+      const request = page.waitForRequest(r => r.url().endsWith('/issue-reasoning') && r.method() === 'PATCH');
+      await save();
+      const payload = (await request).postDataJSON().gap;
+      assert.deepEqual(payload.addressing_info_unit_ids, added);
+      assert.deepEqual(payload.remove_addressing_info_unit_ids, removed);
     }
-    await page.reload(); await saved();
+    await addressing.getByRole('button', { name: '添加回应材料', exact: true }).click();
+    await picker.getByLabel(title('U027'), { exact: true }).check();
+    await picker.getByLabel(title('U004'), { exact: true }).check();
+    assert.equal(await agentCheck.isDisabled(), true);
+    assert.deepEqual((await current()).reasoning.gaps.find(g => g.id === gap.id).addressing_info_unit_ids, []);
+    await saveGapDelta(['U027', 'U004'], []);
     work = await current();
     const addressed = work.reasoning.gaps.find(g => g.id === gap.id);
     assert.deepEqual(addressed.basis_info_unit_ids, ['U026']);
     assert.deepEqual(addressed.addressing_info_unit_ids, ['U027', 'U004']);
     assert.equal(addressed.status, 'open');
     assert.equal(work.reasoning.hypotheses.find(h => h.id === h1).judgment, 'unverified');
-    await page.locator(`[data-node-id="${gap.id}"]`).getByRole('button', { name: '查看与编辑' }).click();
-    const addressing = editor.getByRole('region', { name: '用于回应缺口的信息' });
-    assert.equal(await addressing.getByRole('button').count(), 2);
-    assert.equal(await addressing.getByRole('checkbox').count(), 0);
-    await addressing.getByRole('button', { name: before.info_units.find(u => u.id === 'U027').title, exact: true }).click();
-    await editor.waitFor({ state: 'hidden' }); await saved();
+    assert.equal(addressed.revision, gap.revision + 1);
+    await editGap();
+    assert.equal(await agentCheck.isEnabled(), true);
+    await addressing.getByRole('button', { name: '添加回应材料', exact: true }).click();
+    for (const uid of ['U027', 'U004']) {
+      assert.equal(await picker.getByLabel(title(uid), { exact: true }).isChecked(), true);
+      assert.equal(await picker.getByLabel(title(uid), { exact: true }).isDisabled(), true);
+    }
+    await addressing.getByRole('button', { name: '添加回应材料', exact: true }).click();
+    await addressing.getByRole('button', { name: `移除关联：${title('U027')}`, exact: true }).click();
+    assert.equal(await agentCheck.isDisabled(), true);
+    // Undoing a removal restores a clean set even when its local order changes.
+    await addressing.getByRole('button', { name: '添加回应材料', exact: true }).click();
+    await picker.getByLabel(title('U027'), { exact: true }).check();
+    assert.equal(await agentCheck.isEnabled(), true);
+    await saveGapDelta([], []);
+    assert.deepEqual((await current()).reasoning.gaps.find(g => g.id === gap.id), addressed);
+    await editGap();
+    await addressing.getByRole('button', { name: `移除关联：${title('U027')}`, exact: true }).click();
+    assert.equal(await agentCheck.isDisabled(), true);
+    await saveGapDelta([], ['U027']);
+    await page.reload();
+    await page.locator(`[data-node-id="${gap.id}"]`).waitFor(); await saved();
+    work = await current();
+    const remaining = work.reasoning.gaps.find(g => g.id === gap.id);
+    assert.deepEqual(remaining.addressing_info_unit_ids, ['U004']);
+    for (const field of ['id', 'content', 'basis_info_unit_ids', 'hypothesis_ids', 'status'])
+      assert.deepEqual(remaining[field], gap[field]);
+    assert.equal(remaining.revision, gap.revision + 2);
+    for (const uid of [h1, h2])
+      assert.equal(work.reasoning.hypotheses.find(h => h.id === uid).revision,
+        beforeAddressing.hypotheses.find(h => h.id === uid).revision + 2);
     assert.equal(await page.locator('[data-node-id="U027"]').count(), 1);
-    await page.locator(`[data-node-id="${gap.id}"]`).getByRole('button', { name: '查看与编辑' }).click();
+    await editGap();
+    assert.equal(await agentCheck.isEnabled(), true);
+    assert.equal(await addressing.getByRole('button', { name: title('U027'), exact: true }).count(), 0);
+    await page.screenshot({ path: 'tmp/gap-addressing-editor.png' });
+    await addressing.getByRole('button', { name: title('U004'), exact: true }).click();
+    await editor.waitFor({ state: 'hidden' }); await saved();
+    await page.locator('[data-node-id="U004"].node-selected').waitFor();
+    await editGap();
     await editor.getByLabel('缺口状态', { exact: true }).selectOption('resolved'); await save();
     // Move the second Hypothesis, and restore exact layout after Issue switches/reload.
     const node = page.locator(`[data-node-id="${h2}"]`);
@@ -256,9 +302,9 @@ const api = 'http://127.0.0.1:8018';
     assert.deepEqual((await current()).reasoning, beforePartial);
     await page.screenshot({ path: 'tmp/investigation-summary-failed.png' });
     const after = (await (await page.request.get(`${api}/api/case`)).json()).case;
-    for (const field of ['info_units', 'relations', 'workspace_state']) assert.deepEqual(after[field], before[field]);
+    for (const field of ['files', 'info_units', 'relations', 'workspace_state']) assert.deepEqual(after[field], before[field]);
     assert.deepEqual(errors, []);
-    console.log('PASS: manual reasoning/CRUD/source/restore; native Proposal tools, returned IDs after ignore, explicit parent adoption, sibling Gaps, reload and failed summary; retry/idempotency/stale protection; business data unchanged.');
+    console.log('PASS: UI Gap addressing add/remove/locate, delta payloads, dirty/undo/revisions/reload and preserved basis/status/Hypotheses; manual reasoning and Proposal approvals; business data unchanged.');
   } catch (error) {
     if (page) await page.screenshot({ path: 'tmp/reasoning-failure.png' }).catch(() => {});
     throw error;

@@ -98,3 +98,100 @@ class TestReasoningWorkspace(unittest.TestCase):
         rejected = self.client.delete(f"/api/cases/{self.case.case_id}/info-units/U029")
         self.assertEqual(rejected.status_code, 409)
         self.assertTrue(any(ref["kind"] == "hypothesis_evidence" for ref in rejected.json()["detail"]["references"]))
+
+    def test_gap_addressing_add_remove_preserves_gap_and_revises_shared_hypotheses(self):
+        hids = [self.hypothesis(), self.hypothesis("不存在空置损失的竞争性解释")]
+        draft = {"content": "实际收租是否连续？", "hypothesis_ids": hids,
+                 "basis_info_unit_ids": ["U026"], "status": "resolved"}
+        created = self.edit(gap=draft)
+        self.assertEqual(created.status_code, 200, created.text)
+        gid = created.json()["object_id"]
+        state = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        for changes, expected in (
+            ({"addressing_info_unit_ids": ["U029"]}, ["U029"]),
+            ({"addressing_info_unit_ids": ["U036", "U029", "U036"]}, ["U029", "U036"]),
+            ({"remove_addressing_info_unit_ids": ["U029"]}, ["U036"]),
+            ({"remove_addressing_info_unit_ids": ["U036"]}, []),
+        ):
+            with self.subTest(changes=changes):
+                previous = state.model_copy(deep=True)
+                # Omitted basis/status must survive an addressing-only edit.
+                response = self.edit(gap={"id": gid, "content": draft["content"], "hypothesis_ids": hids, **changes})
+                self.assertEqual(response.status_code, 200, response.text)
+                state = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+                self.assertEqual(len(state.gaps), 1)
+                gap = state.gaps[0]
+                self.assertEqual(gap.id, gid)
+                for field, value in draft.items():
+                    self.assertEqual(getattr(gap, field), value)
+                self.assertEqual(gap.addressing_info_unit_ids, expected)
+                self.assertEqual(gap.revision, previous.gaps[0].revision + 1)
+                self.assertNotEqual(gap.updated_at, previous.gaps[0].updated_at)
+                self.assertEqual(gap.last_edited_by, "user")
+                for actual, before in zip(state.hypotheses, previous.hypotheses):
+                    self.assertEqual(actual.revision, before.revision + 1)
+                    self.assertNotEqual(actual.updated_at, before.updated_at)
+                    self.assertEqual(actual.last_edited_by, "user")
+                self.assertNotIn("remove_addressing_info_unit_ids", gap.model_dump())
+
+    def test_gap_addressing_noops_preserve_all_revision_metadata(self):
+        from app.reasoning_models import ReasoningEdit
+        from app.reasoning_service import edit_reasoning
+        hid = self.hypothesis()
+        draft = {"content": "实际收租是否连续？", "hypothesis_ids": [hid], "basis_info_unit_ids": ["U026"]}
+        gid = self.edit(gap=draft).json()["object_id"]
+        edit_reasoning(self.case, ReasoningEdit(issue=self.issue, gap={"id": gid, **draft,
+            "addressing_info_unit_ids": ["U029"]}), proposal_key="test-agent-update")
+        before = get_issue_workspaces(self.case).workspaces[self.issue].reasoning.model_dump()
+        self.assertEqual(before["gaps"][0]["last_edited_by"], "agent_accepted")
+        for changes in ({}, {"addressing_info_unit_ids": []}, {"remove_addressing_info_unit_ids": []},
+                        {"addressing_info_unit_ids": ["U029", "U029"]}):
+            response = self.edit(gap={"id": gid, **draft, **changes})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(get_issue_workspaces(self.case).workspaces[self.issue].reasoning.model_dump(), before)
+
+    def test_gap_addressing_invalid_edits_and_save_failure_are_atomic(self):
+        hid = self.hypothesis()
+        draft = {"content": "实际收租是否连续？", "hypothesis_ids": [hid], "basis_info_unit_ids": ["U026"]}
+        gid = self.edit(gap=draft).json()["object_id"]
+        self.assertEqual(self.edit(gap={"id": gid, **draft, "addressing_info_unit_ids": ["U029"]}).status_code, 200)
+        path = case_dir(self.case.case_id) / "issue_workspaces.json"
+        before = path.read_bytes()
+        for values in (
+            {"id": gid, "addressing_info_unit_ids": ["foreign"]},
+            {"id": gid, "remove_addressing_info_unit_ids": ["U036"]},
+            {"id": gid, "remove_addressing_info_unit_ids": ["foreign"]},
+            {"id": gid, "addressing_info_unit_ids": ["U029"], "remove_addressing_info_unit_ids": ["U029"]},
+            {"id": gid, "addressing_info_unit_ids": ["foreign"], "remove_addressing_info_unit_ids": ["U029"]},
+            {"addressing_info_unit_ids": ["U029"]},
+            {"remove_addressing_info_unit_ids": ["U029"]},
+        ):
+            with self.subTest(values=values):
+                response = self.edit(gap={**draft, **values})
+                self.assertGreaterEqual(response.status_code, 400, response.text)
+                self.assertEqual(path.read_bytes(), before)
+        change = {"id": gid, **draft, "addressing_info_unit_ids": ["U036"], "remove_addressing_info_unit_ids": ["U029"]}
+        with patch("app.issue_workspaces.write_json", side_effect=OSError("disk full")):
+            self.assertEqual(self.edit(gap=change).status_code, 500)
+        self.assertEqual(path.read_bytes(), before)
+        old = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        self.assertEqual(self.edit(gap=change).status_code, 200)
+        saved = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        self.assertEqual(saved.gaps[0].addressing_info_unit_ids, ["U036"])
+        self.assertEqual(saved.gaps[0].revision, old.gaps[0].revision + 1)
+        self.assertEqual(saved.hypotheses[0].revision, old.hypotheses[0].revision + 1)
+
+    def test_gap_addressing_changes_revise_old_and_new_hypotheses_once(self):
+        hids = [self.hypothesis(f"待核查解释{i}") for i in range(3)]
+        draft = {"content": "实际收租是否连续？", "hypothesis_ids": hids[:2], "basis_info_unit_ids": ["U026"]}
+        gid = self.edit(gap=draft).json()["object_id"]
+        self.edit(gap={"id": gid, **draft, "addressing_info_unit_ids": ["U029"]})
+        before = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        response = self.edit(gap={"id": gid, **draft, "hypothesis_ids": hids[1:],
+            "addressing_info_unit_ids": ["U036"], "remove_addressing_info_unit_ids": ["U029"]})
+        self.assertEqual(response.status_code, 200, response.text)
+        state = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        self.assertEqual(state.gaps[0].hypothesis_ids, hids[1:])
+        self.assertEqual(state.gaps[0].revision, before.gaps[0].revision + 1)
+        self.assertEqual(state.gaps[0].addressing_info_unit_ids, ["U036"])
+        self.assertEqual([h.revision for h in state.hypotheses], [h.revision + 1 for h in before.hypotheses])

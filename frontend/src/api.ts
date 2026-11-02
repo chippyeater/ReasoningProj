@@ -395,7 +395,7 @@ export type ReasoningProposal = ProposalFields & (
   { kind: "hypothesis" | "evidence_link" | "hypothesis_status"; info_unit_ids: string[] });
 export type ReasoningEdit = { issue: string; hypothesis?: { id?: string; content: string; judgment: Judgment; work_status: "active" | "deprecated" };
   gap?: { id?: string; content: string; hypothesis_ids: string[]; basis_info_unit_ids?: string[];
-    addressing_info_unit_ids?: string[]; status?: "open" | "resolved" };
+    addressing_info_unit_ids?: string[]; remove_addressing_info_unit_ids?: string[]; status?: "open" | "resolved" };
   link?: { id?: string; hypothesis_id: string; info_unit_id: string; meaning: LinkMeaning; rationale: string };
   unlink_id?: string; position?: CardPosition };
 export type IssueCanvas = V03WorkspaceState & { visible_node_ids: string[] };

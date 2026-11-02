@@ -34,17 +34,24 @@ def edit_reasoning(case: CaseData, edit: ReasoningEdit, *, proposal_key: str | N
         if draft.id and existing is None:
             raise AppError("unknown_reasoning_object", "Reasoning object is outside the current Issue", 404)
         prefix = "hyp" if edit.hypothesis else "gap" if edit.gap else "elink"
-        values = {**draft.model_dump(exclude={"id"}), "id": draft.id or f"{prefix}-{uuid4().hex}",
+        values = {**draft.model_dump(exclude={"id", "remove_addressing_info_unit_ids"}), "id": draft.id or f"{prefix}-{uuid4().hex}",
                   "last_edited_by": editor, "proposal_key": proposal_key or (existing.proposal_key if existing else None)}
         if edit.gap:
+            added, removed = set(draft.addressing_info_unit_ids), set(draft.remove_addressing_info_unit_ids)
+            if added & removed:
+                raise AppError("invalid_gap_addressing_edit", "The same material cannot be added and removed in one edit")
+            if not added <= {unit.id for unit in case.info_units}:
+                raise AppError("unknown_reasoning_evidence", "Addressing material must belong to the current case")
             if existing:
+                if not removed <= set(existing.addressing_info_unit_ids):
+                    raise AppError("unknown_gap_addressing", "Removed material must already address this Gap")
                 if "basis_info_unit_ids" not in draft.model_fields_set:
                     values["basis_info_unit_ids"] = list(existing.basis_info_unit_ids)
-                values["addressing_info_unit_ids"] = list(dict.fromkeys([
-                    *existing.addressing_info_unit_ids, *draft.addressing_info_unit_ids]))
+                values["addressing_info_unit_ids"] = [uid for uid in dict.fromkeys([
+                    *existing.addressing_info_unit_ids, *draft.addressing_info_unit_ids]) if uid not in removed]
                 if "status" not in draft.model_fields_set:
                     values["status"] = existing.status
-            elif draft.addressing_info_unit_ids:
+            elif added or removed:
                 raise AppError("gap_addressing_requires_existing", "Create the Gap before adding addressing material")
         # Compare the final merged data, not the submitted append list or editor.
         unchanged_gap = bool(edit.gap and existing and all(values[field] == getattr(existing, field) for field in (

@@ -21,6 +21,8 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
   const [gapStatus, setGapStatus] = useState<"open" | "resolved">(gap?.status ?? "open");
   const [hypothesisIds, setHypothesisIds] = useState<string[]>(gap?.hypothesis_ids ?? [target.hypothesisId ?? state.hypotheses[0]?.id].filter(Boolean) as string[]);
   const [infoIds, setInfoIds] = useState<string[]>(gap?.basis_info_unit_ids ?? []);
+  const [addressingIds, setAddressingIds] = useState<string[]>(gap?.addressing_info_unit_ids ?? []);
+  const [showAddressingPicker, setShowAddressingPicker] = useState(false);
   const [hypothesisId, setHypothesisId] = useState(link?.hypothesis_id ?? target.hypothesisId ?? state.hypotheses[0]?.id ?? "");
   const [infoId, setInfoId] = useState(link?.info_unit_id ?? target.infoUnitId ?? caseData.info_units[0]?.id ?? "");
   const [meaning, setMeaning] = useState<LinkMeaning>(link?.meaning ?? "related");
@@ -32,7 +34,9 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
   function submit() {
     const edit: ReasoningEdit = { issue };
     if (target.kind === "hypothesis") edit.hypothesis = { id: target.id, content, judgment, work_status: workStatus };
-    else if (target.kind === "gap") edit.gap = { id: target.id, content, hypothesis_ids: hypothesisIds, basis_info_unit_ids: infoIds, status: gapStatus };
+    else if (target.kind === "gap") edit.gap = { id: target.id, content, hypothesis_ids: hypothesisIds, basis_info_unit_ids: infoIds, status: gapStatus,
+      addressing_info_unit_ids: addressingIds.filter(id => !gap?.addressing_info_unit_ids.includes(id)),
+      remove_addressing_info_unit_ids: (gap?.addressing_info_unit_ids ?? []).filter(id => !addressingIds.includes(id)) };
     else edit.link = { id: target.id, hypothesis_id: hypothesisId, info_unit_id: infoId, meaning, rationale };
     onSave(edit);
   }
@@ -40,7 +44,9 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
     : Boolean(content.trim() && (target.kind !== "gap" || hypothesisIds.length));
   const dirty = target.kind === "hypothesis" ? content !== hypothesis?.content || judgment !== hypothesis?.judgment || workStatus !== hypothesis?.work_status
     : target.kind === "gap" ? content !== gap?.content || gapStatus !== gap?.status
-      || JSON.stringify(hypothesisIds) !== JSON.stringify(gap?.hypothesis_ids) || JSON.stringify(infoIds) !== JSON.stringify(gap?.basis_info_unit_ids) : false;
+      || JSON.stringify(hypothesisIds) !== JSON.stringify(gap?.hypothesis_ids) || JSON.stringify(infoIds) !== JSON.stringify(gap?.basis_info_unit_ids)
+      || addressingIds.length !== (gap?.addressing_info_unit_ids.length ?? 0)
+      || addressingIds.some(id => !gap?.addressing_info_unit_ids.includes(id)) : false;
   return <div className="info-unit-editor-backdrop" onMouseDown={event => event.stopPropagation()}>
     <section className="info-unit-editor reasoning-editor" role="dialog" aria-modal="true" aria-label={`${target.id ? "编辑" : "新建"}${label}`}>
       <header><h2>{target.id ? "编辑" : "新建"}{label}</h2><button type="button" disabled={busy} onClick={onClose}>关闭推理编辑器</button></header>
@@ -73,8 +79,21 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
           <label><input type="checkbox" checked={infoIds.includes(item.id)} onChange={() => setInfoIds(toggle(infoIds, item.id))} />{item.title}</label>
           {infoIds.includes(item.id) ? <button type="button" onClick={() => onLocate(item.id)}>定位信息</button> : null}</div>)}</details>
         <section aria-label="用于回应缺口的信息"><h3>用于回应缺口的信息</h3>
-          {gap?.addressing_info_unit_ids.length ? gap.addressing_info_unit_ids.map(id =>
-            <button type="button" key={id} onClick={() => onLocate(id)}>{unitTitle(id)}</button>) : <p>尚未关联回应材料。</p>}
+          {addressingIds.length ? addressingIds.map(id => <div className="gap-basis-item" key={id}>
+            <button type="button" onClick={() => onLocate(id)} disabled={busy}>{unitTitle(id)}</button>
+            <button type="button" aria-label={`移除关联：${unitTitle(id)}`} disabled={busy}
+              onClick={() => setAddressingIds(ids => ids.filter(value => value !== id))}>移除关联</button>
+          </div>) : <p>尚未关联回应材料。</p>}
+          {target.id ? <>
+            <button type="button" disabled={busy} aria-expanded={showAddressingPicker}
+              onClick={() => setShowAddressingPicker(value => !value)}>添加回应材料</button>
+            {showAddressingPicker ? <fieldset><legend>选择回应材料</legend>
+              {caseData.info_units.map(item =>
+                <label key={item.id}><input type="checkbox"
+                  disabled={busy || Boolean(gap?.addressing_info_unit_ids.includes(item.id) && addressingIds.includes(item.id))} checked={addressingIds.includes(item.id)}
+                  onChange={() => setAddressingIds(ids => toggle(ids, item.id))} />{item.title}</label>)}
+            </fieldset> : null}
+          </> : <p>请先保存缺口，再添加回应材料。</p>}
           <p>关联材料不代表缺口已解决，状态由明确判断决定。</p>
         </section>
       </> : null}
