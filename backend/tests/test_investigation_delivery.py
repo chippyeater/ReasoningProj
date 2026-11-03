@@ -18,8 +18,48 @@ class TestInvestigationDelivery(unittest.TestCase):
     def context(self):
         return {"current_issue": self.case.issue_set[1], "reasoning": {"hypotheses": [], "gaps": [], "links": [], "has_more": False}}
 
+    def test_single_proposition_and_gap_keep_compact_memory_and_full_audit(self):
+        goal = "核查是否存在少收租金及尚待核实的事实"
+        proposition = "新租约延后计租，房东存在少收租金的期间。"
+        def respond(call, turn):
+            state = json.loads(call["messages"][1]["content"])
+            names = {d["function"]["name"] for d in call["definitions"]}
+            self.assertNotIn("propose_hypothesis_status", names)
+            self.assertNotIn("propose_evidence_gap_update", names)
+            self.assertEqual([m["role"] for m in call["messages"]], ["system", "user"])
+            if turn == 1:
+                self.assertNotIn("propose_evidence_link", names)
+                return f.tool("search_info_units", {"query": "损失"}, "read")
+            visible = {u["id"] for u in state["materials"]["info_units"]["items"]}
+            self.assertTrue({"U029", "U036"} <= visible)
+            self.assertFalse(visible & {u["id"] for u in state["case_info_directory"]["items"]})
+            if turn == 2:
+                return f.tool("propose_hypothesis", {"content": proposition,
+                    "rationale": "房东称空置造成损失；是否少收租金需查计租和收款记录。",
+                    "info_unit_ids": ["U029", "U036"], "evidence_refs": []}, "one-hypothesis")
+            self.assertIn("propose_evidence_link", names)
+            hypothesis = state["proposals"][0]
+            self.assertEqual(set(hypothesis), {"proposal_id", "kind", "content", "rationale", "info_unit_ids"})
+            self.assertEqual(hypothesis["content"], proposition)
+            if turn == 3:
+                return f.tool("propose_evidence_gap", {"content": "腾退后的租金是否足额收取？",
+                    "rationale": "核对银行入账与计租期间。", "basis_info_unit_ids": ["U036"], "evidence_refs": [],
+                    "hypothesis_targets": {"hypothesis_ids": [], "hypothesis_proposal_ids": [hypothesis["proposal_id"]]}}, "one-gap")
+            return f.finish(goal, status="evidence_insufficient", questions=["实际收款仍待核实。"],
+                            answer="现有陈述不足以确认少收租金，已提交待验证命题和收款核查问题。")
+        result, calls = self.run_script(goal, respond, work_context=self.context(), issue_key=self.case.issue_set[1])
+        self.assertEqual([p["kind"] for p in result["proposals"]], ["hypothesis", "evidence_gap"])
+        self.assertEqual(result["proposals"][1]["hypothesis_proposal_ids"], [result["proposals"][0]["proposal_id"]])
+        self.assertEqual(result["summary_status"], "completed")
+        audit = self.audits()[0]
+        # Projection changes neither the adoption contract nor the exact request audit.
+        self.assertEqual(audit["result"]["proposals"], result["proposals"])
+        self.assertEqual(result["proposals"][0]["evidence_refs"], [])
+        for call, recorded in zip(calls, audit["model_calls"]):
+            self.assertEqual(recorded["request"]["messages"], call["messages"])
+
     def test_two_distinct_hypotheses_and_shared_gap_use_real_returned_dependencies(self):
-        goal = "读取双方材料，提出两个竞争性假设和一个共同证据缺口"
+        goal = "读取双方材料，判断收款是否连续以及是否发生少收租金"
         def respond(call, turn):
             state = json.loads(call["messages"][1]["content"])
             self.assertEqual(state["goal"], goal)
@@ -57,8 +97,8 @@ class TestInvestigationDelivery(unittest.TestCase):
         self.assertEqual(result["proposals"], [])
         self.assertNotIn("proposal_receipt", self.audits()[0])
 
-    def test_search_content_supports_two_hypotheses_and_one_shared_condition_without_sources(self):
-        goal = "提出两个竞争性损失解释和一个共同证据缺口"
+    def test_independent_propositions_share_a_factual_gap_without_requiring_competition(self):
+        goal = "根据损失陈述梳理需要核实的命题和事实"
         def respond(call, turn):
             state = json.loads(call["messages"][1]["content"])
             self.assertFalse(state["materials"]["source_refs"]["items"])
@@ -69,15 +109,15 @@ class TestInvestigationDelivery(unittest.TestCase):
             proposals = state["proposals"]
             if len(proposals) < 2:
                 return f.tool("propose_hypothesis", {
-                    "content": "新租客租金承接原计租期间，因此未少收租金" if not proposals else "计租未衔接，存在少收租金的期间",
-                    "rationale": "双方损失陈述不同，摘要可支持备选解释，尚未核验原文。",
+                    "content": "若新租约延后计租且该期间无其他收款，则存在少收租金。" if not proposals else "若新租约租金降低且没有差额补偿，则后续租金收入减少。",
+                    "rationale": "损失主张需要核对相应的计租或实收条件，尚未核验原文。",
                     "info_unit_ids": ["U029", "U036"], "evidence_refs": []}, f"hyp-{len(proposals)}")
             if len(proposals) == 2:
-                return f.tool("propose_evidence_gap", {"content": "新租客的计租起点是否覆盖原租客搬离当日？",
-                    "rationale": "核对新租约中的计租起点，可区分租金承接与计租中断两种解释。",
+                return f.tool("propose_evidence_gap", {"content": "腾退后的实际收款是否覆盖原计租期间应收的金额？",
+                    "rationale": "对照原租约应收与实际收款，可核查计租断档和租金降低这两个独立命题。",
                     "basis_info_unit_ids": ["U029", "U036"], "evidence_refs": [],
                     "hypothesis_targets": {"hypothesis_ids": [], "hypothesis_proposal_ids": [p["proposal_id"] for p in proposals]}}, "gap")
-            return f.finish(goal, status="completed", answer="已提交两种待检验解释及一个共同核查条件，请审阅。")
+            return f.finish(goal, status="completed", answer="已提交两个可分别检验的命题及一个共同核查问题，请审阅。")
         result, calls = self.run_script(goal, respond, work_context=self.context(), issue_key=self.case.issue_set[1])
         self.assertEqual(result["completion_status"], "completed")
         self.assertEqual(result["tool_budget_used"]["read"], 1)

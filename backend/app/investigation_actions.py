@@ -22,6 +22,9 @@ def _check_duplicate(proposal, context, proposals, case):
 
     def key(content):
         text = re.sub(r"\s+", " ", _normalized(content).strip())
+        # Display numbering is not part of the proposition; preserve all
+        # subjects, conditions and numerical facts after the label.
+        text = re.sub(r"^(?:h\d+|假设\s*\d+)\s*[:：]\s*", "", text)
         text = re.sub(r"^(确认|核实|核对|查明|confirm\s+|verify\s+)", "", text)
         # Keep all clause/parenthesis content and grouping. Numeric separators,
         # signs, ratios and comparison operators may change the proposition.
@@ -97,14 +100,14 @@ def _propose(case, seen, context, proposals, kind, **values):
 
 
 def propose_hypothesis(case, seen, context, proposals, *, content, rationale, info_unit_ids, evidence_refs):
-    """Propose a testable explanation, pending user approval, never verified by default. Before calling compare reasoning and every successful same-run Proposal: reuse synonymous Hypotheses; competing explanations must state substantively different conditions or distinguishing evidence. Obtained InfoUnit content can support exploratory reasoning without get_evidence; evidence_refs may be empty. If no direct material exists info_unit_ids may also be empty; explain uncertainty in rationale. Cite validated initial source_refs or get_evidence results when available; source location alone does not prove the hypothesis."""
+    """Submit one evidence-testable proposition in content, with only its own basis/uncertainty in rationale. Use obtained InfoUnit IDs; exploratory evidence_refs may be empty, and info_unit_ids may be empty if no direct material exists. Submission creates a pending suggestion, not a verified fact."""
     return _propose(case, seen, context, proposals, "hypothesis", content=content, rationale=rationale,
                     info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
 
 
 def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info_unit_id, meaning, rationale, evidence_refs,
                           hypothesis_proposal_ids=None):
-    """Propose support/oppose/related (related means relevant to the Hypothesis without clearly supporting or opposing it) from a provided InfoUnit with a verified source_refs or get_evidence citation to exactly one Hypothesis. Use hypothesis_id for an existing context Hypothesis, or null plus one actually returned same-run hypothesis_proposal_ids entry for a new pending Hypothesis. Never both. User must adopt that Hypothesis first, then separately adopt this Link; nothing is automatically accepted."""
+    """Link one obtained InfoUnit and source citation to one Hypothesis. Use a formal hypothesis_id, or null plus one returned hypothesis_proposal_ids entry, never both. For a pending parent, the user must adopt the Hypothesis before separately adopting this Link."""
     return _propose(case, seen, context, proposals, "evidence_link", hypothesis_ids=[] if hypothesis_id is None else [hypothesis_id],
                     hypothesis_proposal_ids=[] if hypothesis_proposal_ids is None else hypothesis_proposal_ids,
                     info_unit_ids=[info_unit_id], meaning=meaning, rationale=rationale, evidence_refs=evidence_refs)
@@ -112,21 +115,21 @@ def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info
 
 def propose_evidence_gap(case, seen, context, proposals, *, content, hypothesis_ids, hypothesis_proposal_ids,
                          rationale, basis_info_unit_ids, evidence_refs):
-    """Propose one specific, independently verifiable missing fact or condition. hypothesis_targets contains hypothesis_ids and hypothesis_proposal_ids: at least one array MUST be nonempty, with at most five targets total. Use actual current-Issue Hypothesis IDs or first submit propose_hypothesis successfully and use its returned proposal_id in hypothesis_proposal_ids; never guess IDs or send two empty arrays. Compare reasoning and all successful same-run Proposals before calling: reuse existing equivalent conditions, and create a shared Gap once, after obtaining IDs of all relevant competing Hypotheses. State what must be confirmed and why it affects the Hypotheses, with a concrete evidence action or material type. Split independently useful conditions into separate Gaps; several materials checking the same condition can share one Gap. Do not bundle a new lease, payment records, move-out proof and expense receipts into a broad request. Obtained InfoUnit content is sufficient for an exploratory Gap without get_evidence; evidence_refs and basis_info_unit_ids may be empty when no direct material exists. basis_info_unit_ids records existing forming material, not later addressing material; a new Gap starts with no addressing material. Describe uncertainty, not a proven fact."""
+    """Submit one unresolved factual question. hypothesis_targets must contain 1–5 actual formal Hypothesis IDs and/or successfully returned Hypothesis proposal IDs. One or several propositions may share the question. basis_info_unit_ids and evidence_refs may be empty; a new Gap has no addressing material."""
     return _propose(case, seen, context, proposals, "evidence_gap", content=content, hypothesis_ids=hypothesis_ids,
                     hypothesis_proposal_ids=hypothesis_proposal_ids, rationale=rationale,
                     basis_info_unit_ids=basis_info_unit_ids, evidence_refs=evidence_refs)
 
 
 def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, judgment, rationale, info_unit_ids, evidence_refs):
-    """Propose an evidence judgment for an existing Hypothesis. Requires at least one provided InfoUnit and verified citation, from initial source_refs or get_evidence. Missing support does not establish refutation."""
+    """Suggest unverified/verified/refuted for an existing hypothesis_id, using obtained InfoUnits and SourceRef citations. Explain how the evidence bears on that proposition; missing support alone does not establish refutation."""
     return _propose(case, seen, context, proposals, "hypothesis_status", hypothesis_ids=[hypothesis_id],
                     judgment=judgment, rationale=rationale, info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
 
 
 def propose_evidence_gap_update(case, seen, context, proposals, *, gap_id, addressing_info_unit_ids,
                                 status, rationale, evidence_refs):
-    """Propose addressing material for an existing Gap in the current Issue. Use its actual gap_id, obtained InfoUnits and verified source citations. Compare new material with the Gap and its competing Hypotheses; partial responses keep status=open and explain what remains missing. Use resolved only when the missing condition is sufficiently addressed. Adoption preserves the Gap ID, content, basis and Hypothesis associations, appends unique addressing IDs and checks its captured revision. Prefer this over recreating the same Gap; user approval is always required."""
+    """Update an existing gap_id with obtained addressing_info_unit_ids and SourceRef citations. Suggest open or resolved and explain remaining uncertainty. Adoption appends addressing material and preserves the Gap's ID, question, basis and Hypothesis associations."""
     return _propose(case, seen, context, proposals, "evidence_gap_update", gap_id=gap_id,
                     addressing_info_unit_ids=addressing_info_unit_ids, status=status,
                     rationale=rationale, evidence_refs=evidence_refs)

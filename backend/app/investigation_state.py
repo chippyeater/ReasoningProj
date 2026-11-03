@@ -151,24 +151,31 @@ def model_context(initial, knowledge, recovery=None):
     reasoning = {kind: [{k:deepcopy(row[k]) for k in keys if k in row}
                         for row in workspace.get("reasoning", {}).get(kind, [])] for kind, keys in fields.items()}
     reasoning["has_more"] = workspace.get("reasoning", {}).get("has_more", False)
-    # Reading a summary grants its content, never all sources attached to the
-    # domain node. These indices come exclusively from actual successful reads.
-    units = [(key, {**row, "obtained_source_ref_indices": sorted(
-        ref["source_ref_index"] for ref in knowledge.source_refs.values() if ref["info_unit_id"] == key)})
-        for key, row in knowledge.info_units.items()]
     result = {"goal": goal, "current_issue": workspace.get("current_issue"),
         "core_issue": initial.get("core_issue"),
         "case_info_directory": deepcopy(initial["case_info_directory"]),
         "materials": {
-            "info_units": section(sorted(units, key=lambda kv:rank(kv[1])), 6500),
+            "info_units": section(sorted(knowledge.info_units.items(), key=lambda kv:rank(kv[1])), 6500),
             "relations": section(sorted(knowledge.relations.items(), key=relation_rank), 3500),
             "source_refs": section(sorted(knowledge.source_refs.items(), key=lambda kv:rank(kv[1])), 7500)},
         "reasoning": deepcopy(reasoning),
-        "proposals": deepcopy(knowledge.proposals),
+        # Transport defaults stay in the audit/adoption contract. Preserve all
+        # populated fields and dependency IDs in the model's working memory.
+        "proposals": [{key: deepcopy(value) for key, value in proposal.items()
+                       if value is not None and value != []}
+                      for proposal in knowledge.proposals],
         "notices": [{k:v for k,v in n.items() if k != "key"} for n in knowledge.notices[-6:]],
         "recovery": deepcopy(recovery)}
     if len(knowledge.notices) > 6:
         result["notices"].append({"context_truncated": True, "omitted_count": len(knowledge.notices) - 6})
+    # Filter after trimming so omitted material remains discoverable.
+    def directory_view():
+        visible = {row["id"] for row in result["materials"]["info_units"]["items"]}
+        directory = deepcopy(initial["case_info_directory"])
+        directory["items"] = [row for row in directory["items"] if row["id"] not in visible]
+        return directory
+
+    result["case_info_directory"] = directory_view()
     # Successful proposals and dependency IDs remain visible. Trim material
     # projections and directory, never the authoritative KnowledgeState.
     sections = list(result["materials"].values())
@@ -177,6 +184,7 @@ def model_context(initial, knowledge, recovery=None):
         row = target["items"].pop()
         key = KnowledgeState.ref_key(row) if "source_ref_index" in row else row["id"]
         target["omitted_ids"].append(key); target["context_truncated"] = True
+        result["case_info_directory"] = directory_view()
     directory = result["case_info_directory"]
     while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and directory["items"]:
         directory["items"].pop(); directory["context_truncated"] = True; directory["omitted_count"] += 1

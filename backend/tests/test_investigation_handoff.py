@@ -59,6 +59,8 @@ class TestInvestigationHandoff(unittest.TestCase):
         context, seen, refs = self.comparison_context()
         pairs = [
             ("实际租金损失仍待核实", "实际租金损失仍待核实"),
+            ("H1：租金收款连续", "H2: 租金收款连续"),
+            ("假设1：租金收款连续", "租金收款连续"),
             ("房东，发生损失。", "房东 发生损失!"),
             ("房东：可能存在损失（有待核实）。", "房东: 可能存在损失 (有待核实)!"),
             ("确认实际腾退日期", "核实实际腾退日期"),
@@ -181,7 +183,7 @@ class TestInvestigationHandoff(unittest.TestCase):
             self.assertEqual(len(units), 3)
             self.assertTrue(all(u["content"] for u in units.values()))
             if turn == 2:
-                self.assertTrue(all(u["obtained_source_ref_indices"] == [] for u in units.values()))
+                self.assertTrue(all("obtained_source_ref_indices" not in u for u in units.values()))
                 self.assertFalse(state["materials"]["source_refs"]["items"])
                 uid = next(iter(units))
                 return f.finish("核对押金条款", [uid], refs=[(uid, 0)], call_id="unread-source")
@@ -193,7 +195,8 @@ class TestInvestigationHandoff(unittest.TestCase):
                 return f.tool("get_evidence", {"info_unit_ids": [error["info_unit_id"]]}, "source")
             pointer = state["materials"]["source_refs"]["items"][0]
             uid, index = pointer["info_unit_id"], pointer["source_ref_index"]
-            self.assertIn(index, units[uid]["obtained_source_ref_indices"])
+            self.assertTrue(any(r["info_unit_id"] == uid and r["source_ref_index"] == index
+                                for r in state["materials"]["source_refs"]["items"]))
             return f.finish("核对押金条款", [uid], refs=[(uid, index)], call_id="corrected")
         result, _ = self.run_script("核对押金条款", respond)
         self.assertEqual(result["summary_status"], "completed")

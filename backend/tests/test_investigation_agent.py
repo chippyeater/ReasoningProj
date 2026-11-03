@@ -93,7 +93,7 @@ class TestInvestigationAgent(unittest.TestCase):
         self.assertEqual(first["materials"]["info_units"]["items"], [])
         for call in calls:
             self.assertEqual(len(call["messages"]), 2)
-            self.assertEqual(len(call["definitions"]), 9)
+            self.assertEqual(len(call["definitions"]), 6)
             self.assertEqual(call["tool_choice"], "auto")
             schema = json.dumps(call["definitions"])
             for field in ("question_ids", "step_id", "update_questions", "update_investigation_steps"):
@@ -107,7 +107,7 @@ class TestInvestigationAgent(unittest.TestCase):
         state = json.loads(calls[0]["messages"][1]["content"])
         self.assertEqual(state["materials"]["info_units"]["items"][0]["id"], "U029")
         self.assertEqual(state["materials"]["source_refs"]["items"], [])
-        self.assertEqual(state["materials"]["info_units"]["items"][0]["obtained_source_ref_indices"], [])
+        self.assertNotIn("obtained_source_ref_indices", state["materials"]["info_units"]["items"][0])
         self.assertEqual(result["tool_budget_used"]["read"], 1)
 
     def test_capabilities_and_metadata_complete_without_artifacts_or_reads(self):

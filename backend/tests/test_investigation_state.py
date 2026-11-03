@@ -55,6 +55,21 @@ class TestInvestigationMemory(unittest.TestCase):
         self.assertEqual(len(memory.info_units), 70)
         self.assertFalse(memory.source_refs)
 
+    def test_directory_retains_material_omitted_from_the_visible_projection(self):
+        initial = self.initial(); memory = state.KnowledgeState(initial)
+        for unit in self.case.info_units:
+            memory.info_units[unit.id] = {"id": unit.id, "title": unit.title,
+                "type": unit.type.value, "content": "x" * 900}
+        before = memory.dump()
+        with patch.object(state, "MAX_CONTEXT_CHARS", 3600):
+            view = state.model_context(initial, memory)
+        visible = {u["id"] for u in view["materials"]["info_units"]["items"]}
+        directory = {u["id"] for u in view["case_info_directory"]["items"]}
+        self.assertFalse(visible & directory)
+        self.assertTrue(directory)
+        self.assertEqual(visible | directory, {u.id for u in self.case.info_units})
+        self.assertEqual(memory.dump(), before)
+
     def test_directory_is_deterministic_bounded_and_grants_no_material(self):
         case = self.case.model_copy(deep=True)
         seed = case.info_units[0]

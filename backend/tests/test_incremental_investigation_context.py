@@ -99,7 +99,7 @@ class TestIncrementalInvestigationContext(IsolatedCaseTest):
         self.assertEqual(set(self.ids(state)), {self.hidden, self.visible})
         self.assertNotIn(self.foreign, self.ids(state))
         self.assertEqual(state["materials"]["source_refs"]["items"], [])
-        self.assertTrue(all(row["obtained_source_ref_indices"] == [] for row in state["materials"]["info_units"]["items"]))
+        self.assertTrue(all("obtained_source_ref_indices" not in row for row in state["materials"]["info_units"]["items"]))
         self.assert_canvases_unchanged()
 
     def test_search_prioritizes_new_nodes_and_new_sources_on_old_nodes(self):

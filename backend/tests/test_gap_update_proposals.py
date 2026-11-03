@@ -156,6 +156,50 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual(stale.status_code, 409, stale.text)
         self.assertEqual(stale.json()["detail"]["code"], "stale_reasoning_proposal")
 
+    def test_single_proposition_partial_evidence_updates_original_gap_and_judgment_separately(self):
+        self.edit(gap={"id": self.gid, "content": self.original_gap.content,
+                       "hypothesis_ids": self.hids[:1], "basis_info_unit_ids": [self.old_id]})
+        self.edit(delete_hypothesis_id=self.hids[1])
+        self.supplement()
+        before = self.state().model_copy(deep=True)
+        requests = []
+        pointers = [{"info_unit_id": self.uid, "source_ref_index": self.source_index}]
+        async def model(config, messages, definitions, schema=None, **kwargs):
+            state = json.loads(messages[1]["content"])
+            requests.append(state)
+            self.assertEqual(state["reasoning"]["gaps"][0]["hypothesis_ids"], self.hids[:1])
+            self.assertEqual(len(state["reasoning"]["hypotheses"]), 1)
+            if len(requests) == 1:
+                return replies.tool("get_evidence", {"info_unit_ids": [self.uid]}, "source")
+            if len(requests) == 2:
+                return replies.tool("propose_evidence_gap_update", {"gap_id": self.gid,
+                    "addressing_info_unit_ids": [self.uid], "status": "open", "evidence_refs": pointers,
+                    "rationale": "新合同只记录起租约定，没有实际收款凭证，原事实问题仍未解决。"}, "update")
+            if len(requests) == 3:
+                return replies.tool("propose_hypothesis_status", {"hypothesis_id": self.hids[0],
+                    "judgment": "unverified", "info_unit_ids": [self.uid], "evidence_refs": pointers,
+                    "rationale": "约定起租不足以证明已履行及没有损失，保留待验证判断。"}, "status")
+            return replies.finish("核对新合同", [self.uid], refs=[(self.uid, self.source_index)],
+                status="evidence_insufficient", questions=["实际履行与收款尚待核实。"])
+        with patch.object(llm_client, "load_config", return_value=replies.CONFIG), patch.object(
+                llm_client, "call_tools", new=AsyncMock(side_effect=model)):
+            response = self.client.post(f"/api/cases/{self.cid}/agent/run", json={
+                "goal": "核对新合同", "current_issue": self.issue})
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update", "hypothesis_status"])
+        self.assertEqual(result["proposals"][1]["hypothesis_ids"], self.hids[:1])
+        self.assertEqual(self.state(), before)  # Both suggestions remain pending.
+        self.assertEqual(self.accept(result).status_code, 200)
+        after = self.state()
+        self.assertEqual([h.id for h in after.hypotheses], self.hids[:1])
+        self.assertEqual(after.hypotheses[0].judgment, "unverified")
+        self.assertEqual(after.gaps[0].id, self.gid)
+        self.assertEqual(after.gaps[0].hypothesis_ids, self.hids[:1])
+        self.assertEqual(after.gaps[0].basis_info_unit_ids, before.gaps[0].basis_info_unit_ids)
+        self.assertEqual(after.gaps[0].addressing_info_unit_ids, [self.uid])
+        self.assertEqual(after.gaps[0].status, "open")
+
     def test_invalid_target_and_ungrounded_update_do_not_create_proposal(self):
         self.supplement()
         for values in ({"gap_id": "gap-outside-current-issue"}, {"addressing_info_unit_ids": []},

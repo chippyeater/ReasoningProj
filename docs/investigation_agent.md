@@ -4,7 +4,7 @@
 
 ## 执行和交付
 
-只有一个工具调用循环。首轮即提供 `search_info_units`、`get_relations`、`get_evidence`、五个 `propose_*` 工具及 `finish_investigation`，原生 `tool_choice=auto`。没有规划阶段、Question/InvestigationStep 模型、计划更新工具或关联参数。读取范围、工具顺序、Proposal 数量和结束时机由 Goal 与读取结果决定。
+只有一个工具调用循环。首轮提供三个读取工具、Hypothesis/Gap 创建和 Finish；仅在已有正式 Hypothesis 时提供状态建议、已有 Gap 时提供 Gap Update、有正式或本轮待确认 Hypothesis 时提供 Evidence Link，原生 `tool_choice=auto`。没有规划阶段、Question/InvestigationStep 模型、计划更新工具或关联参数。读取范围、工具顺序、Proposal 数量和结束时机由 Goal 与读取结果决定。
 
 通过 finish 交付 `answer`、`answer_basis`、可选内容的 `findings`、`open_questions` 和 `completion_status`。空 Findings/Proposal 合法。answer_basis 为 general（能力/通用回答）、case_metadata（可靠案件统计）或 case_material（案件判断）；它描述答复依据，不创建另一条执行流程。涉及案件依据的成果必须选择 case_material。目录不授予材料或引用权限；尚无材料/有效读取结果时，案件判断返回可恢复错误。实际 empty、读取 error、空案件或预算限制可以支持明确的证据不足说明，不能证明事实。后端不以关键词猜测 Goal，也不能独立证明自然语言任务已经充分覆盖。
 
@@ -20,9 +20,9 @@ Findings、Proposal 引用须属于当前案件并实际取得；SourceRef 仅�
 
 首轮调查围绕具体信息需求搜索，不混合不同主题来覆盖全案。搜索过滤本次请求已可见的 InfoUnit，缓存按可见排除集隔离；`has_more` 不要求继续读完。取得的信息足以形成任务所需的探索性假设和缺口时，可以直接提交 Proposal 并结束检索。InfoUnit 内容足以支持探索性推理，原始来源只按具体措辞、时间、金额、主体或冲突核查需要读取；Evidence Link 和 Hypothesis Status 的来源要求保持不变。
 
-一个 Evidence Gap 对应一个具体、可独立核查的缺失条件，说明确认内容、判断影响和明确补证动作/材料类型；独立条件分别建缺口，多份材料验证同一条件可合并。多个竞争性假设应先取得真实 ID，再关联一个共同区分性缺口。创建工具使用 `hypothesis_targets` 对象，内含 `hypothesis_ids` 与 `hypothesis_proposal_ids`；嵌套 `anyOf` 保证至少一项非空，后端再次校验结构、最多5个目标及当前 Issue/Run 的目标真实性，再映射回原有 Proposal 字段。Proposal 类型和采纳契约不变。
+一个 Evidence Gap 对应一个具体、可独立核查的缺失条件，说明确认内容、判断影响和明确补证动作/材料类型；独立条件分别建缺口，多份材料验证同一条件可合并。Gap 可关联一个或多个命题，不要求它们竞争；先取得实际 ID，同一事实问题只创建一次。创建工具使用 `hypothesis_targets` 对象，内含 `hypothesis_ids` 与 `hypothesis_proposal_ids`；嵌套 `anyOf` 保证至少一项非空，后端再次校验结构、最多5个目标及当前 Issue/Run 的目标真实性，再映射回原有 Proposal 字段。Proposal 类型和采纳契约不变。
 
-用户要求判断事实或梳理可能情况时，材料支持的实质不同解释应提交 Hypothesis Proposal，无须出现“假设”一词；不强制固定数量。模型对照正式 reasoning 和本轮 proposals 避免同义重复。后端另做有限文本归一化检查：保留 NFKC、casefold、明确的开头核查指令词清理及常规分隔标点/空白归一化；完整保留冒号后和括号内的命题、主体、身份及成立条件，不删除小数点、正负号、比例、比较符号或英文词间边界。检查范围为当前 Issue 的完整正式对象（包括模型投影省略的对象）及本轮成功 Proposal，且仅适用于 Hypothesis 与 Evidence Gap。命中时返回 `duplicate_proposal`、原对象来源和 ID，不追加、合并、改写或采纳对象。该检查不使用模糊相似度，也不能保证识别任意同义改写；优先避免错误拦截不同命题，用户仍逐项审阅。
+Hypothesis 是可被证据支持或反驳的待验证命题；数量由任务与事实决定，单命题合法，不要求竞争或配对。每份 content 只表达该命题及必要条件，rationale 仅说明它的依据与不确定性，不放整套假设；模型复用已有 reasoning/proposals，成功提交即表示该动作已完成。后端另做有限文本归一化检查：保留 NFKC、casefold、开头 H1/假设1 等显示编号及核查指令词清理及常规分隔标点/空白归一化；完整保留冒号后和括号内的命题、主体、身份及成立条件，不删除小数点、正负号、比例、比较符号或英文词间边界。检查范围为当前 Issue 的完整正式对象（包括模型投影省略的对象）及本轮成功 Proposal，且仅适用于 Hypothesis 与 Evidence Gap。命中时返回 `duplicate_proposal`、原对象来源和 ID，不追加、合并、改写或采纳对象。该检查不使用模糊相似度，也不能保证识别任意同义改写；优先避免错误拦截不同命题，用户仍逐项审阅。
 
 Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成依据，来源引用只能指向已取得的这些节点；不接受 `addressing_info_unit_ids`。正式 Gap 的回应列表初始为空，后续通过现有工作区编辑接口追加去重，材料关联不自动解决 Gap 或改变假设判断。上下文分别提供形成依据、回应材料及各自截断标记；这些引用本身不授予材料读取权限。Hypothesis、Evidence Link、Hypothesis Status 的 `info_unit_ids` 语义保持不变。已保存工作区的一次性迁移见 `docs/issue_reasoning.md`。
 
@@ -32,7 +32,7 @@ Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成�
 
 首轮材料只来自请求明确选中的 InfoUnit，以及用户聚焦的 InfoUnit；聚焦 Hypothesis/Gap 不会自动取得其关联材料。仅发送有界摘要，以及两端都在这组选中材料内的既有 Relation。画布可见节点和新 Extraction 批次不会自动加入材料或来源，画布显示、布局、层级、视口和可见性独立保存。
 
-`case_info_directory` 保留轻量 ID、标题、类型目录；目录、正式 Gap 的形成依据和回应材料 ID 都不授予读取或引用权限。成功搜索的摘要才进入后续 KnowledgeState，SourceRef 按任务需要实际调用 get_evidence 取得。没有默认来源片段或首轮隐式读取。
+`case_info_directory` 仅列当前材料视图之外的轻量 ID、标题、类型目录（总数仍为全案数量）；可见材料裁剪后再过滤目录，保证被省略的节点仍可发现。目录、正式 Gap 的形成依据和回应材料 ID 都不授予读取或引用权限。成功搜索的摘要才进入后续 KnowledgeState，SourceRef 按任务需要实际调用 get_evidence 取得。没有默认来源片段或首轮隐式读取。
 
 后端读取最近成功提交的 Extraction 快照中 `selected_file_ids`，按 SourceRef.file_id 识别涉及的节点，包括追加来源的旧 InfoUnit。搜索仍按关键词匹配，但优先返回本批匹配材料；显式 get_evidence 时优先返回本批来源，保留原 SourceRef 索引及8条/4000字符上限，保证旧节点的新来源不会被前面的旧来源挤出。该优先级不进入模型首轮上下文，不修改持久 Issue 或 Canvas。失败/未提交运行不计入批次；人工 Extraction 历史登记不作为新材料，快照无效时读取工具明确报错，不回退或猜测。
 
@@ -42,9 +42,9 @@ Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成�
 
 - `goal`、`current_issue`、必要案件背景 `core_issue`。
 - `case_info_directory`：总数、稳定 ID、标题、类型、截断及省略数量；按 ID 确定排序，最多80项、条目累计6000字符，标题最多120字符。
-- `materials.info_units/relations/source_refs`：本轮实际取得的去重工具投影，各自带 `items/context_truncated/omitted_ids`。成功搜索摘要进入后续轮次；InfoUnit 的 `obtained_source_ref_indices` 只来自本轮实际取得的 SourceRef，空数组表示没有可用来源索引，搜索命中不等于已读取该节点全部来源。来源正文仍取自 source_refs，裁剪不会丢失完整工作记忆。
+- `materials.info_units/relations/source_refs`：本轮实际取得的去重工具投影，各自带 `items/context_truncated/omitted_ids`。成功搜索摘要进入后续轮次；来源指针仅在 source_refs 中提供一次，不再在每个 InfoUnit 上重复列索引；搜索命中不授予来源引用权限，裁剪不会丢失完整工作记忆。
 - `reasoning`：当前 Issue 中相关的正式假设、缺口和证据关联，保留用户判断、弃用/解决状态，不发送修订号、时间戳和显示布局。
-- `proposals`：本轮成功提交的完整提案，保留实际返回 ID 和依赖。
+- `proposals`：本轮已成功提交的提案，保留实际 ID、内容、依据、有效状态与依赖；仅在模型投影中省略 null 和空数组。完整提案与采纳契约仍保存在审计和 API 结果中。
 - `notices` 与 `recovery`：必要的空结果、截断范围、来源限制和当前错误。
 
 KnowledgeState 按 InfoUnit ID、Relation ID、SourceRef 的节点/索引合并材料，完整状态不随上下文裁剪而删除。每轮从该状态重建视图；正文、关系和来源分别最多约6500/3500/7500字符，总上下文最多24000字符。优先保留本次明确读取的材料、Goal 文本相关材料和近期材料；超限明确列出省略 ID，模型可重新读取，缓存结果也重新进入视图。不发送完整工具历史、活动索引、计划状态、预算计数或运行审计。
@@ -69,6 +69,6 @@ node --experimental-strip-types --test frontend/tests/investigation-presentation
 git diff --check
 ```
 
-测试覆盖不建计划的事实检索、两个竞争性假设及共同缺口、跨轮引用、去重/省略/重新读取、非法来源、empty/truncated/error、预算、Proposal 部分成功和独立审批、Issue 隔离与 API。Case A 固定 Dataset/Gold/历史 Trace 不改写；Mock 不构成语义质量验收，真实模型行为需另行授权评测。
+测试覆盖不建计划的事实检索、单命题与相关缺口、多个独立或竞争命题及共享缺口、跨轮引用、去重/省略/重新读取、非法来源、empty/truncated/error、预算、Proposal 部分成功和独立审批、Issue 隔离与 API。Case A 固定 Dataset/Gold/历史 Trace 不改写；Mock 不构成语义质量验收，真实模型行为需另行授权评测。
 
 本地 UI smoke 可用 `backend/.venv/Scripts/python.exe backend/tests/serve_agent_smoke.py` 启动隔离后端，并在 frontend 运行 `npm run dev -- --host 127.0.0.1`。它只模拟模型边界，不访问外部模型；案件修改与审批只写临时目录。

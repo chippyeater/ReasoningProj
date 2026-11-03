@@ -73,31 +73,24 @@ def tool_definitions() -> list[dict]:
     limit = {"type": ["integer", "null"], "minimum": 1, "maximum": tools.MAX_LIMIT}
     definitions = [
         _function("search_info_units", (
-            "在当前案件的 InfoUnit 标题和内容中按关键词查找，多个关键词采用 OR 匹配。"
-            "每次围绕一个明确的信息需求查询，避免混合不同主题的关键词。"
-            "返回 ID、标题、类型、子类型、最多120字符的内容摘要、陈述者及截断标记；默认5条、最多8条。"
-            "后端排除当前 materials.info_units 已可见的节点，因上下文省略的材料仍可重新取得。"
-            "取得的内容可用于探索性假设和证据缺口；按需用 get_relations 探索关系或 get_evidence 核对原始来源。"
-            "has_more 仅表示排除后仍有未返回的匹配节点，无需穷尽；仅当仍缺影响当前判断的信息时继续针对性检索。"
+            "按一个具体信息需求搜索当前案件的标题和内容；多关键词为 OR 匹配。"
+            "返回最多120字符的摘要及陈述归属，默认5条、最多8条。"
+            "排除当前可见节点，省略材料可重取；has_more 表示仍有未返回的匹配项。"
         ), {
             "query": {"type": "string", "minLength": 1, "maxLength": tools.MAX_QUERY_CHARS},
             "types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in InfoUnitType]}},
             "limit": limit,
         }),
         _function("get_relations", (
-            "根据已知 InfoUnit ID，获取这些节点在当前案件中的一跳关联关系及相邻 InfoUnit 摘要，"
-            "用于发现相关材料和比较信息之间的联系。节点 ID 可以来自初始上下文或 search_info_units 的检索结果。"
+            "按已知 InfoUnit ID 获取当前案件的一跳关系及相邻节点摘要，保留关系方向。"
         ), {
             "info_unit_ids": ids,
             "relation_types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in RelationType]}},
             "limit": limit,
         }),
         _function("get_evidence", (
-            "根据已知 InfoUnit ID，读取对应来源材料中的原始引用及其文件位置，"
-            "用于按需核对具体措辞、时间、金额、陈述主体和上下文。"
-            "已有 InfoUnit 内容足以形成探索性 Hypothesis 或 Evidence Gap 时可直接提出，无需逐条读取原文。"
-            "Evidence Link 和 Hypothesis Status 需要有效来源引用，可使用初始已提供的 SourceRef 或本工具结果。"
-            "节点 ID 可以来自初始上下文、search_info_units 或 get_relations 的结果。"
+            "按已知 InfoUnit ID 读取缓存来源的原始引用与文件位置，用于核对具体措辞、时间、金额和主体。"
+            "返回的 source_ref_index 可用于证据关联、Gap 回应和假设状态建议。"
         ), {
             "info_unit_ids": ids,
         }),
@@ -691,8 +684,13 @@ async def run_investigation(case: CaseData, goal: str,
                 return stopped("tool_budget_exhausted")
             if len(audit["model_calls"]) >= MAX_MODEL_CALLS:
                 return stopped("model_budget_exhausted")
+            formal = (work_context or {}).get("reasoning", {})
+            targeted = {"propose_hypothesis_status": bool(formal.get("hypotheses")),
+                        "propose_evidence_gap_update": bool(formal.get("gaps")),
+                        "propose_evidence_link": bool(formal.get("hypotheses")) or any(p.kind == "hypothesis" for p in proposals)}
             available = [d for d in tool_definitions() if d["function"]["name"] == "finish_investigation"
                          or (not investigation_closed() and
+                             targeted.get(d["function"]["name"], True) and
                              (d["function"]["name"] not in actions.PROPOSAL_TOOLS or len(proposals) < 6))]
             if investigation_closed() and recovery is None:
                 response = tools._failure(AppError(
