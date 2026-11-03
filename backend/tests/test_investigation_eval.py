@@ -176,6 +176,15 @@ class TestInvestigationEval(unittest.TestCase):
             self.assertNotIn("task_coverage", metrics)
             self.assertNotIn("semantic_completion", metrics)
 
+    def test_runtime_metrics_do_not_impose_a_hypothesis_count(self):
+        for count in (1, 2, 3):
+            result = {"stop_reason": "finish_investigation", "summary_status": "completed",
+                "completion_status": "evidence_insufficient",
+                "proposals": [{"kind": "hypothesis"} for _ in range(count)] + [{"kind": "evidence_gap"}]}
+            metrics, _ = scoring.automatic_metrics({"tool_calls": [], "model_calls": []}, result, 1, {"evidence_groups": []})
+            self.assertEqual(metrics["runtime_finish_validated"], 1)
+            self.assertNotIn("task_coverage", metrics)
+
     def test_metrics_count_errors_finish_failures_no_progress_usage_and_source_scope(self):
         audit = {"stop_reason": "no_progress_limit", "tool_calls": [
             {"name": "get_evidence", "result": {"status": "ok", "items": [{"info_unit_id": "U029", "source_ref_index": 0}]}},

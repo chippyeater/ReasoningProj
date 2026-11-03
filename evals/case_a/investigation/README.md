@@ -18,6 +18,19 @@
 
 当前执行使用独立的 `execution_context.json`（`case-a-task-issues-v2`）作为可追踪运行配置：A1 的 `current_issue/issue_key` 选择已有争点“出租人是否存在实际经济损失”；A2/A3 保持押金工作区。`goal` 保留原始任务，`core_issue` 保留案件整体背景；生产 API 的 current_issue 仍来自用户选中的合法工作区，不按 Goal 猜测替换。原 Dataset、初态、Gold、快照和历史 Trace 不改写。Experiment 元数据记录 execution_context_version/SHA-256；比较新旧运行时须同时比较该上下文配置，不能将其冒充完全相同输入的 Prompt 单变量实验。
 
+## 当前命题语义验收
+
+Hypothesis 按能否被证据支持或反驳评价，不按是否生成两个竞争假设评价。一个有依据的命题和相关事实 Gap 可以充分回应任务；多个命题可以相互独立，也可以竞争，并可共享同一事实问题。重复改写同一命题不增加覆盖度；一个 Proposal 的 rationale 罗列多个解释不等于分别提交了这些命题。Gap 解决与 Hypothesis verified 是不同判断，补证应沿原 Gap 的关联 ID 检查相关命题，不重复创建已有对象。
+
+现有 Dataset 的人工标准与自动访问指标本来没有假设数量门槛，保持其原始字节及历史评分，不重写 Gold、snapshot 或历史运行。当前复核按以上语义解释 task_coverage / gap_handling；自动 runtime_finish_validated 仍仅证明协议交付，不判断命题质量。
+
+不付费的自动化覆盖位于 backend/tests/test_investigation_delivery.py、test_investigation_workflow.py 和 test_investigation_handoff.py。后续真实模型最小验收（本次未执行）：
+
+- 单命题：只需核查实际收款是否减少，允许一个可验证命题与一个 Gap；不为凑数生成反命题。
+- 多命题：检验计租衔接与租金差额这两个不同命题，允许共享收款核查 Gap；若选择竞争解释也按同样规则判断。
+- 补证：已有单命题与 Gap，提交包含来源的收款新材料；复用原 ID，分别建议 Gap 与 Hypothesis 状态，保持人工审核。再以反驳证据检查 refuted，不能因无支持就证伪。
+- 重复：固定 d72e603 的首次 H1 后上下文，只执行下一步，检查是否复用已有命题而继续处理新问题；如需比较 v11/v12，固定材料和目标，少量重复，不把一次采样当作稳定改进。
+
 ## 已初始化的远端对象
 
 - Dataset：`logicweaver/investigation/case-a-v1`
