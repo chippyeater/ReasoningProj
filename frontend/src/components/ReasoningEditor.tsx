@@ -62,7 +62,7 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
       <header className="info-unit-editor-header"><h2>{target.id ? "编辑" : "新建"}{label}</h2><button type="button" disabled={busy} onClick={onClose}>关闭推理编辑器</button></header>
       <div className="info-unit-editor-body reasoning-editor-body">
       <p>当前议题：{issue}</p>
-      {target.kind !== "link" ? <label>{target.kind === "hypothesis" ? "假设内容" : "缺口问题"}
+      {target.kind !== "link" ? <label>{target.kind === "hypothesis" ? "待验证命题" : "待核实的事实问题"}
         <textarea aria-label={target.kind === "hypothesis" ? "假设内容" : "缺口问题"} value={content} maxLength={600} onChange={event => setContent(event.target.value)} /></label> : null}
       {target.kind === "hypothesis" ? <>
         <label>证据判断<select aria-label="证据判断" value={judgment} onChange={event => setJudgment(event.target.value as Judgment)}>
@@ -71,7 +71,7 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
         <label>工作状态<select aria-label="假设工作状态" value={workStatus} onChange={event => setWorkStatus(event.target.value as typeof workStatus)}>
           <option value="active">活跃</option><option value="deprecated">已弃用（可恢复）</option>
         </select></label>
-        <p className="reasoning-caution">缺少支持不等于证伪；找到陈述不等于已核实。判断由你决定。</p>
+        <p className="reasoning-caution">命题应能被证据支持或反驳，无须配对。缺少支持不等于证伪。</p>
         {target.id ? <>
           <button type="button" disabled={busy} onClick={() => onEdit({ kind: "link", hypothesisId: target.id })}>关联已有证据</button>
           <button type="button" disabled={busy} onClick={() => onEdit({ kind: "gap", hypothesisId: target.id })}>添加证据缺口</button>

@@ -61,9 +61,11 @@ export function InvestigationResultPanel({ result, infoUnits, relations, onLocat
     {result.summary_status === "failed" ? <p role="alert">总结未完成，已核查的发现与待确认建议仍可查看。建议尚未采纳。</p>
       : <SummaryMarkdown text={text(result.answer ?? firstFinding?.statement ?? "本轮未形成有依据的调查发现。")} />}
     <aside className="investigation-limit" aria-label="判断范围与限制">
-      <p>依据现有材料整理，材料记载或当事人陈述不等于已被独立核实。</p>
-      {firstFinding && !primarySource ? <p>主要发现尚未取得对应的原文依据。</p> : null}
-      {!result.evidence_refs.length ? <p>本轮尚未提交可定位的原文依据，请继续核查。</p> : null}
+      {result.answer_basis !== "general" && result.answer_basis !== "case_metadata" ? <>
+        <p>材料记载或当事人陈述不等于已被独立核实。</p>
+        {!result.evidence_refs.length ? <p>本轮尚未提交可定位的原文依据。</p>
+          : firstFinding && !primarySource ? <p>主要发现尚未取得对应的原文依据。</p> : null}
+      </> : null}
       {limits.map(limit => <p key={limit.text}>{limit.text}</p>)}
       {result.completion_status === "budget_exhausted" && !limits.length ? <p>部分材料尚未核查，可以继续缩小问题范围。</p> : null}
     </aside>

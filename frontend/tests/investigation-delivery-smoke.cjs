@@ -58,7 +58,7 @@ const api = 'http://127.0.0.1:8018';
     assert.equal(exploration.completion_status, 'evidence_insufficient');
     await page.getByText('查看待确认建议（2）', { exact: true }).click();
     const cards = page.locator('.reasoning-suggestion');
-    assert.equal(await cards.getByText('尚无直接来源依据，待检验；采纳不代表已经证实。', { exact: true }).count(), 2);
+    assert.equal(await cards.locator('summary').filter({ hasText: '未附原文引用' }).count(), 2);
     assert.ok(await cards.nth(1).getByRole('button', { name: '采纳建议', exact: true }).isDisabled());
     await page.screenshot({ path: 'tmp/investigation-delivery-exploratory.png' });
     await cards.nth(0).getByRole('button', { name: '采纳建议', exact: true }).click();
