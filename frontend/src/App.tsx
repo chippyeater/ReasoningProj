@@ -1526,9 +1526,15 @@ export default function App() {
         if (!latest) return;
         const local = latest.data.workspaces[issue];
         const remote = response.workspaces.workspaces[issue];
+        const remoteIds = new Set([...remote.reasoning.hypotheses, ...remote.reasoning.gaps].map(obj => obj.id));
+        const deletedIds = new Set([...local.reasoning.hypotheses, ...local.reasoning.gaps]
+          .filter(obj => !remoteIds.has(obj.id)).map(obj => obj.id));
         const merged = { ...local, reasoning: remote.reasoning, canvas: { ...local.canvas,
-          visible_node_ids: [...new Set([...local.canvas.visible_node_ids, ...remote.canvas.visible_node_ids.filter(id => !previousVisible.has(id))])],
-          node_positions: { ...remote.canvas.node_positions, ...local.canvas.node_positions },
+          visible_node_ids: [...new Set([...local.canvas.visible_node_ids, ...remote.canvas.visible_node_ids.filter(id => !previousVisible.has(id))])].filter(id => !deletedIds.has(id)),
+          selected_node_ids: local.canvas.selected_node_ids.filter(id => !deletedIds.has(id)),
+          focused_node_id: deletedIds.has(local.canvas.focused_node_id ?? "") ? null : local.canvas.focused_node_id,
+          node_positions: Object.fromEntries(Object.entries({ ...remote.canvas.node_positions, ...local.canvas.node_positions }).filter(([id]) => !deletedIds.has(id))),
+          display_levels: Object.fromEntries(Object.entries(local.canvas.display_levels).filter(([id]) => !deletedIds.has(id))),
         } };
         const next = { ...latest, data: { ...latest.data, workspaces: { ...latest.data.workspaces, [issue]: merged } } };
         issueStateRef.current = next; setIssueState(next);
@@ -1544,7 +1550,11 @@ export default function App() {
       });
       if (agentCaseIdRef.current === caseId && issueStateRef.current?.data.active_issue === issue) {
         setReasoningEditor(null);
-        if (edit?.hypothesis || edit?.gap || (proposalIndex !== undefined && result?.proposals?.[proposalIndex]?.kind !== "evidence_link")) {
+        if (edit?.delete_hypothesis_id || edit?.delete_gap_id) {
+          const canvas = issueStateRef.current.data.workspaces[issue].canvas;
+          setSelectedNodeIds(canvas.selected_node_ids); setFocusedNodeId(canvas.focused_node_id);
+          scheduleSelectionSync(canvas.selected_node_ids, canvas.focused_node_id);
+        } else if (edit?.hypothesis || edit?.gap || (proposalIndex !== undefined && result?.proposals?.[proposalIndex]?.kind !== "evidence_link")) {
           setSelectedNodeIds([objectId]); setFocusedNodeId(objectId);
           scheduleSelectionSync([objectId], objectId);
         }

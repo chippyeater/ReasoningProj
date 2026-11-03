@@ -122,6 +122,35 @@ class TestReasoningProposals(TestReasoningWorkspace):
             self.assertEqual(stale.json()["detail"]["code"], "stale_reasoning_proposal")
             self.assertEqual(path.read_bytes(), saved)
 
+    def test_deleted_targets_reject_pending_proposals_and_accepted_objects_do_not_reappear(self):
+        hid = self.hypothesis()
+        gid = self.edit(gap={"content": "待核对收款", "hypothesis_ids": [hid]}).json()["object_id"]
+        update = {"kind": "evidence_gap_update", "gap_id": gid, "addressing_info_unit_ids": ["U029"],
+            "content": None, "hypothesis_ids": [], "meaning": None, "judgment": None, "status": "open",
+            "rationale": "已有材料需要核实", "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}
+        response, _ = self.investigate([update, suggestion("evidence_link", hid)], [gid])
+        self.assertEqual(response.status_code, 200, response.text)
+        run = response.json()["run_id"]
+        self.assertEqual(self.edit(delete_gap_id=gid).status_code, 200)
+        path = case_dir(self.case.case_id) / "issue_workspaces.json"
+        saved = path.read_bytes()
+        self.assertEqual(self.accept(run, 0).status_code, 409)
+        self.assertEqual(self.accept(run, 1).status_code, 409)
+        self.assertEqual(path.read_bytes(), saved)
+        response, _ = self.investigate([suggestion("hypothesis")])
+        self.assertEqual(response.status_code, 200, response.text)
+        run = response.json()["run_id"]
+        accepted = self.accept(run)
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        target = accepted.json()["object_id"]
+        self.assertEqual(self.edit(delete_hypothesis_id=target).status_code, 200)
+        saved = path.read_bytes()
+        retry = self.accept(run)
+        self.assertEqual(retry.status_code, 200, retry.text)
+        self.assertTrue(retry.json()["already_accepted"])
+        self.assertEqual(path.read_bytes(), saved)
+        self.assertNotIn(target, [h.id for h in get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses])
+
     def test_validated_proposals_remain_preview_until_atomic_idempotent_adoption(self):
         hid = self.hypothesis()
         path = case_dir(self.case.case_id) / "issue_workspaces.json"

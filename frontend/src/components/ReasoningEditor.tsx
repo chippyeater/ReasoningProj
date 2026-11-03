@@ -40,6 +40,16 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
     else edit.link = { id: target.id, hypothesis_id: hypothesisId, info_unit_id: infoId, meaning, rationale };
     onSave(edit);
   }
+  function remove() {
+    if (!target.id || target.kind === "link") return;
+    const relatedGaps = state.gaps.filter(item => item.hypothesis_ids.includes(target.id!));
+    const exclusive = relatedGaps.filter(item => item.hypothesis_ids.length === 1).length;
+    const warning = target.kind === "hypothesis"
+      ? `同时移除 ${links.length} 条证据关联和 ${exclusive} 个仅关联此假设的证据缺口；${relatedGaps.length - exclusive} 个共享缺口会保留并解除与此假设的关联。`
+      : "仅删除此缺口，关联假设会保留。";
+    if (!window.confirm(`确认删除${label}“${target.kind === "hypothesis" ? hypothesis?.content : gap?.content}”？\n${warning}\n案件材料和原始来源不会删除。此操作不可撤销。`)) return;
+    onSave({ issue, ...(target.kind === "hypothesis" ? { delete_hypothesis_id: target.id } : { delete_gap_id: target.id }) });
+  }
   const canSave = target.kind === "link" ? Boolean(hypothesisId && infoId && rationale.trim())
     : Boolean(content.trim() && (target.kind !== "gap" || hypothesisIds.length));
   const dirty = target.kind === "hypothesis" ? content !== hypothesis?.content || judgment !== hypothesis?.judgment || workStatus !== hypothesis?.work_status
@@ -111,6 +121,7 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
       {error ? <p role="alert">{error}</p> : null}
       <footer><button type="button" disabled={busy || !canSave} onClick={submit}>{busy ? "保存中…" : "保存推理"}</button>
         {target.id && target.kind !== "link" ? <button type="button" disabled={busy || dirty} title={dirty ? "请先保存修改，再交给 Agent 检查" : undefined} onClick={() => onInvestigate(target.id!, `请检查${target.kind === "gap" ? "证据缺口" : "当前假设"}的支持、反对依据与尚需核实的问题。`)}>请 Agent 检查</button> : null}
+        {target.id && target.kind !== "link" ? <button type="button" className="editor-delete" disabled={busy} onClick={remove}>删除{label}</button> : null}
       </footer>
     </section>
   </div>;

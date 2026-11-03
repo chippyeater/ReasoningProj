@@ -195,3 +195,111 @@ class TestReasoningWorkspace(unittest.TestCase):
         self.assertEqual(state.gaps[0].revision, before.gaps[0].revision + 1)
         self.assertEqual(state.gaps[0].addressing_info_unit_ids, ["U036"])
         self.assertEqual([h.revision for h in state.hypotheses], [h.revision + 1 for h in before.hypotheses])
+
+
+class TestReasoningDeletion(unittest.TestCase):
+    setUp = TestReasoningWorkspace.setUp
+    tearDown = TestReasoningWorkspace.tearDown
+    edit = TestReasoningWorkspace.edit
+    hypothesis = TestReasoningWorkspace.hypothesis
+
+    def workspace(self):
+        return get_issue_workspaces(self.case).workspaces[self.issue]
+
+    def gap(self, hids, content="待核实的共同事实"):
+        result = self.edit(gap={"content": content, "hypothesis_ids": hids,
+                                "basis_info_unit_ids": ["U026"], "status": "resolved"})
+        self.assertEqual(result.status_code, 200, result.text)
+        gid = result.json()["object_id"]
+        self.assertEqual(self.edit(gap={"id": gid, "content": content, "hypothesis_ids": hids,
+                                       "addressing_info_unit_ids": ["U029"]}).status_code, 200)
+        return gid
+
+    def select(self, ids):
+        canvas = self.workspace().canvas.model_dump(mode="json")
+        canvas.update(selected_node_ids=ids, focused_node_id=ids[0])
+        canvas["display_levels"].update({uid: 2 for uid in ids})
+        result = self.client.patch(f"/api/cases/{self.case.case_id}/issue-workspaces",
+                                   json={"issue": self.issue, "canvas": canvas})
+        self.assertEqual(result.status_code, 200, result.text)
+
+    def assert_absent_from_canvas(self, ids):
+        canvas = self.workspace().canvas
+        for uid in ids:
+            self.assertNotIn(uid, canvas.visible_node_ids)
+            self.assertNotIn(uid, canvas.selected_node_ids)
+            self.assertNotIn(uid, canvas.node_positions)
+            self.assertNotIn(uid, canvas.display_levels)
+            self.assertNotEqual(uid, canvas.focused_node_id)
+
+    def test_delete_gap_keeps_hypotheses_evidence_and_other_issue(self):
+        hids = [self.hypothesis(), self.hypothesis("竞争性解释")]
+        gid = self.gap(hids)
+        self.edit(link={"hypothesis_id": hids[0], "info_unit_id": "U029", "rationale": "保留材料关联"})
+        self.select([gid, hids[0]])
+        before = self.workspace().reasoning
+        other = get_issue_workspaces(self.case).workspaces[self.case.core_issue]
+        response = self.edit(delete_gap_id=gid)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["object_id"], gid)
+        state = self.workspace().reasoning
+        self.assertEqual(state.gaps, [])
+        self.assertEqual(state.links, before.links)
+        self.assertEqual([h.id for h in state.hypotheses], hids)
+        self.assertEqual([h.revision for h in state.hypotheses], [h.revision + 1 for h in before.hypotheses])
+        self.assertEqual(get_issue_workspaces(self.case).workspaces[self.case.core_issue], other)
+        self.assert_absent_from_canvas([gid])
+        self.assertIn("U029", self.workspace().canvas.visible_node_ids)
+
+    def test_delete_hypothesis_cleans_exclusive_objects_and_preserves_shared_gaps(self):
+        a, b, c = [self.hypothesis(f"解释{i}") for i in range(3)]
+        exclusive = self.gap([a], "仅属于被删除假设的缺口")
+        shared = [self.gap([a, b], f"共同缺口{i}") for i in range(2)]
+        independent = self.gap([c], "无关缺口")
+        for hid in (a, b):
+            self.edit(link={"hypothesis_id": hid, "info_unit_id": "U029", "rationale": "保留来源"})
+        self.select([a, exclusive, shared[0]])
+        before = self.workspace().reasoning
+        response = self.edit(delete_hypothesis_id=a)
+        self.assertEqual(response.status_code, 200, response.text)
+        state = self.workspace().reasoning
+        self.assertEqual([h.id for h in state.hypotheses], [b, c])
+        self.assertEqual([link.hypothesis_id for link in state.links], [b])
+        self.assertNotIn(exclusive, [g.id for g in state.gaps])
+        for gap in state.gaps:
+            old = next(g for g in before.gaps if g.id == gap.id)
+            if gap.id == independent:
+                self.assertEqual(gap, old)
+            else:
+                self.assertEqual(gap.hypothesis_ids, [b])
+                self.assertEqual(gap.revision, old.revision + 1)
+                self.assertEqual(gap.last_edited_by, "user")
+                self.assertNotEqual(gap.updated_at, old.updated_at)
+                for field in ("id", "content", "basis_info_unit_ids", "addressing_info_unit_ids", "status", "proposal_key"):
+                    self.assertEqual(getattr(gap, field), getattr(old, field))
+        self.assertEqual(state.hypotheses[0].revision, before.hypotheses[1].revision + 1)
+        self.assertEqual(state.hypotheses[1], before.hypotheses[2])
+        self.assert_absent_from_canvas([a, exclusive])
+        self.assertEqual(self.workspace().canvas.selected_node_ids, [shared[0]])
+
+    def test_invalid_deletions_and_save_failure_do_not_write_partial_data(self):
+        hid = self.hypothesis()
+        gid = self.gap([hid])
+        path = case_dir(self.case.case_id) / "issue_workspaces.json"
+        before = path.read_bytes()
+        for payload in ({"delete_hypothesis_id": "foreign"}, {"delete_gap_id": "foreign"},
+                        {"delete_hypothesis_id": gid}, {"delete_gap_id": hid},
+                        {"delete_gap_id": gid, "delete_hypothesis_id": hid}):
+            self.assertGreaterEqual(self.edit(**payload).status_code, 400)
+            self.assertEqual(path.read_bytes(), before)
+        response = self.client.patch(self.url, json={"issue": self.case.core_issue, "delete_hypothesis_id": hid})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(path.read_bytes(), before)
+        for payload in ({"delete_gap_id": gid}, {"delete_hypothesis_id": hid}):
+            with patch("app.issue_workspaces.write_json", side_effect=OSError("disk full")):
+                self.assertEqual(self.edit(**payload).status_code, 500)
+            self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.edit(delete_hypothesis_id=hid).status_code, 200)
+        after = path.read_bytes()
+        self.assertEqual(self.edit(delete_hypothesis_id=hid).status_code, 404)
+        self.assertEqual(path.read_bytes(), after)

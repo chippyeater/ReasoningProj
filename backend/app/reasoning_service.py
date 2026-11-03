@@ -19,7 +19,45 @@ def edit_reasoning(case: CaseData, edit: ReasoningEdit, *, proposal_key: str | N
     now = datetime.now(timezone.utc).isoformat()
     collection, obj = None, None
     draft = edit.hypothesis or edit.gap or edit.link
-    if edit.unlink_id:
+    deleted_id = edit.delete_hypothesis_id or edit.delete_gap_id
+    if deleted_id:
+        collection = state.hypotheses if edit.delete_hypothesis_id else state.gaps
+        existing = next((obj for obj in collection if obj.id == deleted_id), None)
+        if existing is None:
+            raise AppError("unknown_reasoning_object", "Reasoning object is outside the current Issue", 404)
+        deleted_ids = {deleted_id}
+        affected = set()
+        if edit.delete_hypothesis_id:
+            # Shared Gaps survive; only Gaps left without a Hypothesis are deleted.
+            for gap in list(state.gaps):
+                if deleted_id not in gap.hypothesis_ids:
+                    continue
+                gap.hypothesis_ids = [hid for hid in gap.hypothesis_ids if hid != deleted_id]
+                if not gap.hypothesis_ids:
+                    state.gaps.remove(gap)
+                    deleted_ids.add(gap.id)
+                else:
+                    gap.revision += 1
+                    gap.updated_at, gap.last_edited_by = now, editor
+                    affected.update(gap.hypothesis_ids)
+            state.links = [link for link in state.links if link.hypothesis_id != deleted_id]
+        else:
+            affected.update(existing.hypothesis_ids)
+        collection.remove(existing)
+        for target in state.hypotheses:
+            if target.id in affected:
+                target.revision += 1
+                target.updated_at, target.last_edited_by = now, editor
+        canvas = workspace.canvas
+        canvas.visible_node_ids = [uid for uid in canvas.visible_node_ids if uid not in deleted_ids]
+        canvas.selected_node_ids = [uid for uid in canvas.selected_node_ids if uid not in deleted_ids]
+        if canvas.focused_node_id in deleted_ids:
+            canvas.focused_node_id = None
+        for uid in deleted_ids:
+            canvas.node_positions.pop(uid, None)
+            canvas.display_levels.pop(uid, None)
+        # Keep adoption receipts so retrying an accepted Proposal cannot recreate it.
+    elif edit.unlink_id:
         existing = next((link for link in state.links if link.id == edit.unlink_id), None)
         if existing is None:
             raise AppError("unknown_reasoning_link", "Evidence link no longer exists", 404)
@@ -101,4 +139,4 @@ def edit_reasoning(case: CaseData, edit: ReasoningEdit, *, proposal_key: str | N
     current.active_issue = edit.issue
     if persist:
         persist_issue_workspaces(case, current)
-    return current, obj.id if obj else edit.unlink_id
+    return current, deleted_id or (obj.id if obj else edit.unlink_id)

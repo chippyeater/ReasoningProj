@@ -397,7 +397,7 @@ export type ReasoningEdit = { issue: string; hypothesis?: { id?: string; content
   gap?: { id?: string; content: string; hypothesis_ids: string[]; basis_info_unit_ids?: string[];
     addressing_info_unit_ids?: string[]; remove_addressing_info_unit_ids?: string[]; status?: "open" | "resolved" };
   link?: { id?: string; hypothesis_id: string; info_unit_id: string; meaning: LinkMeaning; rationale: string };
-  unlink_id?: string; position?: CardPosition };
+  unlink_id?: string; delete_hypothesis_id?: string; delete_gap_id?: string; position?: CardPosition };
 export type IssueCanvas = V03WorkspaceState & { visible_node_ids: string[] };
 export type IssueWorkspaces = {
   active_issue: string | null;

@@ -115,11 +115,14 @@ class ReasoningEdit(ContractModel):
     gap: GapEdit | None = None
     link: LinkEdit | None = None
     unlink_id: Text | None = None
+    delete_hypothesis_id: Text | None = None
+    delete_gap_id: Text | None = None
     position: Point | None = None
 
     @model_validator(mode="after")
     def single_operation(self):
-        if sum(value is not None for value in (self.hypothesis, self.gap, self.link, self.unlink_id)) != 1:
+        if sum(value is not None for value in (self.hypothesis, self.gap, self.link, self.unlink_id,
+                                               self.delete_hypothesis_id, self.delete_gap_id)) != 1:
             raise ValueError("Exactly one reasoning edit is required")
         return self
 
