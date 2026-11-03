@@ -59,7 +59,8 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
       || addressingIds.some(id => !gap?.addressing_info_unit_ids.includes(id)) : false;
   return <div className="info-unit-editor-backdrop" onMouseDown={event => event.stopPropagation()}>
     <section className="info-unit-editor reasoning-editor" role="dialog" aria-modal="true" aria-label={`${target.id ? "编辑" : "新建"}${label}`}>
-      <header><h2>{target.id ? "编辑" : "新建"}{label}</h2><button type="button" disabled={busy} onClick={onClose}>关闭推理编辑器</button></header>
+      <header className="info-unit-editor-header"><h2>{target.id ? "编辑" : "新建"}{label}</h2><button type="button" disabled={busy} onClick={onClose}>关闭推理编辑器</button></header>
+      <div className="info-unit-editor-body reasoning-editor-body">
       <p>当前议题：{issue}</p>
       {target.kind !== "link" ? <label>{target.kind === "hypothesis" ? "假设内容" : "缺口问题"}
         <textarea aria-label={target.kind === "hypothesis" ? "假设内容" : "缺口问题"} value={content} maxLength={600} onChange={event => setContent(event.target.value)} /></label> : null}
@@ -118,8 +119,9 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
         </article>)}</details>
         {target.id ? <button type="button" disabled={busy} onClick={() => onSave({ issue, unlink_id: target.id })}>解除关联</button> : null}
       </> : null}
-      {error ? <p role="alert">{error}</p> : null}
-      <footer><button type="button" disabled={busy || !canSave} onClick={submit}>{busy ? "保存中…" : "保存推理"}</button>
+      </div>
+      {error ? <p className="info-unit-editor-error" role="alert">{error}</p> : null}
+      <footer className="info-unit-editor-actions"><button type="button" disabled={busy || !canSave} onClick={submit}>{busy ? "保存中…" : "保存推理"}</button>
         {target.id && target.kind !== "link" ? <button type="button" disabled={busy || dirty} title={dirty ? "请先保存修改，再交给 Agent 检查" : undefined} onClick={() => onInvestigate(target.id!, `请检查${target.kind === "gap" ? "证据缺口" : "当前假设"}的支持、反对依据与尚需核实的问题。`)}>请 Agent 检查</button> : null}
         {target.id && target.kind !== "link" ? <button type="button" className="editor-delete" disabled={busy} onClick={remove}>删除{label}</button> : null}
       </footer>

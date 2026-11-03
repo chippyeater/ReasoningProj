@@ -2500,7 +2500,10 @@ button,
 .reasoning-candidate p { margin: 10px 0; line-height: 1.6; overflow-wrap: anywhere; }
 .reasoning-candidate span { font-size: 12px; margin-right: 8px; }
 .reasoning-candidate button { margin: 3px; }
-.reasoning-editor { width: min(680px, calc(100vw - 48px)); display: flex; flex-direction: column; gap: 14px; }
+.reasoning-editor { width: min(680px, calc(100vw - 48px)); }
+.reasoning-editor-body { display: flex; flex-direction: column; gap: 14px; overflow-y: scroll; scrollbar-gutter: stable; }
+.reasoning-editor-body > * { flex-shrink: 0; }
+.reasoning-editor header, .reasoning-editor footer, .reasoning-editor > .info-unit-editor-error { flex-shrink: 0; }
 .reasoning-editor label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .reasoning-editor input[type=checkbox] { width: auto; }
 .reasoning-editor fieldset label, .reasoning-editor details label { flex-direction: row; align-items: center; margin: 8px 0; }
