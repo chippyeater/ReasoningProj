@@ -15,7 +15,6 @@ class TestInvestigationMemory(unittest.TestCase):
     def initial(self):
         return {"goal": "比较租金损失的不同解释", "core_issue": self.case.core_issue,
                 "case_info_directory": state.case_info_directory(self.case), "selected_info_units": [],
-                "evidence_context": {"items": []},
                 "work_context": {"current_issue": self.case.issue_set[1], "reasoning": {
                     "hypotheses": [{"id": "h1", "content": "原有解释", "judgment": "unverified",
                         "work_status": "deprecated", "revision": 7, "updated_at": "audit-only"}],

@@ -22,8 +22,14 @@ async def model(config, messages, definitions, schema=None, **kwargs):
     state = json.loads(messages[1]["content"])
     goal, proposals = state["goal"], state["proposals"]
     if "补充合同对已有缺口" in goal:
-        uid = state["recent_extraction"]["info_unit_ids"][0]
-        ref = next(ref for ref in state["materials"]["source_refs"]["items"] if ref["info_unit_id"] == uid)
+        units = state["materials"]["info_units"]["items"]
+        if not units:
+            return replies.tool("search_info_units", {"query": "合同", "limit": 1}, "contract-search")
+        uid = units[0]["id"]
+        refs = [ref for ref in state["materials"]["source_refs"]["items"] if ref["info_unit_id"] == uid]
+        if not refs:
+            return replies.tool("get_evidence", {"info_unit_ids": [uid]}, "contract-source")
+        ref = refs[0]
         if not proposals:
             return replies.tool("propose_evidence_gap_update", {
                 "gap_id": state["reasoning"]["gaps"][0]["id"], "addressing_info_unit_ids": [uid], "status": "open",

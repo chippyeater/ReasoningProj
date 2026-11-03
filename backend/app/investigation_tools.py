@@ -7,11 +7,12 @@ docs/investigation_tools.md for the response contract and retrieval rules.
 from __future__ import annotations
 
 import re
+import json
 import unicodedata
 
-from app.case_store import read_parsed_document
+from app.case_store import artifact_path, read_parsed_document
 from app.errors import AppError
-from app.schemas import CaseData, InfoUnit, InfoUnitType, RelationType
+from app.schemas import CaseData, InfoUnit, InfoUnitType, ParseStatus, PipelineStage, RelationType, RunStatus
 
 
 DEFAULT_LIMIT = 5
@@ -21,59 +22,26 @@ SUMMARY_CHARS = 120
 MAX_QUERY_CHARS = 200
 MAX_EVIDENCE_REFS = 8
 MAX_EVIDENCE_CHARS = 4000
-INITIAL_EVIDENCE_REFS = 8
-INITIAL_EXCERPT_CHARS = 160
 
 
-def initial_evidence_context(case: CaseData, info_unit_ids: list[str], *, preferred_source_refs: list[dict] | None = None) -> dict:
-    """Server-prepared, verified source excerpts; reuse the exact cached-TXT reader.
-
-    At most one SourceRef per supplied node, eight total and 1280 excerpt chars.
-    Omitted or invalid sources never grant citation permission. No file parsing.
-    """
-    items, errors = [], []
-    has_more = False
-    preferred = {ref["info_unit_id"]: ref["source_ref_index"] for ref in preferred_source_refs or []}
-    units, files = {u.id: u for u in case.info_units}, {f.file_id: f for f in case.files}
-    for uid in dict.fromkeys(info_unit_ids):
-        if len(items) == INITIAL_EVIDENCE_REFS:
-            has_more = True
-            break
-        if uid in preferred:
-            # Select one current-batch source directly, even if older references
-            # fill get_evidence's first bounded page. The tool contract is unchanged.
-            index = preferred[uid]
-            try:
-                ref = units[uid].source_refs[index]
-                file = files[ref.file_id]
-                text = read_parsed_document(case.case_id, file).text
-                if (ref.source_kind != file.source_kind or ref.end > len(text) or text[ref.start:ref.end] != ref.quote):
-                    raise AppError("source_quote_mismatch", "SourceRef differs from the cached TXT")
-                if len(ref.quote) > MAX_EVIDENCE_CHARS:
-                    raise AppError("evidence_budget_exceeded", "SourceRef exceeds the existing evidence budget")
-                response = _result([{"info_unit_id": uid, "source_ref_index": index,
-                                     "source_ref": ref.model_dump(mode="json")}], has_more=len(units[uid].source_refs) > 1)
-            except (KeyError, IndexError, AppError) as exc:
-                error = exc if isinstance(exc, AppError) else AppError("invalid_source_ref", "Unknown current-batch source pointer")
-                response = _failure(error, status="error")
-        else:
-            response = get_evidence(case, [uid])
-        if response["status"] in {"error", "invalid_request"}:
-            errors.append({"info_unit_id": uid, **response["error"]})
-            continue
-        if not response["items"]:
-            continue
-        item = response["items"][0]
-        ref = item["source_ref"]
-        excerpt = ref["quote"][:INITIAL_EXCERPT_CHARS]
-        items.append({"info_unit_id": uid, "source_ref_index": item["source_ref_index"],
-            **{key: ref[key] for key in ("file_id", "start", "end", "source_kind")},
-            "filename": next(f.filename for f in case.files if f.file_id == ref["file_id"]),
-            "quote_excerpt": excerpt, "excerpt_start": ref["start"], "excerpt_end": ref["start"] + len(excerpt),
-            "quote_truncated": len(excerpt) < len(ref["quote"]), "verified_against_cached_text": True})
-        has_more = has_more or response["has_more"] or len(response["items"]) > 1
-    return {"items": items, "errors": errors, "has_more": has_more,
-            "scope": "Verified source locations and excerpts only; not independent proof. Use get_evidence for complete wording or omitted sources."}
+def recent_extraction_files(case: CaseData) -> set[str]:
+    """Backend-only retrieval priority from the latest committed Extraction."""
+    run = next((run for run in reversed(case.stage_runs)
+                if run.stage == PipelineStage.extraction and run.status == RunStatus.success), None)
+    if run is None:
+        return set()
+    try:
+        snapshot = json.loads(artifact_path(case.case_id, run.input_snapshot_path).read_text(encoding="utf-8"))
+        if snapshot.get("operation") == "historical_baseline":
+            return set()
+        ids = snapshot["selected_file_ids"]
+        parsed = {file.file_id for file in case.files if file.parse_status == ParseStatus.parsed}
+        if (not isinstance(ids, list) or not ids or any(not isinstance(fid, str) or fid not in parsed for fid in ids)
+                or len(ids) != len(set(ids))):
+            raise ValueError("Invalid committed file scope")
+        return set(ids)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, AppError) as exc:
+        raise AppError("extraction_scope_unavailable", "Latest committed Extraction scope cannot be read; retrieval priority cannot be established") from exc
 
 
 def _result(items: list[dict], *, has_more: bool = False) -> dict:
@@ -150,8 +118,8 @@ def search_info_units(case: CaseData, query: str, types: list[str] | None = None
                       limit: int = DEFAULT_LIMIT, *, exclude_info_unit_ids: set[str] | frozenset[str] = frozenset()) -> dict:
     """Search title/content; caller-only exclusions precede ranking and limiting.
 
-    The Agent supplies currently visible InfoUnit IDs, not all previously seen
-    IDs. This internal argument is never part of the model's tool schema.
+    Exclusions are current working-memory IDs, never Canvas visibility. Recent
+    Extraction sources prioritize matching nodes, including existing node IDs.
     """
     try:
         _check_limit(limit)
@@ -161,6 +129,7 @@ def search_info_units(case: CaseData, query: str, types: list[str] | None = None
         terms = list(dict.fromkeys(re.findall(r"\w+", _normalized(query))))
         if not terms:
             raise AppError("invalid_query", "query must contain at least one keyword")
+        recent_files = recent_extraction_files(case)
     except AppError as exc:
         return _failure(exc)
 
@@ -169,9 +138,10 @@ def search_info_units(case: CaseData, query: str, types: list[str] | None = None
         if unit.id not in exclude_info_unit_ids and unit.type.value in allowed:
             coverage, weighted = _keyword_score(unit, terms)
             if coverage:
-                ranked.append((-coverage, -weighted, unit.id, unit))
-    ranked.sort(key=lambda item: item[:3])
-    return _result([_summary(item[3]) for item in ranked[:limit]], has_more=len(ranked) > limit)
+                recent = any(ref.file_id in recent_files for ref in unit.source_refs)
+                ranked.append((not recent, -coverage, -weighted, unit.id, unit))
+    ranked.sort(key=lambda item: item[:4])
+    return _result([_summary(item[4]) for item in ranked[:limit]], has_more=len(ranked) > limit)
 
 
 def get_relations(case: CaseData, info_unit_ids: list[str],
@@ -223,6 +193,7 @@ def get_evidence(case: CaseData, info_unit_ids: list[str]) -> dict:
     """
     try:
         units = _selected_units(case, info_unit_ids)
+        recent_files = recent_extraction_files(case)
     except AppError as exc:
         return _failure(exc)
 
@@ -232,7 +203,9 @@ def get_evidence(case: CaseData, info_unit_ids: list[str]) -> dict:
     quote_chars = 0
     try:
         for unit in units:
-            for index, ref in enumerate(unit.source_refs):
+            # Keep domain indices stable while making a newly appended source
+            # reachable within the existing bounded response, only when read.
+            for index, ref in sorted(enumerate(unit.source_refs), key=lambda item: item[1].file_id not in recent_files):
                 if len(items) == MAX_EVIDENCE_REFS:
                     return _result(items, has_more=True)
                 if len(ref.quote) > MAX_EVIDENCE_CHARS:

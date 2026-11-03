@@ -65,7 +65,8 @@ class TestInvestigationFindingSources(unittest.TestCase):
                     reads = [f.tool("get_evidence", {"info_unit_ids": [f"budget-{i}"]}, f"read-{i}") for i in range(8)]
                 else:
                     uid, selected = "U029", ["U029"]
-                    reads = [f.tool("search_info_units", {"query": f"不存在凭证{i}"}, f"read-{i}") for i in range(3)]
+                    reads = [f.tool("get_evidence", {"info_unit_ids": [uid]}, "source")] + [
+                        f.tool("search_info_units", {"query": f"不存在凭证{i}"}, f"read-{i}") for i in range(3)]
                 def respond(call, turn):
                     if turn <= len(reads):
                         return reads[turn - 1]
@@ -76,7 +77,7 @@ class TestInvestigationFindingSources(unittest.TestCase):
                     recovery = self.check_sources(state, case)
                     self.assertEqual(recovery["constraints"]["allowed_tools"], ["finish_investigation"])
                     if reason == "no_progress":
-                        self.assertEqual(recovery["validation_details"]["errors"][0]["obtained_source_ref_indices"], [0])
+                        self.assertEqual(recovery["validation_details"]["errors"][0]["obtained_source_ref_indices"], [0, 1])
                         self.assertGreater(len(next(u for u in case.info_units if u.id == uid).source_refs), 1)
                     refs = [(ref["info_unit_id"], ref["source_ref_index"]) for ref in recovery["next_action"]["steps"][0]["evidence_refs"]]
                     return f.finish("核对", [uid], refs=refs, status="budget_exhausted" if reason == "budget" else "completed")

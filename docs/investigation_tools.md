@@ -35,12 +35,12 @@ sources = get_evidence(case, info_unit_ids=["U029", "U036"])
 - 查询限 1–200 字符。检索只检查标题与内容，不检查原文、争点集合或全案元数据。先 NFKC 归一化并忽略大小写，再以标点/空白切分字词；连续中文作为字面子串匹配，无中文分词、语义扩展或通配符。多个关键词按 OR 匹配，重复词不加权。
 - Agent 调用搜索时，后端从本次模型请求的 `materials.info_units.items` 提取 ID，经内部关键字参数 `exclude_info_unit_ids` 排除这些节点，过滤先于评分、排序和 limit 截取；模型工具 Schema 不包含该参数。独立 Python 调用默认不排除节点。排除集不使用全部历史 seen ID，因上下文截断而不可见的旧节点仍可取得。缓存键也包含当前排除集，不能用不同可见范围下的旧搜索结果直接响应。
 - 搜索的 `has_more` 只表示过滤后匹配节点数量超过本次 limit；返回 empty 可能只是匹配节点已可见。它不是穷尽全案的要求。每次围绕一个具体信息需求查询，只有仍缺影响当前判断的信息时才继续有针对性地检索。
-- 排序先按命中的不同关键词数量降序，再按标题命中权重 3、内容命中权重 1 降序，最后按原始 ID 升序。独立的 `_keyword_score` 函数可替换并有离线测试。排序不表示事实可信度。
+- 对已匹配的节点，优先返回最近成功提交的 Extraction 批次所涉及的节点（按 SourceRef.file_id 识别，包括旧节点的新来源），再按命中的不同关键词数量降序、标题命中权重 3/内容命中权重 1 降序、原始 ID 升序。批次识别只在后端读取时使用，不注入首轮材料或来源；快照无效时明确返回 extraction_scope_unavailable。排序不表示事实可信度。
 - 关系按原始关系 ID 升序返回，每条只出现一次，保留原始 ID、source/target 方向、类型和 certainty。rationale 限 120 字符，evidence_unit_ids 限 8 个并单独标记截断；相邻节点仅包含已返回边的外部端点摘要。actor/target 字段不派生为关系，支持/矛盾关系也不自动反向或递归展开。
-- 证据按请求节点顺序及各节点原有 SourceRef 顺序返回，保留 `file_id/source_kind/quote/start/end`。偏移是缓存 TXT 中 Unicode 字符的左闭右开区间 `[start,end)`，不使用字节或 UTF-16 偏移。
+- 证据按请求节点顺序返回；节点内先返回最新成功批次的来源，其余来源保持原序。保留原始 `source_ref_index` 和 `file_id/source_kind/quote/start/end`，不重排持久化数组。偏移是缓存 TXT 中 Unicode 字符的左闭右开区间 `[start,end)`，不使用字节或 UTF-16 偏移。
 - 仅使用已有 `read_parsed_document` 读取实际返回引用所在的缓存 TXT，每个相关文件每次最多读取一次，逐条验证精确切片；不读取原始文件，不重解析，不读取无关缓存，不把整文件放入返回结果。即使 quote 已存在于 SourceRef，缓存缺失或切片不符仍明确报错。
 - 引用条数或总长度预算耗尽时，仅返回能完整容纳的前缀，标记 `truncated`。单条引用超过 4000 字符时报 `error/evidence_budget_exceeded`，不会伪造短引文或偏移。
-- 已取得的 InfoUnit 内容可用于探索性 Hypothesis 和 Evidence Gap，来源定位不等于事实证实。仅在需要核对精确措辞、时间、金额、陈述主体或上下文时读取原始 SourceRef；不要求每个节点都读原文。Evidence Link 和 Hypothesis Status 仍须有合法且已取得的来源引用，初始已核验的 SourceRef 继续有效。
+- 已取得的 InfoUnit 内容可用于探索性 Hypothesis 和 Evidence Gap，来源定位不等于事实证实。仅在需要核对精确措辞、时间、金额、陈述主体或上下文时读取原始 SourceRef；不要求每个节点都读原文。Evidence Link 和 Hypothesis Status 仍须有合法且已取得的来源引用。首轮不再隐式核验或提供来源。
 
 ## 离线验收与阶段局限
 

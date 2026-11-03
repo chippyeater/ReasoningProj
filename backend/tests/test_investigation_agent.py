@@ -101,12 +101,14 @@ class TestInvestigationAgent(unittest.TestCase):
             state = json.loads(call["messages"][1]["content"])
             self.assertFalse({"activities", "phase", "remaining_budget", "question_state", "tool_policy"} & state.keys())
 
-    def test_selected_material_and_sources_are_usable_on_first_turn(self):
-        result, calls = self.run_script("核对陈述", [finish("核对陈述", ["U029"], refs=[("U029", 0)])], selected=["U029"])
+    def test_selected_summary_requires_an_actual_read_before_using_sources(self):
+        result, calls = self.run_script("核对陈述", [tool("get_evidence", {"info_unit_ids": ["U029"]}),
+            finish("核对陈述", ["U029"], refs=[("U029", 0)])], selected=["U029"])
         state = json.loads(calls[0]["messages"][1]["content"])
         self.assertEqual(state["materials"]["info_units"]["items"][0]["id"], "U029")
-        self.assertTrue(state["materials"]["source_refs"]["items"][0]["verified_against_cached_text"])
-        self.assertEqual(result["tool_budget_used"]["read"], 0)
+        self.assertEqual(state["materials"]["source_refs"]["items"], [])
+        self.assertEqual(state["materials"]["info_units"]["items"][0]["obtained_source_ref_indices"], [])
+        self.assertEqual(result["tool_budget_used"]["read"], 1)
 
     def test_capabilities_and_metadata_complete_without_artifacts_or_reads(self):
         for goal, answer, basis in (("你能做什么", "我可以检索案件、核对来源并提出待确认建议。", "general"),
@@ -328,14 +330,18 @@ class TestInvestigationAgent(unittest.TestCase):
         self.assertEqual(result["proposals"], [])
         self.assertEqual(result["completion_status"], "completed")
 
-    def test_initial_source_failure_is_visible_and_does_not_grant_source(self):
+    def test_selected_source_is_not_implicitly_read_and_explicit_failure_grants_no_source(self):
         case = self.case.model_copy(deep=True)
         next(u for u in case.info_units if u.id == "U029").source_refs[0].quote += "错误转写"
-        result, calls = self.run_script("核对陈述", [finish("核对陈述", ["U029"], refs=[("U029", 0)], call_id="bad"),
+        result, calls = self.run_script("核对陈述", [tool("get_evidence", {"info_unit_ids": ["U029"]}),
+            finish("核对陈述", ["U029"], refs=[("U029", 0)], call_id="bad"),
             finish("核对陈述", status="evidence_insufficient", questions=["初始来源未通过核验，尚不能核对原句。"] )], selected=["U029"], case=case)
         state = json.loads(calls[0]["messages"][1]["content"])
         self.assertEqual(state["materials"]["source_refs"]["items"], [])
-        self.assertTrue(state["notices"][0]["errors"])
+        self.assertEqual(state["notices"], [])
+        state = json.loads(calls[1]["messages"][1]["content"])
+        self.assertEqual(state["notices"][0]["error"]["code"], "source_quote_mismatch")
+        self.assertEqual(state["materials"]["source_refs"]["items"], [])
         self.assertEqual(result["evidence_refs"], [])
 
     def test_relation_basis_ids_do_not_grant_unretrieved_unit_permission(self):

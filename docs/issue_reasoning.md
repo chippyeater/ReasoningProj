@@ -29,7 +29,7 @@
 
 ## Agent 边界
 
-新建议只由五个独立 Proposal 工具产生，工具名决定种类；最终回复不携带建议 JSON。成功工具返回随机临时 proposal_id，并立即持久化至本次运行审计。kind 继续用于既有存储和 UI。新假设采纳后仍为未证实、活跃；引用可使用已核验的首轮来源或本轮 get_evidence 返回结果。探索性假设/新缺口允许空材料和空引用，界面明确提示尚无直接来源依据；证据关联、判断调整与已有缺口更新必须有可追溯材料。空列表不取消同轮依赖审批或目标版本检查。
+新建议只由五个独立 Proposal 工具产生，工具名决定种类；最终回复不携带建议 JSON。成功工具返回随机临时 proposal_id，并立即持久化至本次运行审计。kind 继续用于既有存储和 UI。新假设采纳后仍为未证实、活跃；引用仅使用本轮实际调用 get_evidence 取得的来源。探索性假设/新缺口允许空材料和空引用，界面明确提示尚无直接来源依据；证据关联、判断调整与已有缺口更新必须有可追溯材料。空列表不取消同轮依赖审批或目标版本检查。
 
 补充证据通过 `propose_evidence_gap_update` 生成 `kind=evidence_gap_update` 建议，包含 `gap_id/addressing_info_unit_ids/status/rationale/evidence_refs`。它不接受新问题或假设关联，采纳时从原 Gap 读取这些字段；审计凭据 `target_gap_revisions` 绑定生成时的目标修订，Gap 或回应材料变化时返回 `stale_reasoning_proposal`。原回应材料与新增 ID 并集合并，部分回应由 Agent 建议保持 open，用户逐项采纳后才保存。重复采纳返回原对象，不重复登记或递增修订；Hypothesis 判断继续由独立工具建议。预览明确显示“更新已有缺口”、原问题、建议状态和回应材料，避免与创建新 Gap 混淆。
 

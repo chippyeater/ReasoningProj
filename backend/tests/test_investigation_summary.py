@@ -53,17 +53,19 @@ class TestSummaryHandoff(unittest.TestCase):
     audits = fixture.TestInvestigationAgent.audits
 
     def test_rejected_answer_is_recoverable_finish_error_without_partial_findings(self):
-        result, calls = self.run_script("核对", [fixture.finish("核对", ["U029"], refs=[("U029", 0)], answer="字"*(agent.MAX_SUMMARY_CHARACTERS + 1), call_id="bad"),
+        result, calls = self.run_script("核对", [fixture.tool("get_evidence", {"info_unit_ids": ["U029"]}),
+            fixture.finish("核对", ["U029"], refs=[("U029", 0)], answer="字"*(agent.MAX_SUMMARY_CHARACTERS + 1), call_id="bad"),
             fixture.finish("核对", ["U029"], refs=[("U029", 0)], answer="陈述仍需核实。")], selected=["U029"])
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
         self.assertEqual(result["answer"], "陈述仍需核实。")
-        error = json.loads(calls[1]["messages"][1]["content"])["recovery"]
+        error = json.loads(calls[2]["messages"][1]["content"])["recovery"]
         self.assertEqual(error["validation_details"]["errors"][0]["code"], "summary_too_long")
-        self.assertEqual(self.audits()[0]["tool_calls"][0]["result"]["status"], "invalid_request")
+        self.assertEqual(self.audits()[0]["tool_calls"][1]["result"]["status"], "invalid_request")
 
     def test_successful_proposals_survive_model_failure_before_finish(self):
         from app import llm_client
-        result, _ = self.run_script("查损失", [proposal_call(suggestion("hypothesis"), [], "h"),
+        result, _ = self.run_script("查损失", [fixture.tool("get_evidence", {"info_unit_ids": ["U029"]}),
+            proposal_call(suggestion("hypothesis"), [], "h"),
             llm_client.LLMFailure("llm_timeout", "mock timeout")], selected=["U029"],
             work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])
         self.assertEqual(result["summary_status"], "failed")

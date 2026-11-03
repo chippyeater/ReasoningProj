@@ -68,6 +68,10 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             state = json.loads(messages[1]["content"])
             requests.append(state)
             if len(requests) == 1:
+                return replies.tool("search_info_units", {"query": "合同 租赁", "limit": 1}, "search")
+            if len(requests) == 2:
+                return replies.tool("get_evidence", {"info_unit_ids": [state["materials"]["info_units"]["items"][0]["id"]]}, "read")
+            if len(requests) == 3:
                 return replies.tool("propose_evidence_gap_update", args)
             return replies.finish("检查新合同对已有缺口的回应", [self.uid], refs=[(self.uid, self.source_index)],
                                   statement="新合同只载明约定，实际履行仍待核实。", status="evidence_insufficient",
@@ -77,7 +81,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             response = self.client.post(f"/api/cases/{self.cid}/agent/run", json={
                 "goal": "检查新合同对已有缺口的回应", "current_issue": self.issue, "selected_reasoning_ids": [self.gid]})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(len(requests), 2, response.text)
+        self.assertEqual(len(requests), 4, response.text)
         return response.json(), requests
 
     def accept(self, result, **changes):
@@ -91,13 +95,13 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         result, requests = self.investigate()
         self.assertEqual(path.read_bytes(), before)  # Context/Proposal generation leaves Canvas and reasoning alone.
         self.assertEqual(self.state().gaps[0], self.original_gap)
-        batch = requests[0]["recent_extraction"]
-        self.assertEqual(batch["run_id"], self.run.id)
-        self.assertEqual(batch["selected_file_ids"], [self.fid])
-        self.assertIn(self.uid, batch["info_unit_ids"])
-        self.assertIn(self.uid, [u["id"] for u in requests[0]["materials"]["info_units"]["items"]])
-        self.assertTrue(any(ref["info_unit_id"] == self.uid and ref["file_id"] == self.fid
-                            for ref in requests[0]["materials"]["source_refs"]["items"]))
+        self.assertNotIn("recent_extraction", requests[0])
+        self.assertEqual(requests[0]["materials"]["info_units"]["items"], [])
+        self.assertEqual(requests[0]["materials"]["source_refs"]["items"], [])
+        self.assertIn(self.uid, [u["id"] for u in requests[1]["materials"]["info_units"]["items"]])
+        self.assertEqual(requests[1]["materials"]["source_refs"]["items"], [])
+        self.assertTrue(any(ref["info_unit_id"] == self.uid and ref["source_ref"]["file_id"] == self.fid
+                            for ref in requests[2]["materials"]["source_refs"]["items"]))
         self.assertEqual(requests[0]["reasoning"]["gaps"][0]["hypothesis_ids"], self.hids)
         self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update"])
         self.assertEqual(result["proposals"][0]["gap_id"], self.gid)
@@ -127,13 +131,11 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual(self.source_index, 9)
         self.assertEqual(len(self.case.info_units), 1)
         self.assertIsNone(self.case.info_units[0].related_issue)
-        self.assertNotIn(self.uid, get_issue_workspaces(self.case).workspaces[self.issue].investigation_info_unit_ids)
         result, requests = self.investigate()
-        refs = requests[0]["materials"]["source_refs"]["items"]
-        self.assertEqual([(r["info_unit_id"], r["source_ref_index"], r["file_id"]) for r in refs],
-                         [(self.uid, 9, self.fid)])
-        self.assertLessEqual(len(refs), investigation_tools.INITIAL_EVIDENCE_REFS)
-        # No change to get_evidence pagination or limits.
+        refs = requests[2]["materials"]["source_refs"]["items"]
+        self.assertIn((self.uid, 9, self.fid), [(r["info_unit_id"], r["source_ref_index"], r["source_ref"]["file_id"]) for r in refs])
+        self.assertLessEqual(len(refs), investigation_tools.MAX_EVIDENCE_REFS)
+        # The bounded read prioritizes the new source without renumbering it.
         self.assertEqual(len(investigation_tools.get_evidence(self.case, [self.uid])["items"]), 8)
         self.assertEqual(self.accept(result).status_code, 200)
         self.assertEqual(self.state().gaps[0].addressing_info_unit_ids, [self.old_id])
@@ -162,24 +164,22 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             with self.subTest(values=values):
                 result, requests = self.investigate(**values)
                 self.assertEqual(result["proposals"], [])
-                self.assertIsNotNone(requests[1]["recovery"])
+                self.assertIsNotNone(requests[3]["recovery"])
                 self.assertEqual(self.state().gaps[0], self.original_gap)
 
-    def test_latest_committed_batch_ignores_failed_runs_and_bounds_materials(self):
+    def test_latest_committed_batch_ignores_failed_runs_and_only_affects_search(self):
         self.supplement(count=12)
-        original_id = self.run.id
         failed = self.run.model_copy(deep=True, update={"id": "run-failed", "status": RunStatus.failed, "input_snapshot_path": None})
         # Validate through the normal model, including Enum parsing.
         self.case.stage_runs.append(StageRun.model_validate(failed.model_dump(mode="json")))
         case_store.save_case(self.case, set_current=False)
         context = investigation_context(self.case, self.issue, "核对合同", [self.gid])
-        batch = context["recent_extraction"]
-        self.assertEqual(batch["run_id"], original_id)
-        self.assertEqual(batch["info_unit_count"], 12)
-        self.assertLessEqual(len(context["canvas"]["info_units"]), 8)
-        self.assertTrue(batch["has_more_info_units"])
-        self.assertEqual(batch["omitted_info_unit_count"], 4)
-        self.assertLessEqual(len(batch["source_refs"]), 8)
+        self.assertNotIn("recent_extraction", context)
+        self.assertEqual(context["canvas"]["info_units"], [])
+        self.assertEqual(investigation_tools.recent_extraction_files(self.case), {self.fid})
+        matches = investigation_tools.search_info_units(self.case, "合同", limit=8)
+        self.assertEqual(len(matches["items"]), 8)
+        self.assertTrue(matches["has_more"])
 
     def test_same_material_noop_uses_existing_edit_semantics(self):
         self.supplement()

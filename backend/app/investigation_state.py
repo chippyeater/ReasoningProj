@@ -52,14 +52,9 @@ class KnowledgeState:
         for row in [*initial.get("selected_info_units", []), *canvas.get("info_units", [])]:
             self.info_units[row["id"]] = deepcopy(row)
         self.relations.update((r["id"], deepcopy(r)) for r in canvas.get("relations", []))
-        self.initial_scope = deepcopy(initial.get("evidence_context", {}))
-        for row in self.initial_scope.get("items", []):
-            self.source_refs[self.ref_key(row)] = deepcopy(row)
         self.priority_ids = list(self.info_units)
         self.focus_ids = set()
         self.notices = []
-        if self.initial_scope.get("has_more") or self.initial_scope.get("errors") or self.initial_scope.get("status") in {"error", "invalid_request"}:
-            self.notices.append({"tool": "initial_sources", **{k:v for k,v in self.initial_scope.items() if k != "items"}})
         if any(v for k,v in canvas.items() if k.startswith("has_more")):
             self.notices.append({"tool": "initial_canvas", "message": "Initial workspace projection is partial; use case read tools for other material."})
 
@@ -108,7 +103,7 @@ class KnowledgeState:
     def dump(self):
         return deepcopy({"info_units": self.info_units, "relations": self.relations,
             "source_refs": self.source_refs, "work_context": self.work_context,
-            "activities": self.activities, "proposals": self.proposals, "initial_scope": self.initial_scope})
+            "activities": self.activities, "proposals": self.proposals})
 
     def acquisition(self):
         reads = [a for a in self.activities if a["tool"] in READ_TOOLS and a["executed"]]
@@ -133,7 +128,7 @@ def model_context(initial, knowledge, recovery=None):
         unit = knowledge.info_units.get(uid, {})
         text = _normalized(" ".join(str(value) for value in (
             row.get("title", ""), row.get("content", ""), unit.get("title", ""), unit.get("content", ""),
-            row.get("quote_excerpt", ""), row.get("source_ref", {}).get("quote", ""))))
+            row.get("source_ref", {}).get("quote", ""))))
         return (uid not in knowledge.focus_ids, -sum(w in text for w in words),
                 knowledge.priority_ids.index(uid) if uid in knowledge.priority_ids else 100000, str(uid))
     def relation_rank(row):
@@ -172,8 +167,6 @@ def model_context(initial, knowledge, recovery=None):
         "proposals": deepcopy(knowledge.proposals),
         "notices": [{k:v for k,v in n.items() if k != "key"} for n in knowledge.notices[-6:]],
         "recovery": deepcopy(recovery)}
-    if workspace.get("recent_extraction"):
-        result["recent_extraction"] = deepcopy(workspace["recent_extraction"])
     if len(knowledge.notices) > 6:
         result["notices"].append({"context_truncated": True, "omitted_count": len(knowledge.notices) - 6})
     # Successful proposals and dependency IDs remain visible. Trim material

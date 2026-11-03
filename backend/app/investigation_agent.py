@@ -678,12 +678,6 @@ async def run_investigation(case: CaseData, goal: str,
         return output
 
     try:
-        source_ids = list(dict.fromkeys([u.id for u in selected] + [
-            row["id"] for row in canvas.get("info_units", []) if row["id"] in seen["units"]]))
-        initial_input["evidence_context"] = tools.initial_evidence_context(bound_case, source_ids,
-            preferred_source_refs=(work_context or {}).get("recent_extraction", {}).get("source_refs", []))
-        seen["evidence"].update((row["info_unit_id"], row["source_ref_index"])
-                                for row in initial_input["evidence_context"]["items"])
         knowledge = KnowledgeState(initial_input)
         config = llm_client.load_config()
         prompt = load_prompt(PROMPT_PATH, PROMPT_NAME)

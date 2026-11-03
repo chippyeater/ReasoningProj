@@ -140,7 +140,7 @@ backend/.venv/Scripts/python.exe scripts/baseline_extraction.py CASE_ID --file-i
 `prompt_release_status=uncommitted`。这些字段与 `prompt_name / schema_version / model` 按每次调用分别写入本地审计和 Langfuse Generation。
 StageRun 保持原结构；旧日志中 SHA-256 形式的 `prompt_version` 无需迁移并仍可读取。
 
-Investigation 使用统一的目标驱动工具循环与单份 `investigation_common_prompt.md`，由共用 Prompt Loader 校验版本、SHA、Git 和发布状态。首轮即可自主读取案件或提交 Proposal，无强制规划和任务状态维护；每轮从 KnowledgeState 重建去重材料与必要错误，不发送工具历史和预算计数。详见 [Investigation Agent](docs/investigation_agent.md)。
+Investigation 使用统一的目标驱动工具循环与单份 `investigation_common_prompt.md`，由共用 Prompt Loader 校验版本、SHA、Git 和发布状态。首轮只提供用户选中或聚焦的 InfoUnit 摘要及轻量案件目录，材料和来源通过工具按需取得；新 Extraction 批次只影响后端检索优先级。无强制规划和任务状态维护；每轮从 KnowledgeState 重建去重材料与必要错误，不发送工具历史和预算计数。详见 [Investigation Agent](docs/investigation_agent.md)。
 
 ## LLM Observability（Langfuse）
 

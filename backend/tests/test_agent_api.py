@@ -33,9 +33,10 @@ class TestAgentAPI(unittest.TestCase):
         self.assertNotIn("response_format", requests[0])
         initial = json.loads(requests[0]["messages"][1]["content"])
         memory = initial["materials"]
-        self.assertEqual(len(memory["source_refs"]["items"]), 1)
-        self.assertTrue(memory["source_refs"]["items"][0]["verified_against_cached_text"])
-        self.assertLessEqual(len(memory["source_refs"]["items"][0]["quote_excerpt"]), 160)
+        self.assertEqual(memory["source_refs"]["items"], [])
+        obtained = json.loads(requests[1]["messages"][1]["content"])["materials"]["source_refs"]["items"]
+        self.assertEqual(obtained[0]["source_ref_index"], 0)
+        self.assertEqual(obtained[0]["source_ref"]["quote"], next(u for u in self.case.info_units if u.id == "U029").source_refs[0].quote)
         self.assertNotIn("quote_units", json.dumps(initial))
         self.assertEqual(len(memory["info_units"]["items"]), 1)
         self.assertEqual(response.json()["evidence_refs"], [{"info_unit_id": "U029", "source_ref_index": 0}])
