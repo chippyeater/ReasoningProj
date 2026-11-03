@@ -27,7 +27,8 @@ MAX_TOTAL_CALLS = MAX_NON_FINISH_TOOL_CALLS + MAX_FINISH_CALLS
 MAX_MODEL_CALLS = MAX_TOTAL_CALLS + 3
 MAX_SUMMARY_CHARACTERS = 1000  # Same bound in the native schema and backend validation.
 MAX_NO_PROGRESS = 3
-READ_TOOLS = {"search_info_units": tools.search_info_units, "get_relations": tools.get_relations, "get_evidence": tools.get_evidence}
+READ_TOOLS = {"search_info_units": tools.search_info_units, "get_relations": tools.get_relations,
+              "get_evidence": tools.get_evidence, "search_evidence_gaps": tools.search_evidence_gaps}
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts/investigation_common_prompt.md"
 PROMPT_NAME = "investigation_common"
 BoundedText = Annotated[str, Field(min_length=1, max_length=600, pattern=r"\S")]
@@ -93,6 +94,17 @@ def tool_definitions() -> list[dict]:
             "返回的 source_ref_index 可用于证据关联、Gap 回应和假设状态建议。"
         ), {
             "info_unit_ids": ids,
+        }),
+        _function("search_evidence_gaps", (
+            "按需发现当前 Issue 已有的 Evidence Gap，包括初始 reasoning 投影省略的对象。"
+            "query 关键词匹配问题及关联命题（OR）；info_unit_ids 匹配形成依据、回应材料及命题的证据关联。"
+            "两者为空时有界浏览；默认及最多3个 Gap，offset 默认0，has_more 时可增加 offset 继续发现其他对象。"
+            "返回真实 ID、完整问题及有界的关联 Hypothesis/状态；引用列表不授予材料或来源权限。"
+        ), {
+            "query": {"type": ["string", "null"], "maxLength": tools.MAX_QUERY_CHARS},
+            "info_unit_ids": {"type": ["array", "null"], "items": {"type": "string"}, "maxItems": tools.MAX_NODE_IDS},
+            "limit": {"type": ["integer", "null"], "minimum": 1, "maximum": 3},
+            "offset": {"type": ["integer", "null"], "minimum": 0},
         }),
     ]
     from app.investigation_actions import PROPOSAL_TOOLS, finish_investigation
@@ -237,6 +249,23 @@ def _material_keys(materials: dict) -> set[tuple[str, str]]:
     """Compare material identity, not ordering, notices or acquisition counters."""
     return {(kind, KnowledgeState.ref_key(row) if kind == "source_refs" else row["id"])
             for kind, section in materials.items() for row in section["items"]}
+
+
+def _context_keys(state: dict) -> set[tuple[str, str]]:
+    return _material_keys(state["materials"]) | {
+        (kind, row["id"]) for kind in ("hypotheses", "gaps", "links") for row in state["reasoning"][kind]}
+
+
+def _include_gap_targets(context, formal, gap_ids):
+    """Capture existing targets for validation/adoption, outside the model view."""
+    if context is None:
+        return
+    gaps = [g for g in formal.gaps if g.id in gap_ids]
+    hids = {hid for g in gaps for hid in g.hypothesis_ids}
+    for kind, objects in (("gaps", gaps), ("hypotheses", [h for h in formal.hypotheses if h.id in hids])):
+        rows = {row["id"]: row for row in context.get("reasoning", {}).get(kind, [])}
+        rows.update((obj.id, obj.model_dump(mode="json")) for obj in objects)
+        context.setdefault("reasoning", {})[kind] = list(rows.values())
 
 
 def _remember(name: str, result: dict, seen: dict) -> None:
@@ -596,6 +625,19 @@ async def run_investigation(case: CaseData, goal: str,
     if not isinstance(goal, str) or not goal.strip() or len(goal) > 2000:
         raise AppError("invalid_investigation_goal", "goal must contain 1 to 2000 nonblank characters")
     bound_case = case.model_copy(deep=True)
+    work_context = deepcopy(work_context)
+    from app.issue_workspaces import get_issue_workspaces, investigation_context
+    from app.reasoning_models import ReasoningState
+    # The formal Issue snapshot governs availability, independently of its
+    # model projection. It stays on the server; discovery is a bounded read.
+    formal = ReasoningState()
+    if issue_key is not None:
+        workspace = get_issue_workspaces(bound_case).workspaces.get(issue_key)
+        if workspace is None:
+            raise AppError("unknown_issue", "Issue does not belong to the current case")
+        formal = workspace.reasoning
+        if work_context is None:
+            work_context = investigation_context(bound_case, issue_key, goal, selected_info_unit_ids=selected_info_unit_ids)
     selected = [] if not selected_info_unit_ids else tools._selected_units(bound_case, selected_info_unit_ids)
     initial_input = {"goal": goal, "core_issue": bound_case.core_issue,
         "case_info_directory": case_info_directory(bound_case),
@@ -684,10 +726,10 @@ async def run_investigation(case: CaseData, goal: str,
                 return stopped("tool_budget_exhausted")
             if len(audit["model_calls"]) >= MAX_MODEL_CALLS:
                 return stopped("model_budget_exhausted")
-            formal = (work_context or {}).get("reasoning", {})
-            targeted = {"propose_hypothesis_status": bool(formal.get("hypotheses")),
-                        "propose_evidence_gap_update": bool(formal.get("gaps")),
-                        "propose_evidence_link": bool(formal.get("hypotheses")) or any(p.kind == "hypothesis" for p in proposals)}
+            targeted = {"propose_hypothesis_status": bool(formal.hypotheses),
+                        "propose_evidence_gap_update": bool(formal.gaps),
+                        "search_evidence_gaps": bool(formal.gaps),
+                        "propose_evidence_link": bool(formal.hypotheses) or any(p.kind == "hypothesis" for p in proposals)}
             available = [d for d in tool_definitions() if d["function"]["name"] == "finish_investigation"
                          or (not investigation_closed() and
                              targeted.get(d["function"]["name"], True) and
@@ -764,6 +806,8 @@ async def run_investigation(case: CaseData, goal: str,
                         executed += 1
                         if name in READ_TOOLS:
                             internal = {"exclude_info_unit_ids": visible_units} if name == "search_info_units" else {}
+                            if name == "search_evidence_gaps":
+                                internal = {"reasoning": formal}
                             response = getattr(tools, name)(bound_case, **args, **internal)
                             if response["status"] not in {"error", "invalid_request"}:
                                 _remember(name, response, seen)
@@ -772,6 +816,8 @@ async def run_investigation(case: CaseData, goal: str,
                             action_args = deepcopy(args)
                             if name == "propose_evidence_gap":
                                 action_args.update(action_args.pop("hypothesis_targets"))
+                            if name == "propose_evidence_gap_update":
+                                _include_gap_targets(work_context, formal, {action_args["gap_id"]})
                             response = actions.PROPOSAL_TOOLS[name](bound_case, seen, work_context, draft, **action_args)
                             proposals = draft
                         else:
@@ -812,10 +858,15 @@ async def run_investigation(case: CaseData, goal: str,
                         recovery["next_action"]["steps"] = recovery["next_action"]["steps"][:8]
                 if response.get("has_more"):
                     limitations.append(f"{name}: truncated result; additional material may remain.")
+                if name == "search_evidence_gaps" and not failed and response["items"]:
+                    # Only discovered targets enter the existing validation and
+                    # receipt context. Keep full revisions/associations here;
+                    # the model receives only the tool's bounded projection.
+                    gap_ids = {g["id"] for g in response["items"][0]["gaps"]}
+                    _include_gap_targets(work_context, formal, gap_ids)
                 merged_keys = knowledge.merge(name, args, response, executed=tool_audit["executed"])
                 read_progress = name in READ_TOOLS and not failed and bool(
-                    merged_keys & (_material_keys(model_context(initial_input, knowledge, recovery)["materials"])
-                    - _material_keys(state["materials"])))
+                    merged_keys & (_context_keys(model_context(initial_input, knowledge, recovery)) - _context_keys(state)))
                 progressed = read_progress if name in READ_TOOLS else not failed and not response.get("cached")
                 if category in {"read", "proposal"}:
                     no_progress = 0 if progressed else no_progress + 1

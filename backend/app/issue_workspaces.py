@@ -205,21 +205,28 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
             link.hypothesis_id == obj.id and link.info_unit_id in priority_ids for link in reasoning.links)
         return (obj.id in selected_ids, obj.id == focus, related, overlap(obj.content), obj.updated_at)
     chosen = sorted(objects, key=rank, reverse=True)[:3]
+    result["reasoning"] = project_reasoning(reasoning, chosen, rank, priority_ids, uids)
+    return result
+
+
+def project_reasoning(reasoning: ReasoningState, chosen: list, rank, priority_ids=(), uids=(), *,
+                      content_chars=300, hypothesis_limit=3) -> dict:
+    """The same bounded object projection for initial context and on-demand reads."""
     hids = {obj.id for obj in chosen if hasattr(obj, "judgment")}
     for obj in chosen:
         if hasattr(obj, "hypothesis_ids"):
             hids.update(obj.hypothesis_ids)
-    hypotheses = sorted((obj for obj in reasoning.hypotheses if obj.id in hids), key=rank, reverse=True)[:3]
+    hypotheses = sorted((obj for obj in reasoning.hypotheses if obj.id in hids), key=rank, reverse=True)[:hypothesis_limit]
     hids = {obj.id for obj in hypotheses}
-    result["reasoning"] = {
-        "hypotheses": [{**h.model_dump(), "content": h.content[:300], "content_truncated": len(h.content) > 300} for h in hypotheses],
-        "gaps": [{**g.model_dump(), "content": g.content[:300],
+    result = {
+        "hypotheses": [{**h.model_dump(), "content": h.content[:content_chars], "content_truncated": len(h.content) > content_chars} for h in hypotheses],
+        "gaps": [{**g.model_dump(), "content": g.content[:content_chars],
                   "basis_info_unit_ids": g.basis_info_unit_ids[:5],
                   "addressing_info_unit_ids": g.addressing_info_unit_ids[:5],
                   "basis_info_unit_ids_truncated": len(g.basis_info_unit_ids) > 5,
                   "addressing_info_unit_ids_truncated": len(g.addressing_info_unit_ids) > 5,
                   "hypothesis_ids": [hid for hid in g.hypothesis_ids if hid in hids],
-                  "content_truncated": len(g.content) > 300,
+                  "content_truncated": len(g.content) > content_chars,
                   "references_truncated": (len(g.basis_info_unit_ids) > 5 or len(g.addressing_info_unit_ids) > 5
                                            or not set(g.hypothesis_ids) <= hids)}
                  for g in chosen if hasattr(g, "hypothesis_ids")][:3],
@@ -227,6 +234,6 @@ def investigation_context(case: CaseData, current_issue: str, goal: str = "", se
                   for link in sorted(reasoning.links, key=lambda link: (link.info_unit_id in priority_ids, link.info_unit_id in uids), reverse=True)
                   if link.hypothesis_id in hids][:5],
     }
-    result["reasoning"]["has_more"] = (len(hypotheses) < len(reasoning.hypotheses)
-        or len(result["reasoning"]["gaps"]) < len(reasoning.gaps) or len(result["reasoning"]["links"]) < len(reasoning.links))
+    result["has_more"] = (len(hypotheses) < len(reasoning.hypotheses)
+        or len(result["gaps"]) < len(reasoning.gaps) or len(result["links"]) < len(reasoning.links))
     return result

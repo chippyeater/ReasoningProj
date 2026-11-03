@@ -185,6 +185,45 @@ def get_relations(case: CaseData, info_unit_ids: list[str],
     return _result(items, has_more=len(matches) > limit)
 
 
+def search_evidence_gaps(case: CaseData, query: str | None = None, info_unit_ids: list[str] | None = None,
+                         limit: int | None = None, offset: int | None = None, *, reasoning) -> dict:
+    """Search a server-bound Issue's existing Gaps; never grant source permissions."""
+    from app.issue_workspaces import project_reasoning
+    try:
+        limit = 3 if limit is None else limit
+        _check_limit(limit)
+        if limit > 3:
+            raise AppError("invalid_limit", "At most three Gaps may be read at once")
+        offset = 0 if offset is None else offset
+        if type(offset) is not int or offset < 0:
+            raise AppError("invalid_tool_arguments", "offset must be a nonnegative integer")
+        if query is not None and (not isinstance(query, str) or len(query) > MAX_QUERY_CHARS):
+            raise AppError("invalid_query", f"query must contain at most {MAX_QUERY_CHARS} characters")
+        terms = list(dict.fromkeys(re.findall(r"\w+", _normalized(query or ""))))
+        if query and query.strip() and not terms:
+            raise AppError("invalid_query", "query must contain at least one keyword")
+        ids = {u.id for u in _selected_units(case, info_unit_ids)} if info_unit_ids is not None and info_unit_ids != [] else set()
+    except AppError as exc:
+        return _failure(exc)
+    hypotheses = {h.id: h for h in reasoning.hypotheses}
+    ranks = {}
+    for gap in reasoning.gaps:
+        text = _normalized(" ".join([gap.content, *(hypotheses[hid].content for hid in gap.hypothesis_ids)]))
+        overlap = sum(term in text for term in terms)
+        related = bool(ids & set(gap.basis_info_unit_ids + gap.addressing_info_unit_ids)) or any(
+            link.hypothesis_id in gap.hypothesis_ids and link.info_unit_id in ids for link in reasoning.links)
+        if overlap or related or not terms and not ids:
+            ranks[gap.id] = (related, overlap, gap.updated_at)
+    matches = sorted((g for g in reasoning.gaps if g.id in ranks), key=lambda g: (*ranks[g.id], g.id), reverse=True)
+    chosen = matches[offset:offset + limit]
+    if not chosen:
+        return _result([])
+    view = project_reasoning(reasoning, chosen,
+        lambda obj: (sum(term in _normalized(obj.content) for term in terms), obj.updated_at, obj.id),
+        uids=ids, content_chars=600, hypothesis_limit=5)
+    return _result([view], has_more=len(matches) > offset + limit)
+
+
 def get_evidence(case: CaseData, info_unit_ids: list[str]) -> dict:
     """Return exact SourceRefs, checked against only their existing cached TXT.
 

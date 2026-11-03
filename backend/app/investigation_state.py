@@ -11,7 +11,7 @@ from app.errors import AppError
 MAX_CONTEXT_CHARS = 24000  # Deterministic character proxy, independent of provider tokenizer.
 MAX_DIRECTORY_ITEMS = 80
 MAX_DIRECTORY_CHARS = 6000
-READ_TOOLS = frozenset({"search_info_units", "get_relations", "get_evidence"})
+READ_TOOLS = frozenset({"search_info_units", "get_relations", "get_evidence", "search_evidence_gaps"})
 
 
 def case_info_directory(case):
@@ -66,6 +66,12 @@ class KnowledgeState:
         """Merge accepted projections and return the material keys actually returned."""
         material_keys = set()
         if response["status"] not in {"invalid_request", "error"}:
+            if name == "search_evidence_gaps" and response.get("items"):
+                # Replace the bounded reasoning view, not the formal workspace
+                # or the independent material/source store.
+                self.work_context["reasoning"] = deepcopy(response["items"][0])
+                material_keys.update((kind, row["id"]) for kind in ("hypotheses", "gaps", "links")
+                                     for row in response["items"][0][kind])
             touched = []
             for row in response.get("items", []):
                 if name == "search_info_units":
@@ -85,7 +91,8 @@ class KnowledgeState:
                     material_keys.add(("source_refs", self.ref_key(row)))
                     touched.append(row["info_unit_id"])
             self.priority_ids = list(dict.fromkeys([*touched, *self.priority_ids]))
-            self.focus_ids = set(args.get("info_unit_ids", touched)) if name in READ_TOOLS else self.focus_ids
+            self.focus_ids = (set(args.get("info_unit_ids", touched))
+                              if name in READ_TOOLS - {"search_evidence_gaps"} else self.focus_ids)
         # Audit history stays on the server. Notices preserve distinct scopes,
         # including a truncated query after a later unrelated successful query.
         if name in READ_TOOLS:

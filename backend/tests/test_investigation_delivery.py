@@ -26,6 +26,7 @@ class TestInvestigationDelivery(unittest.TestCase):
             names = {d["function"]["name"] for d in call["definitions"]}
             self.assertNotIn("propose_hypothesis_status", names)
             self.assertNotIn("propose_evidence_gap_update", names)
+            self.assertNotIn("search_evidence_gaps", names)
             self.assertEqual([m["role"] for m in call["messages"]], ["system", "user"])
             if turn == 1:
                 self.assertNotIn("propose_evidence_link", names)

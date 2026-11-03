@@ -4,7 +4,7 @@
 
 ## 执行和交付
 
-只有一个工具调用循环。首轮提供三个读取工具、Hypothesis/Gap 创建和 Finish；仅在已有正式 Hypothesis 时提供状态建议、已有 Gap 时提供 Gap Update、有正式或本轮待确认 Hypothesis 时提供 Evidence Link，原生 `tool_choice=auto`。没有规划阶段、Question/InvestigationStep 模型、计划更新工具或关联参数。读取范围、工具顺序、Proposal 数量和结束时机由 Goal 与读取结果决定。
+只有一个工具调用循环。首轮提供三个读取工具、Hypothesis/Gap 创建和 Finish；工具可用性依据服务器绑定的正式 Issue 对象判断，不依赖投影是否显示该对象。仅在已有正式 Hypothesis 时提供状态建议、当前 Issue 实际存在 Gap 时提供 Gap Update 和 search_evidence_gaps、有正式或本轮待确认 Hypothesis 时提供 Evidence Link，原生 `tool_choice=auto`。没有规划阶段、Question/InvestigationStep 模型、计划更新工具或关联参数。读取范围、工具顺序、Proposal 数量和结束时机由 Goal 与读取结果决定。
 
 通过 finish 交付 `answer`、`answer_basis`、可选内容的 `findings`、`open_questions` 和 `completion_status`。空 Findings/Proposal 合法。answer_basis 为 general（能力/通用回答）、case_metadata（可靠案件统计）或 case_material（案件判断）；它描述答复依据，不创建另一条执行流程。涉及案件依据的成果必须选择 case_material。目录不授予材料或引用权限；尚无材料/有效读取结果时，案件判断返回可恢复错误。实际 empty、读取 error、空案件或预算限制可以支持明确的证据不足说明，不能证明事实。后端不以关键词猜测 Goal，也不能独立证明自然语言任务已经充分覆盖。
 
@@ -12,7 +12,7 @@ Findings、Proposal 引用须属于当前案件并实际取得；SourceRef 仅�
 
 读取与所有 Proposal 共享8次非 Finish 调用预算，失败、重复和缓存调用均计数；每轮最多6个有效 Proposal。finish 独立最多3次，总预算11次，最多14次模型调用（含不遵循工具协议的纠正余量）；重复无进展最多3次。预算与完整活动只由后端记录，耗尽的工具从下次 Schema 移除。连续非法调用/重复读取、模型失败和审计写入失败均有显式结束或异常，不自动重试付费请求。普通文本不能冒充已验证交付：产生 `finish_required` 后，后端持续关闭读取和 Proposal 工具，仅开放 Finish，越界调用在执行前拒绝；Finish 参数错误不会重新开放调查。
 
-读取进展按工具合并后、下一轮模型实际可见的材料 ID 与本次请求比较：新增 InfoUnit、Relation 或 SourceRef，以及重新恢复被省略的材料均计为进展；空结果、仅返回已可见节点、仅调整排序或错误/统计更新不计进展。有效材料恢复会清零无进展计数，成功提交 Proposal 也会清零；连续3次读取/Proposal 无进展后关闭调查工具，仍保留 Finish；Finish 无论成功失败都不增加或重置无进展计数，失败后可在剩余3次 Finish 预算内修正重交。每次工具调用在本地审计和 Langfuse 记录 `read_progress/no_progress`，搜索还记录实际排除 ID。
+读取进展按工具合并后、下一轮模型实际可见的材料及推理对象 ID 与本次请求比较：新增 InfoUnit、Relation、SourceRef 或当前推理视图中的 Hypothesis/Gap/Link，以及重新恢复被省略的对象均计为进展；空结果、仅返回已可见节点、仅调整排序或错误/统计更新不计进展。有效材料恢复会清零无进展计数，成功提交 Proposal 也会清零；连续3次读取/Proposal 无进展后关闭调查工具，仍保留 Finish；Finish 无论成功失败都不增加或重置无进展计数，失败后可在剩余3次 Finish 预算内修正重交。每次工具调用在本地审计和 Langfuse 记录 `read_progress/no_progress`，搜索还记录实际排除 ID。
 
 共享8次非 Finish 预算耗尽后只提供 Finish；`budget_exhausted` 只按共享预算判断，6个有效 Proposal 上限不代表调查总预算耗尽。传给 Finish 的 `read_budget_exhausted` 表示读取阶段已关闭（共享预算耗尽、no_progress_limit 或 finish_required），`budget_exhausted` 仅表示共享8次已用尽。模型越界发出的第9次非 Finish 请求被拒绝，不执行；最终模型调用上限仍防止无限协议纠正。
 
@@ -27,6 +27,10 @@ Hypothesis 是可被证据支持或反驳的待验证命题；数量由任务与
 Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成依据，来源引用只能指向已取得的这些节点；不接受 `addressing_info_unit_ids`。正式 Gap 的回应列表初始为空，后续通过现有工作区编辑接口追加去重，材料关联不自动解决 Gap 或改变假设判断。上下文分别提供形成依据、回应材料及各自截断标记；这些引用本身不授予材料读取权限。Hypothesis、Evidence Link、Hypothesis Status 的 `info_unit_ids` 语义保持不变。已保存工作区的一次性迁移见 `docs/issue_reasoning.md`。
 
 `propose_evidence_gap_update` 指定当前 Issue 已提供的 `gap_id`、1–5 个已取得的 `addressing_info_unit_ids`、建议 `status` 和已取得的来源引用。用户采纳前核对目标 Gap revision 与材料哈希，再复用 Gap 编辑入口追加去重回应材料和应用建议状态；保留原 ID、内容、形成依据、Hypothesis 关联。部分回应保持 open，不强制变更 Hypothesis judgment；只有独立的新条件才创建新 Gap。同一建议重复采纳幂等，无实际数据变化不递增 revision。
+
+初始投影仍最多选择三个推理对象，Hypothesis 与 Gap 共用名额。遗漏不代表正式对象不存在；有 Gap 的 Issue 开放 `search_evidence_gaps(query, info_unit_ids, limit, offset)`，按问题/关联命题关键词或已有材料关联查询，空条件可有界浏览。每次最多3个 Gap、5个相关 Hypothesis、5条 Link；问题与命题最多600字符，材料引用列表仍有截断标记。通过 offset 翻页，不默认注入全部对象或增加推理目录字段。
+
+发现结果复用初始上下文的投影函数，替换现有 `reasoning` 视图，材料和来源工作记忆保留。实际读取的完整 Gap/关联 Hypothesis 目标进入现有后端校验与采纳凭据上下文，包含原修订号；模型不接收这些审计字段。原 Gap 的完整关联在采纳时保留，查询和 Proposal 生成不修改正式工作区；过期目标仍拒绝采纳。Gap 搜索只提供推理对象，不授予 InfoUnit 内容或 SourceRef 引用权限。
 
 ## 每轮上下文
 

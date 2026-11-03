@@ -1,4 +1,4 @@
-# Investigation Agent 只读工具（阶段 1）
+# Investigation Agent 只读工具
 
 入口：`backend/app/investigation_tools.py`。普通同步 Python 函数，由调用方传入当前案件的有效 `CaseData`，后续工具绑定时固定该参数，模型只提供查询参数。工具不自动读取“当前案件”、切换案件、保存数据、构建引用索引或调用模型。没有新增 HTTP 接口。
 
@@ -32,7 +32,7 @@ sources = get_evidence(case, info_unit_ids=["U029", "U036"])
 
 - ID 列表必须有 1–5 个唯一、非空 ID，全部属于传入案件。混入任何非法 ID 时拒绝整个请求，不静默忽略。稳定 ID 在不同案件中若重名，仅指传入案件中的节点；案件选择由调用方负责。
 - `limit` 必须是 1–8 的整数（布尔值也拒绝），超限报错，不静默截小。类型筛选必须为非空、无重复的合法枚举列表；不传代表全部合法类型。
-- 查询限 1–200 字符。检索只检查标题与内容，不检查原文、争点集合或全案元数据。先 NFKC 归一化并忽略大小写，再以标点/空白切分字词；连续中文作为字面子串匹配，无中文分词、语义扩展或通配符。多个关键词按 OR 匹配，重复词不加权。
+- `search_info_units` 查询限 1–200 字符。检索只检查标题与内容，不检查原文、争点集合或全案元数据。先 NFKC 归一化并忽略大小写，再以标点/空白切分字词；连续中文作为字面子串匹配，无中文分词、语义扩展或通配符。多个关键词按 OR 匹配，重复词不加权。
 - Agent 调用搜索时，后端从本次模型请求的 `materials.info_units.items` 提取 ID，经内部关键字参数 `exclude_info_unit_ids` 排除这些节点，过滤先于评分、排序和 limit 截取；模型工具 Schema 不包含该参数。独立 Python 调用默认不排除节点。排除集不使用全部历史 seen ID，因上下文截断而不可见的旧节点仍可取得。缓存键也包含当前排除集，不能用不同可见范围下的旧搜索结果直接响应。
 - 搜索的 `has_more` 只表示过滤后匹配节点数量超过本次 limit；返回 empty 可能只是匹配节点已可见。它不是穷尽全案的要求。每次围绕一个具体信息需求查询，只有仍缺影响当前判断的信息时才继续有针对性地检索。
 - 对已匹配的节点，优先返回最近成功提交的 Extraction 批次所涉及的节点（按 SourceRef.file_id 识别，包括旧节点的新来源），再按命中的不同关键词数量降序、标题命中权重 3/内容命中权重 1 降序、原始 ID 升序。批次识别只在后端读取时使用，不注入首轮材料或来源；快照无效时明确返回 extraction_scope_unavailable。排序不表示事实可信度。
@@ -41,6 +41,14 @@ sources = get_evidence(case, info_unit_ids=["U029", "U036"])
 - 仅使用已有 `read_parsed_document` 读取实际返回引用所在的缓存 TXT，每个相关文件每次最多读取一次，逐条验证精确切片；不读取原始文件，不重解析，不读取无关缓存，不把整文件放入返回结果。即使 quote 已存在于 SourceRef，缓存缺失或切片不符仍明确报错。
 - 引用条数或总长度预算耗尽时，仅返回能完整容纳的前缀，标记 `truncated`。单条引用超过 4000 字符时报 `error/evidence_budget_exceeded`，不会伪造短引文或偏移。
 - 已取得的 InfoUnit 内容可用于探索性 Hypothesis 和 Evidence Gap，来源定位不等于事实证实。仅在需要核对精确措辞、时间、金额、陈述主体或上下文时读取原始 SourceRef；不要求每个节点都读原文。Evidence Link 和 Hypothesis Status 仍须有合法且已取得的来源引用。首轮不再隐式核验或提供来源。
+
+## 按需发现已有 Gap
+
+`search_evidence_gaps(case, query=None, info_unit_ids=None, limit=None, offset=None, *, reasoning)` 复用 Issue 的正式 ReasoningState 和上下文投影函数。案件及 reasoning 由服务器在调查开始时绑定，模型不能提供 Issue 或切换状态。工具只在当前 Issue 实际存在 Gap 时开放；即使初始有界投影未显示 Gap，工具仍可用。
+
+关键词按 OR 匹配 Gap 问题及关联 Hypothesis；InfoUnit ID 匹配已有形成依据、回应材料和 Evidence Link。新材料尚未建立关联时，可按主题关键词或空条件有界浏览。默认及最多返回3个 Gap，并提供最多5个相关 Hypothesis、5条 Link；`items` 中的一项为现有 reasoning 投影，非另一套领域模型。内容上限600字符，引用省略明确标记。`offset` 默认为0，按同一过滤条件的排序结果分页，`has_more` 只表示本次过滤之后仍有匹配 Gap；无匹配或页码超出时为 empty。
+
+结果进入原有 reasoning 视图，不复制到材料目录。取得 Gap 的依据 ID 不等于已读取材料，来源仍需 get_evidence。已有完整目标及修订号用于后端引用校验、独立审批和过期检测；更新保留 Gap ID、问题、形成依据及 Hypothesis 关联，不自动改变命题判断。
 
 ## 离线验收与阶段局限
 

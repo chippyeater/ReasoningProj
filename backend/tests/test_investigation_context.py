@@ -96,6 +96,36 @@ class TestInvestigationContext(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises(AppError):
                 investigation_context(self.case, self.issue, **kwargs)
 
+    def test_gap_tools_use_current_issue_objects_not_another_issue(self):
+        for i in range(3):
+            self.hypothesis(f"当前议题命题{i}")
+        other = self.case.core_issue
+        response = self.client.patch(f"/api/cases/{self.case.case_id}/issue-reasoning", json={
+            "issue": other, "hypothesis": {"content": "其他议题命题"}})
+        self.assertEqual(response.status_code, 200, response.text)
+        response = self.client.patch(f"/api/cases/{self.case.case_id}/issue-reasoning", json={
+            "issue": other, "gap": {"content": "其他议题缺口", "hypothesis_ids": [response.json()["object_id"]]}})
+        self.assertEqual(response.status_code, 200, response.text)
+        before = get_issue_workspaces(self.case).model_dump_json()
+        requests = []
+        def model(request):
+            wire = json.loads(request.content)
+            requests.append(wire)
+            names = {d["function"]["name"] for d in wire["tools"]}
+            self.assertIn("propose_hypothesis_status", names)
+            self.assertNotIn("search_evidence_gaps", names)
+            self.assertNotIn("propose_evidence_gap_update", names)
+            self.assertNotIn("其他议题缺口", wire["messages"][1]["content"])
+            return httpx.Response(200, json=replies.finish("介绍调查能力", status="completed", basis="general").response)
+        real_client = httpx.AsyncClient
+        with patch.object(llm_client.httpx, "AsyncClient", side_effect=lambda **kwargs:
+                real_client(transport=httpx.MockTransport(model), **kwargs)):
+            response = self.client.post(f"/api/cases/{self.case.case_id}/agent/run", json={
+                "goal": "介绍调查能力", "current_issue": self.issue})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(get_issue_workspaces(self.case).model_dump_json(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

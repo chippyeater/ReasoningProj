@@ -1,5 +1,6 @@
 """New/merged extraction evidence -> native Gap update -> explicit, revision-safe adoption."""
 import json
+import httpx
 from unittest.mock import AsyncMock, patch
 
 from support import IsolatedCaseTest, model_result, model_unit, quote_id_for
@@ -139,6 +140,120 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual(len(investigation_tools.get_evidence(self.case, [self.uid])["items"]), 8)
         self.assertEqual(self.accept(result).status_code, 200)
         self.assertEqual(self.state().gaps[0].addressing_info_unit_ids, [self.old_id])
+
+    def hidden_gap_run(self, extra_count=2):
+        extras = [self.edit(hypothesis={"content": f"需要核对实际交付条件{i}。"}).json()["object_id"]
+                  for i in range(extra_count)]
+        self.hids += extras
+        question = "新租约的起租约定是否已实际履行？" + "核查实际履行与收款依据。" * 30
+        self.edit(gap={"id": self.gid, "content": question, "hypothesis_ids": self.hids,
+                       "basis_info_unit_ids": [self.old_id]})
+        self.supplement()
+        before = self.state().model_copy(deep=True)
+        path = self.data_dir / self.cid / "issue_workspaces.json"
+        original_bytes = path.read_bytes()
+        requests = []
+        pointers = [{"info_unit_id": self.uid, "source_ref_index": self.source_index}]
+        def model(request):
+            wire = json.loads(request.content)
+            requests.append(wire)
+            state = json.loads(wire["messages"][1]["content"])
+            names = {d["function"]["name"] for d in wire["tools"]}
+            self.assertEqual([m["role"] for m in wire["messages"]], ["system", "user"])
+            self.assertIn("propose_evidence_gap_update", names)
+            self.assertIn("search_evidence_gaps", names)
+            self.assertIn("propose_hypothesis_status", names)
+            self.assertLessEqual(len(wire["messages"][1]["content"]), 24000)
+            if len(requests) == 1:
+                self.assertEqual(len(state["reasoning"]["hypotheses"]), 3)
+                self.assertEqual(state["reasoning"]["gaps"], [])
+                self.assertTrue(state["reasoning"]["has_more"])
+                reply = replies.tool("search_info_units", {"query": "补充合同", "limit": 1}, "find-material")
+            elif len(requests) == 2:
+                self.assertEqual(state["materials"]["info_units"]["items"][0]["id"], self.uid)
+                reply = replies.tool("search_evidence_gaps", {"query": "起租", "info_unit_ids": None, "limit": 1, "offset": 0}, "find-gap")
+            else:
+                gap = state["reasoning"]["gaps"][0]
+                self.assertEqual(gap["id"], self.gid)
+                self.assertEqual(gap["content"], question)  # No 300-character initial-view truncation.
+                visible = {h["id"] for h in state["reasoning"]["hypotheses"]}
+                self.assertEqual(len(visible), min(5, len(self.hids)))
+                self.assertTrue(visible <= set(self.hids))
+                self.assertEqual(gap["hypothesis_ids"], [hid for hid in self.hids if hid in visible])
+                self.assertEqual(gap["references_truncated"], len(self.hids) > 5)
+                self.assertNotIn("revision", json.dumps(state["reasoning"]))
+                if len(requests) == 3:
+                    self.assertEqual(state["materials"]["source_refs"]["items"], [])
+                    reply = replies.tool("get_evidence", {"info_unit_ids": [self.uid]}, "read-source")
+                elif len(requests) == 4:
+                    reply = replies.tool("propose_evidence_gap_update", {"gap_id": gap["id"],
+                        "addressing_info_unit_ids": [self.uid], "status": "open", "evidence_refs": pointers,
+                        "rationale": "补充合同仅记载起租约定，实际履行仍需核对。"}, "update-original")
+                else:
+                    reply = replies.finish("核查新增合同", [self.uid], refs=[(self.uid, self.source_index)],
+                        questions=["实际履行仍待核实。"], status="evidence_insufficient")
+            return httpx.Response(200, json=reply.response)
+        real_client = httpx.AsyncClient
+        with patch.object(llm_client, "load_config", return_value=replies.CONFIG), patch.object(
+                llm_client.httpx, "AsyncClient", side_effect=lambda **kwargs:
+                real_client(transport=httpx.MockTransport(model), **kwargs)):
+            response = self.client.post(f"/api/cases/{self.cid}/agent/run", json={"goal": "核查新增合同",
+                "current_issue": self.issue, "selected_reasoning_ids": self.hids[:3]})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(path.read_bytes(), original_bytes)
+        self.assertEqual(self.state(), before)
+        result = response.json()
+        self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update"])
+        self.assertEqual(result["proposals"][0]["gap_id"], self.gid)
+        audit = json.loads((self.data_dir / self.cid / f"runs/{result['run_id']}.output.json").read_text(encoding="utf-8"))
+        self.assertTrue(audit["tool_calls"][1]["read_progress"])
+        self.assertEqual(audit["tool_calls"][1]["no_progress"], 0)
+        for call, recorded in zip(requests, audit["model_calls"]):
+            self.assertEqual(call, recorded["request"])
+        self.assertEqual(audit["proposal_receipt"]["target_gap_revisions"][self.gid], before.gaps[0].revision)
+        self.assertTrue(set(self.hids) <= audit["proposal_receipt"]["target_revisions"].keys())
+        return result, before
+
+    def test_hidden_gap_is_discovered_and_updated_without_recreating_or_judging(self):
+        result, before = self.hidden_gap_run()
+        accepted = self.accept(result)
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        after = self.state()
+        self.assertEqual(len(after.gaps), 1)
+        for field in ("id", "content", "basis_info_unit_ids", "hypothesis_ids"):
+            self.assertEqual(getattr(after.gaps[0], field), getattr(before.gaps[0], field))
+        self.assertEqual(after.gaps[0].addressing_info_unit_ids, [self.uid])
+        self.assertEqual([h.judgment for h in after.hypotheses], [h.judgment for h in before.hypotheses])
+
+    def test_discovered_gap_still_rejects_stale_approval(self):
+        result, _ = self.hidden_gap_run()
+        self.edit(gap={"id": self.gid, "content": "用户修改了履行核查问题。", "hypothesis_ids": self.hids})
+        response = self.accept(result)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "stale_reasoning_proposal")
+
+    def test_discovery_projection_cannot_shorten_the_formal_gap_associations(self):
+        result, before = self.hidden_gap_run(extra_count=4)
+        response = self.accept(result)
+        self.assertEqual(response.status_code, 200, response.text)
+        after = self.state()
+        self.assertEqual(after.gaps[0].hypothesis_ids, self.hids)
+        self.assertEqual(len(after.gaps[0].hypothesis_ids), 6)
+        self.assertEqual(after.gaps[0].basis_info_unit_ids, before.gaps[0].basis_info_unit_ids)
+        self.assertEqual([h.judgment for h in after.hypotheses], [h.judgment for h in before.hypotheses])
+
+    def test_visible_gap_with_omitted_hypotheses_also_keeps_complete_approval_targets(self):
+        self.hids += [self.edit(hypothesis={"content": f"额外命题{i}"}).json()["object_id"] for i in range(4)]
+        self.edit(gap={"id": self.gid, "content": self.original_gap.content, "hypothesis_ids": self.hids,
+                       "basis_info_unit_ids": [self.old_id]})
+        self.supplement()
+        result, requests = self.investigate()
+        self.assertEqual(len(requests[0]["reasoning"]["hypotheses"]), 3)
+        self.assertTrue(requests[0]["reasoning"]["gaps"][0]["references_truncated"])
+        response = self.accept(result)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.state().gaps[0].hypothesis_ids, self.hids)
+        self.assertTrue(all(h.judgment == "unverified" for h in self.state().hypotheses))
 
     def test_gap_revision_and_material_changes_reject_stale_proposals(self):
         self.supplement()
