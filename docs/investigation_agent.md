@@ -1,6 +1,6 @@
 # Investigation Agent：自主调查与本轮工作记忆
 
-入口为 `run_investigation(case, goal, selected_info_unit_ids=None, work_context=None, issue_key=None)` 和 `POST /api/cases/{case_id}/agent/run`。运行绑定当前案件的深拷贝；正式对象仍由用户逐项采纳 Proposal 后写入。
+入口为 `run_investigation(case, goal, selected_info_unit_ids=None, work_context=None, issue_key=None)` 和 `POST /api/cases/{case_id}/agent/run`。运行绑定当前案件的深拷贝；Proposal 即时校验暂存，正常 Finish 后整体校验并原子写入当前议题的内部推理对象。用户事后编辑或撤销，详见 `docs/issue_reasoning.md`。
 
 ## 执行和交付
 
@@ -20,17 +20,17 @@ Findings、Proposal 引用须属于当前案件并实际取得；SourceRef 仅�
 
 首轮调查围绕具体信息需求搜索，不混合不同主题来覆盖全案。搜索过滤本次请求已可见的 InfoUnit，缓存按可见排除集隔离；`has_more` 不要求继续读完。取得的信息足以形成任务所需的探索性假设和缺口时，可以直接提交 Proposal 并结束检索。InfoUnit 内容足以支持探索性推理，原始来源只按具体措辞、时间、金额、主体或冲突核查需要读取；Evidence Link 和 Hypothesis Status 的来源要求保持不变。
 
-一个 Evidence Gap 对应一个具体、可独立核查的缺失条件，说明确认内容、判断影响和明确补证动作/材料类型；独立条件分别建缺口，多份材料验证同一条件可合并。Gap 可关联一个或多个命题，不要求它们竞争；先取得实际 ID，同一事实问题只创建一次。创建工具使用 `hypothesis_targets` 对象，内含 `hypothesis_ids` 与 `hypothesis_proposal_ids`；嵌套 `anyOf` 保证至少一项非空，后端再次校验结构、最多5个目标及当前 Issue/Run 的目标真实性，再映射回原有 Proposal 字段。Proposal 类型和采纳契约不变。
+一个 Evidence Gap 对应一个具体、可独立核查的缺失条件，说明确认内容、判断影响和明确补证动作/材料类型；独立条件分别建缺口，多份材料验证同一条件可合并。Gap 可关联一个或多个命题，不要求它们竞争；先取得实际 ID，同一事实问题只创建一次。创建工具使用 `hypothesis_targets` 对象，内含 `hypothesis_ids` 与 `hypothesis_proposal_ids`；嵌套 `anyOf` 保证至少一项非空，后端再次校验结构、最多5个目标及当前 Issue/Run 的目标真实性，再映射回原有 Proposal 字段。Proposal 类型保持不变，依赖在 Finish 后整体提交时解析为正式 ID。
 
-Hypothesis 是可被证据支持或反驳的待验证命题；数量由任务与事实决定，单命题合法，不要求竞争或配对。每份 content 只表达该命题及必要条件，rationale 仅说明它的依据与不确定性，不放整套假设；模型复用已有 reasoning/proposals，成功提交即表示该动作已完成。后端另做有限文本归一化检查：保留 NFKC、casefold、开头 H1/假设1 等显示编号及核查指令词清理及常规分隔标点/空白归一化；完整保留冒号后和括号内的命题、主体、身份及成立条件，不删除小数点、正负号、比例、比较符号或英文词间边界。检查范围为当前 Issue 的完整正式对象（包括模型投影省略的对象）及本轮成功 Proposal，且仅适用于 Hypothesis 与 Evidence Gap。命中时返回 `duplicate_proposal`、原对象来源和 ID，不追加、合并、改写或采纳对象。该检查不使用模糊相似度，也不能保证识别任意同义改写；优先避免错误拦截不同命题，用户仍逐项审阅。
+Hypothesis 是可被证据支持或反驳的待验证命题；数量由任务与事实决定，单命题合法，不要求竞争或配对。每份 content 只表达该命题及必要条件，rationale 仅说明它的依据与不确定性，不放整套假设；模型复用已有 reasoning/proposals，成功提交即表示该动作已完成。后端另做有限文本归一化检查：保留 NFKC、casefold、开头 H1/假设1 等显示编号及核查指令词清理及常规分隔标点/空白归一化；完整保留冒号后和括号内的命题、主体、身份及成立条件，不删除小数点、正负号、比例、比较符号或英文词间边界。检查范围为当前 Issue 的完整正式对象（包括模型投影省略的对象）及本轮成功 Proposal，且仅适用于 Hypothesis 与 Evidence Gap。命中时返回 `duplicate_proposal`、原对象来源和 ID，不追加、合并、改写或采纳对象。该检查不使用模糊相似度，也不能保证识别任意同义改写；优先避免错误拦截不同命题，用户可事后查看、编辑和撤销。
 
 Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成依据，来源引用只能指向已取得的这些节点；不接受 `addressing_info_unit_ids`。正式 Gap 的回应列表初始为空，后续通过现有工作区编辑接口追加去重，材料关联不自动解决 Gap 或改变假设判断。上下文分别提供形成依据、回应材料及各自截断标记；这些引用本身不授予材料读取权限。Hypothesis、Evidence Link、Hypothesis Status 的 `info_unit_ids` 语义保持不变。已保存工作区的一次性迁移见 `docs/issue_reasoning.md`。
 
-`propose_evidence_gap_update` 指定当前 Issue 已提供的 `gap_id`、1–5 个已取得的 `addressing_info_unit_ids`、建议 `status` 和已取得的来源引用。用户采纳前核对目标 Gap revision 与材料哈希，再复用 Gap 编辑入口追加去重回应材料和应用建议状态；保留原 ID、内容、形成依据、Hypothesis 关联。部分回应保持 open，不强制变更 Hypothesis judgment；只有独立的新条件才创建新 Gap。同一建议重复采纳幂等，无实际数据变化不递增 revision。
+`propose_evidence_gap_update` 指定当前 Issue 已提供的 `gap_id`、1–5 个已取得的 `addressing_info_unit_ids`、建议 `status` 和已取得的来源引用。整轮提交前核对运行起点、目标 Gap 和材料哈希，再复用 Gap 编辑入口追加去重回应材料和应用建议状态；保留原 ID、内容、形成依据、Hypothesis 关联。部分回应保持 open，不强制变更 Hypothesis judgment；只有独立的新条件才创建新 Gap。同轮重复提交幂等，无实际数据变化不递增 revision。
 
 初始投影仍最多选择三个推理对象，Hypothesis 与 Gap 共用名额。遗漏不代表正式对象不存在；有 Gap 的 Issue 开放 `search_evidence_gaps(query, info_unit_ids, limit, offset)`，按问题/关联命题关键词或已有材料关联查询，空条件可有界浏览。每次最多3个 Gap、5个相关 Hypothesis、5条 Link；问题与命题最多600字符，材料引用列表仍有截断标记。通过 offset 翻页，不默认注入全部对象或增加推理目录字段。
 
-发现结果复用初始上下文的投影函数，替换现有 `reasoning` 视图，材料和来源工作记忆保留。实际读取的完整 Gap/关联 Hypothesis 目标进入现有后端校验与采纳凭据上下文，包含原修订号；模型不接收这些审计字段。原 Gap 的完整关联在采纳时保留，查询和 Proposal 生成不修改正式工作区；过期目标仍拒绝采纳。Gap 搜索只提供推理对象，不授予 InfoUnit 内容或 SourceRef 引用权限。
+发现结果复用初始上下文的投影函数，替换现有 `reasoning` 视图，材料和来源工作记忆保留。实际读取的完整 Gap/关联 Hypothesis 目标进入现有后端校验与提交凭据上下文，包含原修订号；模型不接收这些审计字段。原 Gap 的完整关联在整轮提交时保留，查询和 Proposal 生成不修改正式工作区；并发修改时整轮拒绝提交。Gap 搜索只提供推理对象，不授予 InfoUnit 内容或 SourceRef 引用权限。
 
 ## 每轮上下文
 
@@ -48,7 +48,7 @@ Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成�
 - `case_info_directory`：总数、稳定 ID、标题、类型、截断及省略数量；按 ID 确定排序，最多80项、条目累计6000字符，标题最多120字符。
 - `materials.info_units/relations/source_refs`：本轮实际取得的去重工具投影，各自带 `items/context_truncated/omitted_ids`。成功搜索摘要进入后续轮次；来源指针仅在 source_refs 中提供一次，不再在每个 InfoUnit 上重复列索引；搜索命中不授予来源引用权限，裁剪不会丢失完整工作记忆。
 - `reasoning`：当前 Issue 中相关的正式假设、缺口和证据关联，保留用户判断、弃用/解决状态，不发送修订号、时间戳和显示布局。
-- `proposals`：本轮已成功提交的提案，保留实际 ID、内容、依据、有效状态与依赖；仅在模型投影中省略 null 和空数组。完整提案与采纳契约仍保存在审计和 API 结果中。
+- `proposals`：本轮已成功提交的提案，保留实际 ID、内容、依据、有效状态与依赖；仅在模型投影中省略 null 和空数组。完整提案与提交记录仍保存在审计和 API 结果中。
 - `notices` 与 `recovery`：必要的空结果、截断范围、来源限制和当前错误。
 
 KnowledgeState 按 InfoUnit ID、Relation ID、SourceRef 的节点/索引合并材料，完整状态不随上下文裁剪而删除。每轮从该状态重建视图；正文、关系和来源分别最多约6500/3500/7500字符，总上下文最多24000字符。优先保留本次明确读取的材料、Goal 文本相关材料和近期材料；超限明确列出省略 ID，模型可重新读取，缓存结果也重新进入视图。不发送完整工具历史、活动索引、计划状态、预算计数或运行审计。
@@ -73,6 +73,6 @@ node --experimental-strip-types --test frontend/tests/investigation-presentation
 git diff --check
 ```
 
-测试覆盖不建计划的事实检索、单命题与相关缺口、多个独立或竞争命题及共享缺口、跨轮引用、去重/省略/重新读取、非法来源、empty/truncated/error、预算、Proposal 部分成功和独立审批、Issue 隔离与 API。Case A 固定 Dataset/Gold/历史 Trace 不改写；Mock 不构成语义质量验收，真实模型行为需另行授权评测。
+测试覆盖不建计划的事实检索、单命题与相关缺口、多个独立或竞争命题及共享缺口、跨轮引用、去重/省略/重新读取、非法来源、empty/truncated/error、预算、Proposal 部分成功和整轮提交/撤销、Issue 隔离与 API。Case A 固定 Dataset/Gold/历史 Trace 不改写；Mock 不构成语义质量验收，真实模型行为需另行授权评测。
 
-本地 UI smoke 可用 `backend/.venv/Scripts/python.exe backend/tests/serve_agent_smoke.py` 启动隔离后端，并在 frontend 运行 `npm run dev -- --host 127.0.0.1`。它只模拟模型边界，不访问外部模型；案件修改与审批只写临时目录。
+本地 UI smoke 可用 `backend/.venv/Scripts/python.exe backend/tests/serve_agent_smoke.py` 启动隔离后端，并在 frontend 运行 `npm run dev -- --host 127.0.0.1`。它只模拟模型边界，不访问外部模型；案件修改与整轮提交只写临时目录。

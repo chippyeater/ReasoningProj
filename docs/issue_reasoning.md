@@ -6,11 +6,11 @@
 
 在 Issue 画布右键“新建假设”，保存内容、证据判断（未证实/已证实/已证伪）与工作状态（活跃/已弃用）。弃用只降低视觉优先级，可以恢复。节点“查看与编辑”或右键进入编辑器。
 
-从假设编辑器或右键“关联已有证据”，选择全案 InfoUnit，填写支持/反对/相关语义与理由。支持为绿色实线，反对为红色虚线，相关为灰色虚线；点击连线可修改或解除。来源原文在关联编辑器按需展开，可定位原信息。默认 related（相关）表示材料与假设有关，但不明确支持或反对。人工/Agent 建议已采纳的来源独立于关联语义，用户修改保留来源并标明人工修正。
+从假设编辑器或右键“关联已有证据”，选择全案 InfoUnit，填写支持/反对/相关语义与理由。支持为绿色实线，反对为红色虚线，相关为灰色虚线；点击连线可修改或解除。来源原文在关联编辑器按需展开，可定位原信息。默认 related（相关）表示材料与假设有关，但不明确支持或反对。人工/Agent 写入的来源独立于关联语义，用户修改保留来源并标明人工修正。
 
 “新建证据缺口”或假设中的“添加证据缺口”支持关联多个假设、可选缺口形成依据和未解决/已解决状态。“用于回应缺口的信息”与形成依据分开管理：先保存缺口，再通过“添加回应材料”选择当前案件 InfoUnit；标题可定位材料，“移除关联”仅解除当前缺口的关联，不删除案件信息或来源。编辑器保存时发送新增与移除差集；未保存的回应修改会禁用“请 Agent 检查”。回应变化不自动改变缺口状态。缺口是问题，不是虚构的材料。正式节点复用当前画布选择、拖动、缩放、坐标与 Issue 恢复机制；新节点寻找空位，不重排已有节点。
 
-保存用户修正后可“请 Agent 检查”，从现有灵动岛发送。Agent 继续按需调用同一组三个只读工具，可返回普通调查答案和可选建议；事实查询不强制生成建议。候选以半透明卡片预览，灵动岛可查看依据、采纳或忽略。采纳前不写正式推理数据，忽略只丢弃本次预览。刷新/切换不保留候选或对话历史。
+保存用户修正后可“请 Agent 检查”，从现有灵动岛发送。提案即时校验后暂存，正常 Finish 后自动整体提交；界面展示实际变更和当时的依据，可查看、编辑、删除或整轮撤销/恢复，不再逐项采纳。变更记录随工作区持久化，关闭结果或刷新后仍可查看。
 
 ## 数据与接口
 
@@ -19,33 +19,28 @@
 - `hypotheses`：稳定 ID、内容、判断、工作状态、修订号、最近修改时间/来源、可选采纳凭据。
 - `gaps`：稳定 ID、问题、关联假设 IDs、`basis_info_unit_ids`（提出缺口的已有信息）、`addressing_info_unit_ids`（创建后累积的回应材料）、解决状态和修订元数据。两类引用独立，不自动复制；同一 InfoUnit 可经明确操作分别关联两种角色。
 - `links`：稳定 ID、InfoUnit 与 Hypothesis IDs、语义、理由、人工/Agent 来源及最近修改者。
-- `accepted_proposals`：服务端运行与建议索引到正式对象的幂等映射。
+- `accepted_proposals`：服务端运行与提案到正式对象的幂等映射。
+- `investigation_runs`：实际变更、原提案、来源快照及整轮撤销/恢复状态。
 
 所属 Issue 由工作区父键确定。业务 InfoUnits、Relations、SourceRefs 不复制、不修改；`HypothesisView` 等既有生成式视图不承担这些可编辑工作对象。旧文件缺少 `reasoning` 时读作空集合，旧坐标与字段保留。引用了某个 InfoUnit 的正式推理关联/缺口会阻止删除该共享信息，避免断开引用。
 
 `PATCH /api/cases/{case_id}/issue-reasoning` 每次接受一个人工操作：`hypothesis`、`gap`、`link` 或 `unlink_id`，绑定 `issue`，可附新节点 `position`。后端分配 ID、修订号和来源，校验所有引用、当前 Issue 归属及重复关联，并通过现有原子 JSON 写入统一保存。Gap 创建时回应列表为空，非空回应只能追加到已有 Gap；编辑时传入 `addressing_info_unit_ids` 与原值按首次出现顺序合并去重，空列表也不会清空旧关联。省略 `basis_info_unit_ids` 或 `status` 时保留原值；显式传入依据列表可替换形成依据，显式传入状态才改变解决状态。追加回应不会改变 Hypothesis 的 judgment。两类引用都校验当前 Case ID 范围，都阻止删除被引用的 InfoUnit，引用类型分别为 `evidence_gap_basis` / `evidence_gap_addressing`。
 
-`POST /api/cases/{case_id}/reasoning-proposals/accept` 使用 `issue/run_id/proposal_id/position`，不接受客户端重新编写建议或证据。旧审计仍可用 proposal_index；两个引用字段必须恰选一个。后端从所属运行的已验证成果读取建议，核对 Issue、材料摘要和目标修订后原子写入正式对象、画布和幂等映射。重复采纳返回已有对象；材料或用户推理改变后旧建议返回冲突。修改关联或缺口同样推进假设修订。
+`POST /api/cases/{case_id}/investigation-changes/reverse` 接收 `issue/run_id/restore`，默认撤销，restore=true 恢复；重复执行幂等。`POST /api/cases/{case_id}/investigation-changes/retry` 可重试正常 Finish 后失败的整轮写入，不调用模型、不更新运行起点、不改写原审计；预算耗尽及异常中止的运行不可重试提交。旧逐项采纳接口已移除。变更涉及的对象须与运行前/后快照一致，且不能破坏后续依赖；否则整轮拒绝并返回409，保护用户后续编辑。撤销保留运行记录和对象映射，不会让重复执行重新创建已删除对象。
 
 ## Agent 边界
 
-新建议只由五个独立 Proposal 工具产生，工具名决定种类；最终回复不携带建议 JSON。成功工具返回随机临时 proposal_id，并立即持久化至本次运行审计。kind 继续用于既有存储和 UI。新假设采纳后仍为未证实、活跃；引用仅使用本轮实际调用 get_evidence 取得的来源。探索性假设/新缺口允许空材料和空引用，界面明确提示尚无直接来源依据；证据关联、判断调整与已有缺口更新必须有可追溯材料。空列表不取消同轮依赖审批或目标版本检查。
+保留所有现有 Proposal 工具。每次校验参数、当前案件/议题对象、实际读取的来源与本轮依赖，并在独立副本复用正式编辑逻辑验证可应用性；失败返回具体字段和修复说明，成功只暂存。新 Hypothesis 的返回 proposal_id 可供本轮 Gap/Link 引用，正常 Finish 时统一分配正式 ID。状态提案不改 content，判断材料不自动创建 EvidenceLink。已有 Link 按 Hypothesis/InfoUnit 对定位，更新语义时保留 ID。
 
-补充证据通过 `propose_evidence_gap_update` 生成 `kind=evidence_gap_update` 建议，包含 `gap_id/addressing_info_unit_ids/status/rationale/evidence_refs`。它不接受新问题或假设关联，采纳时从原 Gap 读取这些字段；审计凭据 `target_gap_revisions` 绑定生成时的目标修订，Gap 或回应材料变化时返回 `stale_reasoning_proposal`。原回应材料与新增 ID 并集合并，部分回应由 Agent 建议保持 open，用户逐项采纳后才保存。重复采纳返回原对象，不重复登记或递增修订；Hypothesis 判断继续由独立工具建议。预览明确显示“更新已有缺口”、原问题、建议状态和回应材料，避免与创建新 Gap 混淆。
+正常 Finish 后，对照运行开始时的完整服务端推理快照及材料哈希，重新验证来源的 Unicode TXT 切片，再在副本应用全部提案；最后一次原子替换保存正式对象、画布、映射和 `investigation_runs`。同轮编辑不再互相检验中间 revision。人工编辑、画布更新、案件快照写入及整轮提交/撤销共享工作区锁；并发推理或相关材料变化返回冲突，不自动覆盖。
 
-hypothesis_ids 保留引用有限上下文中已有假设的方式。Evidence Gap 可填写 hypothesis_proposal_ids，引用同一运行里已经成功返回的 Hypothesis proposal_id；两个列表合计 1–5 个目标。Evidence Link 同样复用该字段，但必须恰有一个正式或临时假设目标、一个 InfoUnit；工具以 hypothesis_id=null 加单项 hypothesis_proposal_ids 指向新假设，已有假设则传正式 ID 和空列表。模型不能自造 ID、引用未来建议、其他运行或其他建议类型。内部调查思路不自动成为 Proposal，也不写工作区。
+`investigation_runs` 保存实际变化对象的 before/after、产生变化的提案键、原提案及当时引用的 SourceRef。它复用现有推理对象模型，不修改 CaseData/Gold 版本，也不复制案件材料为另一份业务数据。旧 `accepted_proposals` 字段保留稳定映射；操作来源沿用现有 agent_accepted 标记，界面显示“Agent 写入”。完整服务端快照与运行记录不进入模型上下文。
 
-新幂等键为 `run_id:proposal_id`，从已采纳映射找到真实假设 ID。依赖新假设的缺口或证据关联都必须等用户先采纳父假设，再独立采纳；不连带采纳、不猜测关联。父假设和材料须未过期；同轮其他已采纳缺口/关联引起的已知修订递增允许继续采纳。用户的其他修改仍会使旧建议失效。
+无实际变化的 Hypothesis/Gap/Link 操作成功返回 no_change，不追加提案、写工作区或递增 revision。Gap 更新只追加去重 `addressing_info_unit_ids`，保留原 ID、content、形成依据和完整 Hypothesis 关联；部分回应可保持 open。引用必须指向本次回应材料，错误应修正原更新，不另建同问题 Gap。Hypothesis 的证据判断独立于 Gap 状态。
 
-同轮对已有假设的独立关联、缺口及已有缺口更新也共享上述规则。服务端 receipt 保存完整目标快照（不进入模型上下文），按 `accepted_proposals` 的实际采纳顺序在独立副本中复用编辑逻辑，核对预期对象和 revision；重复回应的无变化更新不计版本增量。同一缺口的同状态回应可合并，不同状态建议冲突；判断调整仍绑定原始证据状态。用户编辑、其他运行对相关对象的修改，以及当前建议或已采纳关联建议的材料变化，均不能抵扣为本轮版本变化。历史 receipt 没有完整 Gap 快照时不推测回应追加的版本增量，无法验证的旧 Gap 更新需重新调查；历史审计不改写。
+异常、预算耗尽、并发冲突和提交失败整轮不写入；合法提案、工具错误、运行起点和提交状态保存在本地审计供检查。工作区原子运行记录是实际落盘的凭据，即使提交后的审计输出刷新失败也可查验。系统不自动重试付费调用，不提供历史 Proposal 的隐式采纳。
 
-Gap Proposal 只接收 `basis_info_unit_ids`，不接收通用 `info_unit_ids` 或回应列表；其他三类 Proposal 继续使用 `info_unit_ids`，不接收 Gap 专属字段。kind 判别的联合契约校验各自字段；形成依据参与已取得材料/SourceRef 校验和采纳前的材料哈希检查，正式 Gap 采纳后回应列表为空。所有建议仍需逐项采纳。
-
-符合当前字段契约的运行若缺少 proposal_id，仍可按原顺序、hypothesis_proposal_indices 和 `run_id:index` 采纳；新工具不接收数组索引。历史审计与 Trace 不改写，含旧 Gap 字段的待采纳建议不由运行时隐式转换，需重新调查。
-
-总结失败时，成功工具提交的合法成果独立保留，审计为 partial，界面明确显示总结失败；用户仍可明确采纳已验证建议。没有合法成果的失败不会显示成功结果，任何正式对象都不会因为工具调用或总结自动创建。
-
-请求可传最多 3 个 `selected_reasoning_ids`。上下文优先显式选择、其关联缺口、目标关键词与最新修改，最多 3 个工作对象候选、3 个相关假设和 5 条关联；内容摘要最多 300 字、理由最多 160 字，显式标记是否仍有省略。Gap 两类 InfoUnit 引用分别最多投影 5 条，各带 `basis_info_unit_ids_truncated` / `addressing_info_unit_ids_truncated`；完整列表仍保存在工作区中。内容、判断、弃用状态和修订号来自最新用户保存值，不注入完整画布/全部推理/历史对话；其中引用的 InfoUnit IDs 不等于已读证据，仍需按需工具读取。Issue 状态仍完全由用户控制。
+上下文仍为有界投影：按需发现被省略的 Gap，引用 ID 不授予材料读取权限。Agent 自动写入仅限当前 Investigation 的内部推理对象，原始文件、InfoUnits、Relations 和外部操作不在范围内。来源可定位不等于语义充分支持，更不代表单方陈述已被证实。
 
 ## 已保存 Gap 的一次性迁移
 
@@ -62,8 +57,4 @@ backend/.venv/Scripts/python.exe scripts/migrate_gap_references.py backend/data/
 
 ## 离线验收
 
-沿用 `docs/investigation_agent.md` 中的隔离后端和 Vite 启动方法。后端：`test_reasoning_workspace.py`、`test_reasoning_proposals.py`、`test_investigation_context.py`、`test_evidence_link_proposals.py`。可见浏览器：`frontend/tests/reasoning-workspace-smoke.cjs`、`frontend/tests/evidence-link-proposals-smoke.cjs`，只模拟模型边界，真实运行 API、循环、审计与持久化。两组均需从新启动的隔离后端开始，避免彼此已采纳的数据污染数量断言；其他浏览器脚本验证已有功能。
-
-画布仅为实际 Evidence Link 建议绘制 InfoUnit 到新候选/已采纳 Hypothesis 的待确认虚线，附关系含义与待确认标识。可独立预览依据、定位材料、采纳或忽略；父假设采纳后仅重连端点，关联仍待确认。隐藏或忽略的端点不虚构连线；未在当前画布的材料可由用户点击定位加入。候选关系不写入工作区；正式关系继续复用手动 CRUD 与持久化。
-
-尚未验证付费真实模型的建议质量。引用可定位不能证明其充分支持判断；采纳是用户决定，不代表独立核实。不提供多人冲突合并、通用审批/撤销历史、自动收集外部证据、生成布局或通用建议依赖图；仅允许上述同轮 Gap/Link 到新 Hypothesis 的引用。新的证据关系需要进一步检验，不能由片段或引用次数推导独立证据数量。
+后端使用隔离案件与 Mock 模型传输，重点覆盖 `test_investigation_commit.py`、`test_gap_update_proposals.py`、`test_reasoning_proposals.py` 和现有上下文/循环/编辑回归。前端组件测试使用真实 TSX；可见浏览器使用隔离的 `serve_agent_smoke.py` 后端，验证首轮自动提交、统一上传补证、编辑和撤销/恢复。历史审计、固定评测及 Gold 不改写，不调用真实付费模型。

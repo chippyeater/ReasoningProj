@@ -39,8 +39,8 @@
     {
       "name": "investigation_common",
       "path": "backend/prompts/investigation_common_prompt.md",
-      "version": 13,
-      "sha256": "24ac0badaba21ac0e7d801898463b971d3218bceb53e99abe526477ec972ff92"
+      "version": 14,
+      "sha256": "f6cf69eb25e1550df7dcfe8de7e4c3e93a345120da78714505a224bef916223b"
     },
     {
       "name": "reasoning_selector",
