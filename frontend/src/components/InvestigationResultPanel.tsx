@@ -58,7 +58,7 @@ export function InvestigationResultPanel({ result, infoUnits, relations, onLocat
   }
   return <section className="agent-proposal investigation-result" aria-label="Agent 调查结果">
     <header><strong role="status">{result.summary_status === "failed" ? "本轮总结未完成" : statuses[result.completion_status]}</strong><button type="button" onClick={onClose}>关闭结果</button></header>
-    {result.summary_status === "failed" ? <p role="alert">总结未完成，已核查的发现与待确认建议仍可查看。建议尚未采纳。</p>
+    {result.summary_status === "failed" ? <p role="alert">总结未完成，已核查的发现与暂存提案仍可查看。本轮未写入推理工作区。</p>
       : <SummaryMarkdown text={text(result.answer ?? firstFinding?.statement ?? "本轮未形成有依据的调查发现。")} />}
     <aside className="investigation-limit" aria-label="判断范围与限制">
       {result.answer_basis !== "general" && result.answer_basis !== "case_metadata" ? <>

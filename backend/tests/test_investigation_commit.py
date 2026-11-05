@@ -133,6 +133,16 @@ class TestInvestigationCommit(unittest.TestCase):
         with self.assertRaises(AppError):
             self.replay(result)
 
+    def test_finish_preserves_user_issue_switch_during_investigation(self):
+        from app.issue_workspaces import update_issue_workspace, IssueWorkspacePatch
+        hid = self.hypothesis()
+        other = self.case.core_issue
+        result, _ = self.run_proposals([fixture.suggestion("evidence_link", hid)], [hid],
+            before_finish=lambda: update_issue_workspace(self.case, IssueWorkspacePatch(issue=other)))
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
+        self.assertEqual(get_issue_workspaces(self.case).active_issue, other)
+        self.assertEqual(len(self.state().links), 1)
+
     def test_evidence_edit_during_run_blocks_whole_commit(self):
         hid = self.hypothesis()
         saved = self.raw()

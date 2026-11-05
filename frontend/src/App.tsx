@@ -25,7 +25,7 @@ import {
   updateInfoUnit,
   updateRelation,
   updateWorkspaceState,
-  getIssueWorkspaces, updateIssueWorkspace, editIssueReasoning, acceptReasoningProposal,
+  getIssueWorkspaces, updateIssueWorkspace, editIssueReasoning, reverseInvestigationChanges, retryInvestigationChanges,
   type ReasoningState, type ReasoningEdit, type LinkMeaning,
   type IssueWorkspaces, type IssueCanvas, type IssueStatus,
   type CaseData,
@@ -42,7 +42,6 @@ import {
 } from "./api";
 import { ReasoningEditor, judgments, meanings, type ReasoningEditorTarget } from "./components/ReasoningEditor";
 import { ReasoningSuggestions, reasoningText } from "./components/ReasoningSuggestions";
-import { candidateNodeId, evidenceLinkPreview, gapUpdatePreview, hypothesisProposalTargets, proposalInfoUnitIds, proposalKey } from "./components/investigationPresentation";
 import { InvestigationResultPanel } from "./components/InvestigationResultPanel";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
@@ -127,7 +126,6 @@ type CanvasEdge = {
   businessRelationType: Relation["relation_type"] | null;
   reasoningMeaning?: LinkMeaning | "gap";
   reasoningLinkId?: string;
-  proposalIndex?: number;
 };
 
 type Point = { x: number; y: number };
@@ -589,7 +587,6 @@ export default function App() {
   const [reasoningEditor, setReasoningEditor] = useState<ReasoningEditorTarget | null>(null);
   const [reasoningBusy, setReasoningBusy] = useState(false);
   const [reasoningError, setReasoningError] = useState("");
-  const [dismissedProposals, setDismissedProposals] = useState<number[]>([]);
   const selectedReasoningIds = selectedNodeIds.filter(id => [...reasoning.hypotheses, ...reasoning.gaps].some(obj => obj.id === id));
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string | null; relationId: string | null; reasoningLinkId: string | null } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -729,7 +726,7 @@ export default function App() {
     agentRequestRef.current += 1;
     setContextMenu(null);
     setAgentBusy(false);
-    setReasoningEditor(null); setReasoningError(""); setDismissedProposals([]);
+    setReasoningEditor(null); setReasoningError("");
     setAgentResult(null);
     setAgentError("");
   }, [currentCase?.case_id, activeIssue]);
@@ -1073,10 +1070,6 @@ export default function App() {
     return { nodes, edges };
   }, [currentCase, evidences, reasoning]);
 
-  const candidatePositions = useMemo(() => (agentResult?.proposals ?? []).map((_, index) => reasoningPosition(index, 300)), [agentResult?.run_id]);
-  const candidateProposals = (agentResult?.proposals ?? []).map((item, index) => ({ item, index }))
-    .filter(({ index }) => !dismissedProposals.includes(index) && !reasoning.accepted_proposals[proposalKey(agentResult!, index)]);
-
   const canvasData = useMemo(() => {
     if (issues.length && !issueCanvas) return { nodes: [], edges: [] };
     const visible = issueCanvas ? new Set(issueCanvas.visible_node_ids) : null;
@@ -1089,24 +1082,7 @@ export default function App() {
     return { nodes, edges: allCanvasData.edges.filter(edge => ids.has(edge.sourceId) && ids.has(edge.targetId)) };
   }, [allCanvasData, issueCanvas, issues.length]);
 
-  // Temporary edges share the existing renderer, but never enter saved canvas/business data.
-  const candidatePoints: Record<string, Point> = {};
-  if (agentResult) for (const { item, index } of candidateProposals) {
-    if (item.kind === "hypothesis") candidatePoints[candidateNodeId(agentResult, index)] = candidatePositions[index];
-  }
-  const pendingLinkEdges: CanvasEdge[] = [];
-  const edgeLabelBoxes: { x: number; y: number; width: number }[] = [];
-  if (agentResult) for (const { item, index } of candidateProposals) {
-    const preview = evidenceLinkPreview(agentResult, reasoning, index);
-    if (!preview || !canvasData.nodes.some(n => n.id === preview.sourceId)
-        || !(candidatePoints[preview.targetId] || canvasData.nodes.some(n => n.id === preview.targetId))) continue;
-    pendingLinkEdges.push({ id: `pending:${proposalKey(agentResult, index)}`, sourceId: preview.sourceId, targetId: preview.targetId,
-      relationType: `待确认 · ${meanings[item.meaning!]}`, strength: 2, businessRelationType: null,
-      reasoningMeaning: item.meaning!, proposalIndex: index });
-  }
-
   const canvasNodeIdsKey = canvasData.nodes.map((node) => node.id).join("\u0000");
-  const candidateIdsKey = agentResult ? candidateProposals.map(({ index }) => candidateNodeId(agentResult, index)).join("\u0000") : "";
   const canvasNodeLayoutKey = canvasData.nodes.map((node) => `${node.id}:${node.level}`).join("\u0000");
 
   useEffect(() => {
@@ -1497,47 +1473,88 @@ export default function App() {
 
   function reasoningFailure(err: unknown) {
     const text = err instanceof Error ? err.message : "";
-    return text.includes("stale_reasoning_proposal") ? "推理或材料已被修改，请重新调查后再采纳。"
-      : text.includes("proposal_dependency_not_accepted") ? "请先采纳本次调查中的关联假设，再单独采纳关联建议。"
+    return text.includes("stale_investigation_change") ? "这些对象已有后续编辑或依赖，无法撤销或恢复整轮变更。请直接编辑当前对象。"
+      : text.includes("stale_reasoning_proposal") ? "调查期间推理或材料已被修改，请重新调查。原变更未写入。"
       : text.includes("duplicate_evidence_link") ? "该信息已与此假设关联，请编辑已有连线。"
       : "保存推理失败，内容尚未保存，请重试。";
   }
 
-  async function mutateReasoning(edit?: ReasoningEdit, proposalIndex?: number) {
+  function mergeReasoningWorkspaces(caseId: string, issue: string, workspaces: IssueWorkspaces, previousVisible: Set<string>) {
+    if (agentCaseIdRef.current !== caseId || issueStateRef.current?.data.active_issue !== issue) return;
+    // Only merge server-owned reasoning and new membership/positions. The
+    // user may have panned or selected while this write was in flight.
+    const latest = issueStateRef.current;
+    if (!latest) return;
+    const local = latest.data.workspaces[issue];
+    const remote = workspaces.workspaces[issue];
+    const remoteIds = new Set([...remote.reasoning.hypotheses, ...remote.reasoning.gaps].map(obj => obj.id));
+    const deletedIds = new Set([...local.reasoning.hypotheses, ...local.reasoning.gaps]
+      .filter(obj => !remoteIds.has(obj.id)).map(obj => obj.id));
+    const merged = { ...local, reasoning: remote.reasoning, canvas: { ...local.canvas,
+      visible_node_ids: [...new Set([...local.canvas.visible_node_ids, ...remote.canvas.visible_node_ids.filter(id => !previousVisible.has(id))])].filter(id => !deletedIds.has(id)),
+      selected_node_ids: local.canvas.selected_node_ids.filter(id => !deletedIds.has(id)),
+      focused_node_id: deletedIds.has(local.canvas.focused_node_id ?? "") ? null : local.canvas.focused_node_id,
+      node_positions: Object.fromEntries(Object.entries({ ...remote.canvas.node_positions, ...local.canvas.node_positions }).filter(([id]) => !deletedIds.has(id))),
+      display_levels: Object.fromEntries(Object.entries(local.canvas.display_levels).filter(([id]) => !deletedIds.has(id))),
+    } };
+    const next = { ...latest, data: { ...latest.data, workspaces: { ...latest.data.workspaces, [issue]: merged } } };
+    issueStateRef.current = next; setIssueState(next);
+    return remote;
+  }
+
+  async function refreshReasoning(caseId: string, issue: string, previousVisible: Set<string>) {
+    await enqueueWorkspaceMutation(async () => {
+      const workspaces = await getIssueWorkspaces(caseId);
+      mergeReasoningWorkspaces(caseId, issue, workspaces, previousVisible);
+    });
+  }
+
+  async function reverseAgentRun(runId: string, restore: boolean) {
+    if (!currentCase || !activeIssue || reasoningBusy) return;
+    const caseId = currentCase.case_id, issue = activeIssue;
+    setReasoningBusy(true); setReasoningError("");
+    try {
+      await enqueueWorkspaceMutation(async () => {
+        const previousVisible = new Set(issueStateRef.current?.data.workspaces[issue]?.canvas.visible_node_ids ?? []);
+        const response = await reverseInvestigationChanges(caseId, { issue, run_id: runId, restore });
+        if (mergeReasoningWorkspaces(caseId, issue, response.workspaces, previousVisible)) {
+          const canvas = issueStateRef.current!.data.workspaces[issue].canvas;
+          setSelectedNodeIds(canvas.selected_node_ids); setFocusedNodeId(canvas.focused_node_id);
+        }
+      });
+    } catch (err) {
+      if (agentCaseIdRef.current === caseId && issueStateRef.current?.data.active_issue === issue) setReasoningError(reasoningFailure(err));
+    } finally { setReasoningBusy(false); }
+  }
+
+  async function retryAgentRun(runId: string) {
+    if (!currentCase || !activeIssue || reasoningBusy) return;
+    const caseId = currentCase.case_id, issue = activeIssue;
+    setReasoningBusy(true); setReasoningError("");
+    try {
+      await enqueueWorkspaceMutation(async () => {
+        const previousVisible = new Set(issueStateRef.current?.data.workspaces[issue]?.canvas.visible_node_ids ?? []);
+        const response = await retryInvestigationChanges(caseId, { issue, run_id: runId });
+        mergeReasoningWorkspaces(caseId, issue, response.workspaces, previousVisible);
+      });
+    } catch (err) {
+      if (agentCaseIdRef.current === caseId && issueStateRef.current?.data.active_issue === issue) setReasoningError(reasoningFailure(err));
+    } finally { setReasoningBusy(false); }
+  }
+
+  async function mutateReasoning(edit: ReasoningEdit) {
     if (!currentCase || !activeIssue || reasoningBusy) return;
     const caseId = currentCase.case_id;
     const issue = activeIssue;
-    const result = agentResult;
     setReasoningBusy(true); setReasoningError("");
     try {
       let objectId = "";
       await enqueueWorkspaceMutation(async () => {
         const previousVisible = new Set(issueStateRef.current?.data.workspaces[issue]?.canvas.visible_node_ids ?? []);
-        const response = edit
-          ? await editIssueReasoning(caseId, { ...edit, position: edit.position ?? reasoningPosition() })
-          : await acceptReasoningProposal(caseId, { issue, run_id: result!.run_id,
-              ...(result!.proposals?.[proposalIndex!]?.proposal_id ? { proposal_id: result!.proposals[proposalIndex!].proposal_id! } : { proposal_index: proposalIndex! }),
-              position: candidatePositions[proposalIndex!] ?? reasoningPosition() });
+        const response = await editIssueReasoning(caseId, { ...edit, position: edit.position ?? reasoningPosition() });
         objectId = response.object_id;
-        if (agentCaseIdRef.current !== caseId || issueStateRef.current?.data.active_issue !== issue) return;
-        // Only merge server-owned reasoning and new membership/positions. The
-        // user may have panned or selected while this write was in flight.
-        const latest = issueStateRef.current;
-        if (!latest) return;
-        const local = latest.data.workspaces[issue];
-        const remote = response.workspaces.workspaces[issue];
-        const remoteIds = new Set([...remote.reasoning.hypotheses, ...remote.reasoning.gaps].map(obj => obj.id));
-        const deletedIds = new Set([...local.reasoning.hypotheses, ...local.reasoning.gaps]
-          .filter(obj => !remoteIds.has(obj.id)).map(obj => obj.id));
-        const merged = { ...local, reasoning: remote.reasoning, canvas: { ...local.canvas,
-          visible_node_ids: [...new Set([...local.canvas.visible_node_ids, ...remote.canvas.visible_node_ids.filter(id => !previousVisible.has(id))])].filter(id => !deletedIds.has(id)),
-          selected_node_ids: local.canvas.selected_node_ids.filter(id => !deletedIds.has(id)),
-          focused_node_id: deletedIds.has(local.canvas.focused_node_id ?? "") ? null : local.canvas.focused_node_id,
-          node_positions: Object.fromEntries(Object.entries({ ...remote.canvas.node_positions, ...local.canvas.node_positions }).filter(([id]) => !deletedIds.has(id))),
-          display_levels: Object.fromEntries(Object.entries(local.canvas.display_levels).filter(([id]) => !deletedIds.has(id))),
-        } };
-        const next = { ...latest, data: { ...latest.data, workspaces: { ...latest.data.workspaces, [issue]: merged } } };
-        issueStateRef.current = next; setIssueState(next);
+        const remote = mergeReasoningWorkspaces(caseId, issue, response.workspaces, previousVisible);
+        if (!remote) return;
         const point = remote.canvas.node_positions[objectId];
         const rect = wrapperRef.current?.getBoundingClientRect();
         if (point && rect && !previousVisible.has(objectId)) {
@@ -1554,7 +1571,7 @@ export default function App() {
           const canvas = issueStateRef.current.data.workspaces[issue].canvas;
           setSelectedNodeIds(canvas.selected_node_ids); setFocusedNodeId(canvas.focused_node_id);
           scheduleSelectionSync(canvas.selected_node_ids, canvas.focused_node_id);
-        } else if (edit?.hypothesis || edit?.gap || (proposalIndex !== undefined && result?.proposals?.[proposalIndex]?.kind !== "evidence_link")) {
+        } else if (edit?.hypothesis || edit?.gap) {
           setSelectedNodeIds([objectId]); setFocusedNodeId(objectId);
           scheduleSelectionSync([objectId], objectId);
         }
@@ -2145,7 +2162,7 @@ export default function App() {
 
   async function onRunAgent() {
     if (agentBusy) return;
-    setAgentResult(null); setDismissedProposals([]); setReasoningError("");
+    setAgentResult(null); setReasoningError("");
     if (!currentCase) { setAgentError("请先选择案件。"); return; }
     if (issues.length && !issueData) { setAgentError("请先加载当前 Issue 工作区。"); return; }
     if (selectedReasoningIds.length > 3) { setAgentError("每次最多选择 3 个推理对象。"); return; }
@@ -2162,8 +2179,13 @@ export default function App() {
       if (request !== agentRequestRef.current || agentCaseIdRef.current !== caseId) return;
       if (workspaceErrorRef.current) throw new Error("请先重试保存当前工作区，再开展调查。");
       const semanticFocus = focusedNodeId && [...currentCase.info_units, ...reasoning.hypotheses, ...reasoning.gaps].some(obj => obj.id === focusedNodeId) ? focusedNodeId : null;
+      const runIssue = activeIssue;
+      const previousVisible = new Set(issueStateRef.current?.data.workspaces[runIssue]?.canvas.visible_node_ids ?? []);
       const result = await runAgent(caseId, { goal, selected_info_unit_ids: selectedInfoUnitIds, selected_reasoning_ids: selectedReasoningIds, ...(activeIssue ? { current_issue: activeIssue, focused_object_id: semanticFocus } : {}) });
-      if (request === agentRequestRef.current && agentCaseIdRef.current === caseId) setAgentResult(result);
+      if (request === agentRequestRef.current && agentCaseIdRef.current === caseId) {
+        setAgentResult(result);
+        if (runIssue) await refreshReasoning(caseId, runIssue, previousVisible);
+      }
     } catch (err) {
       if (request === agentRequestRef.current && agentCaseIdRef.current === caseId)
         setAgentError(err instanceof Error ? err.message : "调查失败，请重试。");
@@ -2400,7 +2422,7 @@ export default function App() {
     });
 
     const initialSizes: Record<string, NodeSize> = {};
-    [...canvasData.nodes.map(node => node.id), ...candidateIdsKey.split("\u0000").filter(Boolean)].forEach((id) => {
+    canvasData.nodes.map(node => node.id).forEach((id) => {
       const element = nodeElementRefs.current[id];
       if (!element) return;
 
@@ -2420,7 +2442,7 @@ export default function App() {
     });
 
     return () => observer.disconnect();
-  }, [canvasNodeIdsKey, candidateIdsKey]);
+  }, [canvasNodeIdsKey]);
 
   function getNodeSize(nodeId: string): NodeSize {
     return nodeSizes[nodeId] ?? DEFAULT_NODE_SIZE;
@@ -3160,9 +3182,9 @@ export default function App() {
               style={canvasContentStyle}
             >
               <svg className="canvas-links" width={CANVAS_WIDTH} height={CANVAS_HEIGHT}>
-                {[...canvasData.edges, ...pendingLinkEdges].map((edge) => {
+                {canvasData.edges.map((edge) => {
                   const source = nodePositions[edge.sourceId];
-                  const target = nodePositions[edge.targetId] ?? candidatePoints[edge.targetId];
+                  const target = nodePositions[edge.targetId];
                   if (!source || !target) return null;
 
                   const sourceSize = getNodeSize(edge.sourceId);
@@ -3178,20 +3200,15 @@ export default function App() {
                   const labelWidth = Math.max(64, relationType.length * 9 + 20);
                   const labelHeight = 26;
                   let labelY = my;
-                  if (edge.proposalIndex !== undefined) {
-                    while (edgeLabelBoxes.some(box => Math.abs(box.x - mx) < (box.width + labelWidth) / 2 + 4
-                        && Math.abs(box.y - labelY) < labelHeight + 4)) labelY += labelHeight + 6;
-                  }
-                  edgeLabelBoxes.push({ x: mx, y: labelY, width: labelWidth });
 
                   return (
-                    <g key={edge.id} className={edge.proposalIndex !== undefined ? "pending-reasoning-edge" : edge.businessRelationType ? "business-relation-edge" : "derived-relation-edge"} data-proposal-index={edge.proposalIndex} data-reasoning-link-id={edge.reasoningLinkId} data-relation-id={edge.businessRelationType ? edge.id : undefined}>
+                    <g key={edge.id} className={edge.businessRelationType ? "business-relation-edge" : "derived-relation-edge"} data-reasoning-link-id={edge.reasoningLinkId} data-relation-id={edge.businessRelationType ? edge.id : undefined}>
                       <line
                         x1={sx} y1={sy} x2={tx} y2={ty}
-                        className={`canvas-link${edge.businessRelationType ? ` relation-${edge.businessRelationType}` : edge.reasoningMeaning ? ` reasoning-${edge.reasoningMeaning}` : " relation-derived"}${edge.proposalIndex !== undefined ? " reasoning-pending" : ""}`}
+                        className={`canvas-link${edge.businessRelationType ? ` relation-${edge.businessRelationType}` : edge.reasoningMeaning ? ` reasoning-${edge.reasoningMeaning}` : " relation-derived"}`}
                         strokeWidth={edge.strength}
                       />
-                      {edge.businessRelationType || edge.reasoningLinkId || edge.proposalIndex !== undefined ? (
+                      {edge.businessRelationType || edge.reasoningLinkId ? (
                         <line
                           x1={sx} y1={sy} x2={tx} y2={ty}
                           className="relation-edge-hit"
@@ -3199,11 +3216,6 @@ export default function App() {
                           onMouseDown={(event) => event.stopPropagation()}
                           onClick={(event) => {
                             event.stopPropagation();
-                            if (edge.proposalIndex !== undefined) {
-                              const card = document.getElementById(`candidate-preview-${edge.proposalIndex}`);
-                              if (card instanceof HTMLDetailsElement) card.open = true;
-                              return;
-                            }
                             if (edge.reasoningLinkId) { openReasoningEditor({ kind: "link", id: edge.reasoningLinkId }); return; }
                             const relation = currentCase?.relations.find((item) => item.id === edge.id);
                             if (relation) openRelationEditor(relation);
@@ -3294,28 +3306,7 @@ export default function App() {
                   </div>
                 );
               })}
-              {candidateProposals.map(({ item, index }) => {
-                const pending = agentResult ? hypothesisProposalTargets(agentResult, reasoning, index).some(target => !target.accepted) : false;
-                const link = agentResult ? evidenceLinkPreview(agentResult, reasoning, index) : null;
-                const update = gapUpdatePreview(item, reasoning);
-                return <article key={`candidate-${index}`} className="reasoning-candidate"
-                data-proposal-index={index}
-                data-node-id={agentResult ? candidateNodeId(agentResult, index) : undefined}
-                ref={element => { if (agentResult) nodeElementRefs.current[candidateNodeId(agentResult, index)] = element; }}
-                aria-label="候选推理建议" style={{ left: candidatePositions[index]?.x, top: candidatePositions[index]?.y }}
-                onMouseDown={event => event.stopPropagation()} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }}>
-                <strong>Agent 候选 · {update ? "更新已有缺口" : item.kind === "hypothesis" ? "假设" : item.kind === "evidence_gap" ? "证据缺口" : item.kind === "evidence_link" ? meanings[item.meaning!] : "判断建议"}</strong>
-                <p>{update ? update.title : link ? `「${currentCase?.info_units.find(u => u.id === link.sourceId)?.title ?? "相关材料"}」→「${currentCase ? reasoningText(link.title, currentCase, reasoning) : link.title}」`
-                  : currentCase ? reasoningText(item.content ?? reasoning.hypotheses.find(h => h.id === item.hypothesis_ids[0])?.content ?? "待确认的推理建议", currentCase, reasoning, agentResult?.evidence) : "待确认建议"}</p>
-                {update ? <p>{update.statusText} · 追加回应材料，保留原缺口及关联假设。</p> : null}
-                <details id={`candidate-preview-${index}`}><summary>{update ? "预览缺口回应材料" : item.kind === "evidence_gap" ? "预览缺口形成依据" : "预览建议依据"}{!item.evidence_refs.length ? "（未附原文引用）" : ""}</summary>
-                  <p>{currentCase ? reasoningText(item.rationale, currentCase, reasoning, agentResult?.evidence) : item.rationale}</p>
-                  {proposalInfoUnitIds(item).map(id => <button type="button" key={id} onClick={() => locateAgentNode(id)}>定位{currentCase?.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}
-                </details>
-                {pending ? <p>请先采纳关联假设；可在灵动岛查看关联。</p> : null}
-                <span>待确认</span><button type="button" disabled={reasoningBusy || pending || update?.missing} onClick={() => void mutateReasoning(undefined, index)}>采纳</button>
-                <button type="button" disabled={reasoningBusy} onClick={() => setDismissedProposals(ids => [...ids, index])}>忽略</button>
-              </article>; })}
+
             </div>
 
             {island.visible ? (
@@ -3370,9 +3361,10 @@ export default function App() {
                 {agentResult ? <InvestigationResultPanel key={`result-${agentResult.run_id}`} result={agentResult} infoUnits={currentCase?.info_units ?? []}
                   relations={currentCase?.relations ?? []} onLocate={locateAgentNode}
                   onClose={() => setAgentResult(null)} /> : null}
-                {agentResult && currentCase ? <ReasoningSuggestions key={`suggestions-${agentResult.run_id}`} result={agentResult} state={reasoning} caseData={currentCase}
-                  dismissed={dismissedProposals} busy={reasoningBusy} error={reasoningError} onAccept={index => void mutateReasoning(undefined, index)}
-                  onIgnore={index => setDismissedProposals(ids => [...ids, index])} onLocate={locateAgentNode} /> : null}
+                {currentCase ? <ReasoningSuggestions result={agentResult} state={reasoning} caseData={currentCase}
+                  busy={reasoningBusy} error={reasoningError} onReverse={(runId, restore) => void reverseAgentRun(runId, restore)} onRetry={runId => void retryAgentRun(runId)}
+                  onEdit={change => openReasoningEditor({ kind: change.collection === "hypotheses" ? "hypothesis" : change.collection === "gaps" ? "gap" : "link", id: change.object_id })}
+                  onLocate={locateAgentNode} /> : null}
               </div>
             ) : null}
 
@@ -3408,152 +3400,3 @@ export default function App() {
     </main>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

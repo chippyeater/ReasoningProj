@@ -30,27 +30,48 @@ const result = { run_id: 'investigation-test', proposals: [], evidence: [], evid
   goal: '核对收款', answer: '实际收款尚待核实。' };
 const proposal = { proposal_id: 'proposal-test', kind: 'hypothesis', content: '房东少收租金',
   rationale: '需要核对计租与收款。', evidence_refs: [], info_unit_ids: ['info-rent'], hypothesis_ids: [] };
-const props = { state, caseData, dismissed: [], busy: false, error: '',
-  onAccept() {}, onIgnore() {}, onLocate() {} };
+const props = { state, caseData, busy: false, error: '', onReverse() {}, onRetry() {}, onEdit() {}, onLocate() {} };
+const change = { collection: 'hypotheses', object_id: 'hyp-agent', before: null,
+  after: { id: 'hyp-agent', content: '房东少收租金', judgment: 'unverified', work_status: 'active' },
+  proposal_keys: ['investigation-test:proposal-test'] };
+const run = { status: 'applied', changes: [change], proposals: [proposal], evidence: [] };
 
-test('proposal list explains approval once and marks source scope in the evidence control', () => {
-  const html = render(ReasoningSuggestions, { ...props, result: { ...result, proposals: [proposal,
-    { ...proposal, proposal_id: 'proposal-gap', kind: 'evidence_gap', content: '是否足额收款？',
-      basis_info_unit_ids: ['info-rent'], hypothesis_ids: ['hyp-existing'] }] } });
-  assert.equal(html.split('采纳不代表命题已被证实').length - 1, 1);
-  assert.equal(html.split('未附原文引用').length - 1, 2);
-  assert.equal(html.split('租金已足额收取').length - 1, 1);
-  assert.match(html, /采纳建议/);
+test('committed changes show editing and undo without approval controls', () => {
+  const html = render(ReasoningSuggestions, { ...props, result, state: { ...state,
+    hypotheses: [...state.hypotheses, change.after], investigation_runs: { [result.run_id]: run } } });
+  assert.match(html, /已统一写入内部推理对象/);
+  assert.match(html, /查看与编辑/);
+  assert.match(html, /撤销本轮变更/);
+  assert.match(html, /未附原文引用/);
+  assert.doesNotMatch(html, /采纳建议|忽略建议|请先采纳/);
 });
 
-test('Link target is shown once while a pending parent still blocks approval', () => {
-  const parent = { ...proposal, proposal_id: 'proposal-parent', content: '待确认命题' };
-  const link = { ...proposal, proposal_id: 'proposal-link', kind: 'evidence_link', content: null,
-    meaning: 'support', hypothesis_proposal_ids: [parent.proposal_id] };
-  const html = render(ReasoningSuggestions, { ...props, result: { ...result, proposals: [parent, link] }, dismissed: [0] });
-  assert.equal(html.split('待确认命题').length - 1, 1);
-  assert.match(html, /请先采纳关联假设/);
-  assert.match(html, /disabled=""/);
+test('failed and budget exhausted runs expose retained proposals without write controls', () => {
+  for (const status of ['failed', 'conflict', 'budget_exhausted', 'pending']) {
+    const html = render(ReasoningSuggestions, { ...props, result: { ...result,
+      proposals: [proposal], workspace_commit: { status, changes: [] } } });
+    assert.match(html, /未写入任何推理变更/);
+    assert.match(html, /房东少收租金/);
+    assert.doesNotMatch(html, /采纳|撤销本轮变更|恢复本轮变更/);
+  }
+});
+
+test('history survives closing the result and offers restore after undo', () => {
+  const html = render(ReasoningSuggestions, { ...props, result: null, state: { ...state,
+    investigation_runs: { [result.run_id]: { ...run, status: 'undone' } } } });
+  assert.match(html, /已撤销/);
+  assert.match(html, /恢复本轮变更/);
+  assert.doesNotMatch(html, /采纳|待确认/);
+});
+
+test('historical basis uses the committed source snapshot after case material changes', () => {
+  const cited = { ...proposal, evidence_refs: [{ info_unit_id: 'info-rent', source_ref_index: 0 }] };
+  const html = render(ReasoningSuggestions, { ...props, result: null,
+    caseData: { ...caseData, info_units: [{ ...caseData.info_units[0], source_refs: [{ quote: '用户后来改过的来源' }] }] },
+    state: { ...state, investigation_runs: { [result.run_id]: { ...run, proposals: [cited], evidence: [
+      { info_unit_id: 'info-rent', source_ref_index: 0, source_ref: { quote: '运行时实际引用的原文' } }] } } } });
+  assert.match(html, /运行时实际引用的原文/);
+  assert.doesNotMatch(html, /用户后来改过的来源/);
 });
 
 test('result has one missing-source warning and metadata answers do not imply missing evidence', () => {
@@ -71,4 +92,12 @@ test('Hypothesis and Gap editors distinguish a proposition from a factual questi
   const gap = render(ReasoningEditor, { ...common, target: { kind: 'gap', hypothesisId: 'hyp-existing' } });
   assert.match(gap, /待核实的事实问题/);
   assert.match(gap, /value="hyp-existing"|租金已足额收取/);
+});
+
+test('only a normal Finish with failed persistence offers a write retry', () => {
+  for (const status of ['failed', 'conflict', 'pending', 'budget_exhausted']) {
+    const html = render(ReasoningSuggestions, { ...props, result: { ...result, proposals: [proposal],
+      workspace_commit: { status, changes: [] } } });
+    assert.equal(html.includes('重试写入本轮变更'), status === 'failed');
+  }
 });

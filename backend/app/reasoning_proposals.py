@@ -124,6 +124,7 @@ def stage_proposals(case, issue, proposals, current, run_id):
                               after=final.get((section, oid)), proposal_keys=causes.get((section, oid), []))
                for section, oid in dict.fromkeys([*original, *final])
                if original.get((section, oid)) != final.get((section, oid))]
+    staged.active_issue = current.active_issue
     return staged, changes
 
 

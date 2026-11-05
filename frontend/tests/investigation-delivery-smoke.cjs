@@ -18,7 +18,7 @@ const api = 'http://127.0.0.1:8018';
     const work = (await (await page.request.get(url)).json()).workspaces[issue];
     await page.request.patch(url, { data: { issue, canvas: { ...work.canvas,
       visible_node_ids: ['U026', 'U029'], selected_node_ids: ['U026'], focused_node_id: 'U026' } } });
-    await page.goto('http://127.0.0.1:5178');
+    await page.goto('http://127.0.0.1:5178', { waitUntil: 'domcontentloaded' });
     await page.getByRole('tab', { name: issue, exact: true }).waitFor();
     await page.locator('.canvas-node[data-node-id="U026"]').waitFor();
     await page.getByRole('button', { name: 'Agent 调查', exact: true }).click();
@@ -33,48 +33,21 @@ const api = 'http://127.0.0.1:8018';
       await panel.locator(':scope > .investigation-answer').waitFor();
       return result;
     }
-    for (const goal of ['首轮来源直用：什么时候搬进去的', '遗漏来源交付：什么时候搬进去的']) {
-      const result = await ask(goal);
-      assert.equal(result.tool_budget_used.read, 0);
-      assert.equal(result.findings.length, 1);
-      assert.deepEqual(result.evidence_refs, [{ info_unit_id: 'U026', source_ref_index: 0 }]);
-      assert.match(await panel.locator(':scope > .investigation-answer').innerText(), /据张某陈述/);
-      await panel.getByText('查看调查依据', { exact: true }).click();
-      const source = panel.locator('.investigation-source');
-      assert.match(await source.locator('blockquote').innerText(), /3 月 8 号就直接搬进去住了/);
-      await source.getByRole('button', { name: '张某笔录.docx', exact: true }).click();
-      assert.equal(await page.locator('.canvas-node.node-selected').getAttribute('data-node-id'), 'U026');
-    }
-    const recovered = await ask('恢复参数并提出假设');
-    assert.equal(recovered.proposals.length, 1);
-    assert.equal(recovered.tool_budget_used.read, 0);
-    assert.equal(recovered.tool_budget_used.proposal, 2); // Rejected + corrected; one artifact only.
-    await page.getByText('查看待确认建议（1）', { exact: true }).waitFor();
-
-    const exploration = await ask('探索无直接证据的解释和缺口');
-    assert.equal(exploration.findings.length, 0);
-    assert.equal(exploration.evidence_refs.length, 0);
-    assert.equal(exploration.proposals.length, 2);
-    assert.equal(exploration.completion_status, 'evidence_insufficient');
-    await page.getByText('查看待确认建议（2）', { exact: true }).click();
-    const cards = page.locator('.reasoning-suggestion');
-    assert.equal(await cards.locator('summary').filter({ hasText: '未附原文引用' }).count(), 2);
-    assert.ok(await cards.nth(1).getByRole('button', { name: '采纳建议', exact: true }).isDisabled());
-    await page.screenshot({ path: 'tmp/investigation-delivery-exploratory.png' });
-    await cards.nth(0).getByRole('button', { name: '采纳建议', exact: true }).click();
-    await page.waitForFunction(() => document.querySelectorAll('.reasoning-suggestion').length === 1);
-    assert.ok(await cards.nth(0).getByRole('button', { name: '采纳建议', exact: true }).isEnabled());
-    let state = (await (await page.request.get(url)).json()).workspaces[issue].reasoning;
-    assert.equal(state.hypotheses[0].judgment, 'unverified');
-    assert.equal(state.gaps.length, 0);
-    await cards.nth(0).getByRole('button', { name: '采纳建议', exact: true }).click();
-    await page.waitForFunction(() => document.querySelectorAll('.reasoning-suggestion').length === 0);
-    state = (await (await page.request.get(url)).json()).workspaces[issue].reasoning;
-    assert.equal(state.gaps.length, 1);
+    const result = await ask('检查同轮假设和缺口');
+    assert.equal(result.workspace_commit.status, 'applied', JSON.stringify(result));
+    assert.equal(result.proposals.length, 4);
+    const history = page.getByRole('region', { name: '调查变更记录' });
+    await history.getByRole('button', { name: '撤销本轮变更', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: /采纳|忽略建议/ }).count(), 0);
+    const state = (await (await page.request.get(url)).json()).workspaces[issue].reasoning;
+    assert.equal(state.hypotheses.length, 2);
+    assert.equal(state.gaps.length, 2);
+    const ids = new Set(state.hypotheses.map(h => h.id));
+    assert.ok(state.gaps.every(g => g.hypothesis_ids.every(id => ids.has(id))));
     const after = (await (await page.request.get(`${api}/api/case`)).json()).case;
     for (const field of ['info_units', 'relations', 'workspace_state']) assert.deepEqual(after[field], before[field]);
     assert.deepEqual(errors, []);
-    console.log('PASS: zero-read initial citations; missing Findings recovered with original source navigation; rejected/corrected Proposal; ungrounded warnings, explicit insufficiency and independent approval; shared case unchanged.');
+    console.log('PASS: autonomous proposals automatically commit related Hypotheses and Gaps; source scope and shared case preserved.');
   } catch (e) {
     if (page) await page.screenshot({ path: 'tmp/investigation-delivery-failure.png' }).catch(() => {});
     throw e;

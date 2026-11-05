@@ -77,7 +77,7 @@ export function ReasoningEditor({ target, state, caseData, issue, busy, error, o
           <button type="button" disabled={busy} onClick={() => onEdit({ kind: "gap", hypothesisId: target.id })}>添加证据缺口</button>
           <details><summary>查看证据与缺口</summary>
             {links.map(item => <article key={item.id}><button type="button" onClick={() => onLocate(item.info_unit_id)}>{unitTitle(item.info_unit_id)}</button>
-              <p>{meanings[item.meaning]} · {item.origin === "agent" ? "Agent 建议已采纳" : "人工关联"}{item.last_edited_by === "user" && item.origin === "agent" ? " · 已由用户修正" : ""}</p>
+              <p>{meanings[item.meaning]} · {item.origin === "agent" ? "Agent 写入" : "人工关联"}{item.last_edited_by === "user" && item.origin === "agent" ? " · 已由用户修正" : ""}</p>
               <p>{item.rationale}</p><button type="button" onClick={() => onEdit({ kind: "link", id: item.id })}>编辑关联</button></article>)}
             {state.gaps.filter(item => item.hypothesis_ids.includes(target.id!)).map(item => <button key={item.id} type="button" onClick={() => onEdit({ kind: "gap", id: item.id })}>{item.content} · {item.status === "open" ? "未解决" : "已解决"}</button>)}
           </details>

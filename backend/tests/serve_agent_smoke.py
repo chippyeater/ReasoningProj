@@ -82,13 +82,14 @@ async def model(config, messages, definitions, schema=None, **kwargs):
             candidates = [first, second, *[
                 {**suggestion("evidence_link"), "meaning": meaning, "hypothesis_proposal_indices": [parent]}
                 for parent, meaning in ((0, "oppose"), (1, "support"), (0, "related"))]]
+            candidates[-1].update(info_unit_ids=["U036"], evidence_refs=[{"info_unit_id": "U036", "source_ref_index": 0}])
     if len(proposals) < len(candidates):
         return proposal_call(candidates[len(proposals)], [p["proposal_id"] for p in proposals], f"proposal-{len(proposals)}")
     if "总结失败" in goal:
         raise llm_client.LLMFailure("llm_timeout", "Offline failure before delivery")
     answer = "据当事人陈述存在相关情况，尚未独立核实。"
     if analysis:
-        answer = "实际租金损失尚未证实。已提出竞争性解释与共同缺口，请优先核对计租日与收款记录，可逐项采纳或忽略。"
+        answer = "实际租金损失尚未证实。已提出竞争性解释与共同缺口，请优先核对计租日与收款记录；完成后可查看、编辑与撤销变更。"
     if "超长总结" in goal:
         answer = "重复的完整调查报告。" * 150
     return replies.finish(goal, [uid], refs=[(uid, 0)], statement="材料记载的是当事人陈述，仍需独立核实。", answer=answer,

@@ -1,58 +1,10 @@
-import type { AgentResult, InfoUnit, Relation, ReasoningProposal, ReasoningState } from "../api";
+import type { AgentResult, InfoUnit, Relation, ReasoningProposal } from "../api";
 
 type Evidence = AgentResult["evidence"][number];
 
 export function proposalInfoUnitIds(item: ReasoningProposal) {
   return item.kind === "evidence_gap" ? item.basis_info_unit_ids
     : item.kind === "evidence_gap_update" ? item.addressing_info_unit_ids : item.info_unit_ids;
-}
-
-export function gapUpdatePreview(item: ReasoningProposal, state: ReasoningState) {
-  if (item.kind !== "evidence_gap_update") return null;
-  const gap = state.gaps.find(g => g.id === item.gap_id);
-  return { targetId: item.gap_id, title: gap?.content ?? "原缺口已不可用", missing: !gap,
-    statusText: `建议状态：${item.status === "open" ? "开放" : "已解决"}`,
-    hypothesisTitles: (gap?.hypothesis_ids ?? []).map(id => state.hypotheses.find(h => h.id === id)?.content ?? "关联假设") };
-}
-
-export function proposalKey(result: Pick<AgentResult, "run_id" | "proposals">, index: number) {
-  return `${result.run_id}:${result.proposals?.[index]?.proposal_id ?? index}`;
-}
-
-export function candidateNodeId(result: Pick<AgentResult, "run_id" | "proposals">, index: number) {
-  return `candidate:${proposalKey(result, index)}`;
-}
-
-/** Resolve a Link's one endpoint without guessing or crossing run boundaries. */
-export function evidenceLinkPreview(result: Pick<AgentResult, "run_id" | "proposals">, state: ReasoningState, index: number) {
-  const item = result.proposals?.[index];
-  if (item?.kind !== "evidence_link" || item.info_unit_ids.length !== 1) return null;
-  const formal = item.hypothesis_ids.length === 1 ? state.hypotheses.find(h => h.id === item.hypothesis_ids[0]) : null;
-  if (formal && !item.hypothesis_proposal_ids?.length) return {
-    sourceId: item.info_unit_ids[0], targetId: formal.id, title: formal.content, parentIndex: null, pending: false,
-  };
-  if (item.hypothesis_ids.length || item.hypothesis_proposal_ids?.length !== 1) return null;
-  const parentIndex = result.proposals?.findIndex(p => p.proposal_id === item.hypothesis_proposal_ids![0]) ?? -1;
-  const parent = result.proposals?.[parentIndex];
-  if (parent?.kind !== "hypothesis") return null;
-  const key = proposalKey(result, parentIndex);
-  const adopted = state.hypotheses.find(h => h.id === state.accepted_proposals[key] && h.proposal_key === key);
-  return { sourceId: item.info_unit_ids[0], targetId: adopted?.id ?? candidateNodeId(result, parentIndex),
-    title: adopted?.content ?? parent.content ?? "关联假设", parentIndex, pending: !adopted };
-}
-
-/** Resolve returned IDs inside this run; indices are only for older audited results. */
-export function hypothesisProposalTargets(result: Pick<AgentResult, "run_id" | "proposals">, state: ReasoningState, index: number) {
-  const item = result.proposals?.[index];
-  const targets = [...(item?.hypothesis_proposal_indices ?? []), ...(item?.hypothesis_proposal_ids ?? []).map(id =>
-    result.proposals?.findIndex(proposal => proposal.proposal_id === id) ?? -1)];
-  return targets.map(targetIndex => {
-    const proposal = result.proposals?.[targetIndex];
-    const key = proposalKey(result, targetIndex);
-    const id = state.accepted_proposals[key];
-    return { title: proposal?.kind === "hypothesis" ? proposal.content ?? "关联假设" : "关联假设不可用",
-      accepted: proposal?.kind === "hypothesis" && state.hypotheses.some(h => h.id === id && h.proposal_key === key) };
-  });
 }
 
 /** Exact source identity, never similarity, title or InfoUnit identity. */

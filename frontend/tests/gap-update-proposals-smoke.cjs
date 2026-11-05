@@ -1,4 +1,4 @@
-// Headed UI + real upload/Extraction/Agent/adoption APIs; only model replies are mocked.
+// Headed UI + real upload/Extraction/Agent/commit APIs; only model replies are mocked.
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || '@playwright/test');
 const assert = require('node:assert/strict');
 const api = 'http://127.0.0.1:8018';
@@ -49,17 +49,12 @@ const api = 'http://127.0.0.1:8018';
     assert.equal(result.proposals.length, 1);
     assert.equal(result.proposals[0].kind, 'evidence_gap_update');
     assert.equal(result.proposals[0].gap_id, gid);
-    const candidate = page.locator('.reasoning-candidate').filter({ hasText: '更新已有缺口' });
-    await candidate.waitFor();
-    assert.match(await candidate.innerText(), /新租约的起租约定是否实际履行/);
-    assert.match(await candidate.innerText(), /建议状态：开放/);
-    await candidate.getByText('预览缺口回应材料', { exact: true }).click();
-    await candidate.getByRole('button', { name: '定位新合同起租约定', exact: true }).waitFor();
-    assert.deepEqual((await workspace()).reasoning.gaps, before.reasoning.gaps);
-    const accepted = page.waitForResponse(r => r.url().endsWith('/reasoning-proposals/accept'));
-    await candidate.getByRole('button', { name: '采纳', exact: true }).click();
-    assert.equal((await accepted).status(), 200);
-    await candidate.waitFor({ state: 'detached' });
+    assert.equal(result.workspace_commit.status, 'applied', JSON.stringify(result));
+    const changes = page.getByRole('region', { name: '调查变更记录' });
+    await changes.getByText('查看变更依据', { exact: true }).click();
+    assert.match(await changes.innerText(), /部分回应|实际履行/);
+    assert.equal(await page.getByRole('button', { name: /采纳/ }).count(), 0);
+    assert.equal(await page.locator('.reasoning-candidate').count(), 0);
     const after = await workspace();
     assert.equal(after.reasoning.gaps.length, 1);
     const gap = after.reasoning.gaps[0];
@@ -70,11 +65,13 @@ const api = 'http://127.0.0.1:8018';
     assert.deepEqual(gap.addressing_info_unit_ids, result.proposals[0].addressing_info_unit_ids);
     assert.equal(gap.status, 'open');
     assert.deepEqual(after.reasoning.hypotheses.map(h => h.judgment), ['unverified', 'unverified']);
-    const again = await page.request.post(`${api}/api/cases/${cid}/reasoning-proposals/accept`, { data: {
-      issue, run_id: result.run_id, proposal_id: result.proposals[0].proposal_id } });
-    assert.equal((await again.json()).already_accepted, true);
+    await changes.getByRole('button', { name: '撤销本轮变更', exact: true }).click();
+    await changes.getByRole('button', { name: '恢复本轮变更', exact: true }).waitFor();
+    assert.deepEqual((await workspace()).reasoning.gaps, before.reasoning.gaps);
+    await changes.getByRole('button', { name: '恢复本轮变更', exact: true }).click();
+    await changes.getByRole('button', { name: '撤销本轮变更', exact: true }).waitFor();
     assert.deepEqual((await workspace()).reasoning.gaps[0], gap);
     assert.deepEqual(errors, []);
-    console.log('PASS: upload + incremental Extraction -> existing shared Gap update preview -> explicit adoption; open, stable ID/associations, idempotent retry.');
+    console.log('PASS: upload + incremental Extraction -> existing shared Gap update automatic update -> undo/restore; open, stable ID/associations and preserved judgments.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

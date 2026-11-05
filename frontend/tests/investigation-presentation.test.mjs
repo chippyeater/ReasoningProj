@@ -1,96 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { groupSources, displayText, presentQuestion, hypothesisProposalTargets, evidenceLinkPreview, candidateNodeId,
-  gapUpdatePreview, proposalInfoUnitIds } from '../src/components/investigationPresentation.ts';
-
-test('Gap update previews point to the original Gap and both Hypotheses without changing them', () => {
-  const state = Object.freeze({ gaps: Object.freeze([{ id: 'gap-original', content: '是否实际履行起租约定？',
-    hypothesis_ids: ['h-a', 'h-b'], basis_info_unit_ids: ['old-info'], addressing_info_unit_ids: [] }]),
-    hypotheses: Object.freeze([{ id: 'h-a', content: '实际履行' }, { id: 'h-b', content: '未实际履行' }]) });
-  const proposal = Object.freeze({ kind: 'evidence_gap_update', gap_id: 'gap-original',
-    addressing_info_unit_ids: ['new-contract'], status: 'open' });
-  assert.deepEqual(gapUpdatePreview(proposal, state), { targetId: 'gap-original', title: '是否实际履行起租约定？',
-    missing: false, statusText: '建议状态：开放', hypothesisTitles: ['实际履行', '未实际履行'] });
-  assert.deepEqual(proposalInfoUnitIds(proposal), ['new-contract']);
-  assert.deepEqual(state.gaps[0].basis_info_unit_ids, ['old-info']);
-  assert.deepEqual(state.gaps[0].addressing_info_unit_ids, []);
-});
-
-test('Gap update previews flag a missing target and retain distinct basis/addressing displays', () => {
-  const update = { kind: 'evidence_gap_update', gap_id: 'deleted', addressing_info_unit_ids: ['new'], status: 'resolved' };
-  const preview = gapUpdatePreview(update, { gaps: [], hypotheses: [] });
-  assert.equal(preview.missing, true);
-  assert.equal(preview.title, '原缺口已不可用');
-  assert.equal(preview.statusText, '建议状态：已解决');
-  assert.deepEqual(proposalInfoUnitIds({ kind: 'evidence_gap', basis_info_unit_ids: ['basis'] }), ['basis']);
-  assert.deepEqual(proposalInfoUnitIds({ kind: 'hypothesis', info_unit_ids: ['material'] }), ['material']);
-});
-
-test('Link previews use the exact pending or adopted Hypothesis endpoint in this run', () => {
-  const result = { run_id: 'run-a', proposals: [
-    { kind: 'hypothesis', proposal_id: 'proposal-parent', content: '可能少收租金' },
-    { kind: 'evidence_link', info_unit_ids: ['U029'], hypothesis_ids: [], hypothesis_proposal_ids: ['proposal-parent'] },
-  ] };
-  const state = { hypotheses: [], accepted_proposals: {} };
-  assert.deepEqual(evidenceLinkPreview(result, state, 1), {
-    sourceId: 'U029', targetId: candidateNodeId(result, 0), title: '可能少收租金', parentIndex: 0, pending: true,
-  });
-  state.accepted_proposals['run-b:proposal-parent'] = 'hyp-b';
-  state.hypotheses.push({ id: 'hyp-b', content: '另一轮假设', proposal_key: 'run-b:proposal-parent' });
-  assert.equal(evidenceLinkPreview(result, state, 1).pending, true);
-  state.accepted_proposals['run-a:proposal-parent'] = 'hyp-a';
-  state.hypotheses.push({ id: 'hyp-a', content: '已采纳的假设', proposal_key: 'run-a:proposal-parent' });
-  assert.equal(evidenceLinkPreview(result, state, 1).targetId, 'hyp-a');
-  assert.equal(evidenceLinkPreview(result, state, 1).pending, false);
-  const reordered = { ...result, proposals: [...result.proposals].reverse() };
-  assert.equal(evidenceLinkPreview(reordered, state, 0).targetId, 'hyp-a');
-});
-
-test('Link preview rejects missing/wrong parents and retains existing formal-Hypothesis links', () => {
-  const state = { hypotheses: [{ id: 'hyp-existing', content: '已有判断' }], accepted_proposals: {} };
-  const formal = { kind: 'evidence_link', info_unit_ids: ['U029'], hypothesis_ids: ['hyp-existing'] };
-  assert.equal(evidenceLinkPreview({ run_id: 'run-a', proposals: [formal] }, state, 0).targetId, 'hyp-existing');
-  for (const parent of [null, { kind: 'evidence_gap', proposal_id: 'wrong' }]) {
-    assert.equal(evidenceLinkPreview({ run_id: 'run-a', proposals: [
-      { ...formal, hypothesis_ids: [], hypothesis_proposal_ids: ['wrong'] }, ...(parent ? [parent] : [])] }, state, 0), null);
-  }
-});
+import { groupSources, displayText, presentQuestion, proposalInfoUnitIds } from '../src/components/investigationPresentation.ts';
 
 const ref = Object.freeze({ info_unit_id: 'info-one', source_ref_index: 0,
   file_id: 'file-one', filename: '张某笔录.docx', quote: '他 3 月 8 号就直接搬进去住了',
   start: 78, end: 95, source_kind: 'testimony' });
 
-test('Gap targets use original indices and exact run adoption rather than filtered rows', () => {
-  const result = Object.freeze({ run_id: 'run-a', proposals: Object.freeze([
-    { kind: 'hypothesis', content: '无关建议' },
-    { kind: 'evidence_gap', hypothesis_proposal_indices: [2] },
-    { kind: 'hypothesis', content: '与缺口关联的假设' },
-  ]) });
-  const state = { hypotheses: [{ id: 'h', proposal_key: 'run-b:2' }], accepted_proposals: { 'run-b:2': 'h' } };
-  assert.deepEqual(hypothesisProposalTargets(result, state, 1), [{ title: '与缺口关联的假设', accepted: false }]);
-  state.accepted_proposals['run-a:2'] = 'h';
-  assert.equal(hypothesisProposalTargets(result, state, 1)[0].accepted, false);
-  state.hypotheses[0].proposal_key = 'run-a:2';
-  assert.equal(hypothesisProposalTargets(result, state, 1)[0].accepted, true);
-  assert.deepEqual(hypothesisProposalTargets(result, state, 0), []); // Older outputs omit the new field.
-  assert.equal(result.proposals[2].content, '与缺口关联的假设');
-});
-
-test('wrong proposal type, missing accepted object and invalid index never enable adoption', () => {
-  const state = { hypotheses: [], accepted_proposals: { 'run-a:0': 'deleted' } };
-  const result = { run_id: 'run-a', proposals: [{ kind: 'evidence_gap', hypothesis_proposal_indices: [0, 5] }] };
-  assert.ok(hypothesisProposalTargets(result, state, 0).every(target => !target.accepted));
-});
-
-test('returned proposal IDs resolve only inside the current run and survive reordering', () => {
-  const parent = { kind: 'hypothesis', content: '计租连续', proposal_id: 'proposal-parent' };
-  const gap = { kind: 'evidence_gap', proposal_id: 'proposal-gap', hypothesis_proposal_ids: ['proposal-parent'] };
-  const state = { hypotheses: [{ id: 'h', proposal_key: 'run-a:proposal-parent' }],
-    accepted_proposals: { 'run-a:proposal-parent': 'h' } };
-  const result = { run_id: 'run-a', proposals: [gap, parent] };
-  assert.deepEqual(hypothesisProposalTargets(result, state, 0), [{ title: '计租连续', accepted: true }]);
-  assert.equal(hypothesisProposalTargets({ ...result, run_id: 'run-b' }, state, 0)[0].accepted, false);
-  assert.equal(hypothesisProposalTargets({ ...result, proposals: [gap] }, state, 0)[0].accepted, false);
+test('Gap basis and addressing materials stay separate in run history', () => {
+  assert.deepEqual(proposalInfoUnitIds({ kind: 'evidence_gap', basis_info_unit_ids: ['basis'] }), ['basis']);
+  assert.deepEqual(proposalInfoUnitIds({ kind: 'evidence_gap_update', addressing_info_unit_ids: ['response'] }), ['response']);
 });
 
 test('same exact source groups all pointers without changing originals', () => {

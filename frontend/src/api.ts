@@ -18,6 +18,8 @@ export type AgentResult = {
   stop_reason: string;
   tool_call_count: number;
   proposals?: ReasoningProposal[];
+  workspace_commit?: { status: "pending" | "applied" | "undone" | "no_change" | "failed" | "conflict" | "budget_exhausted";
+    changes: ReasoningChange[]; error?: { code: string; message: string } };
 };
 
 export async function runAgent(caseId: string, input: { goal: string; selected_info_unit_ids: string[]; current_issue?: string; selected_reasoning_ids?: string[]; focused_object_id?: string | null }): Promise<AgentResult> {
@@ -384,7 +386,12 @@ export type EvidenceGap = { id: string; content: string; hypothesis_ids: string[
   status: "open" | "resolved"; revision: number; updated_at: string; last_edited_by: "user" | "agent_accepted"; proposal_key: string | null };
 export type EvidenceLink = { id: string; hypothesis_id: string; info_unit_id: string; meaning: LinkMeaning;
   rationale: string; origin: "user" | "agent"; last_edited_by: "user" | "agent_accepted"; proposal_key: string | null };
-export type ReasoningState = { hypotheses: Hypothesis[]; gaps: EvidenceGap[]; links: EvidenceLink[]; accepted_proposals: Record<string, string> };
+export type ReasoningChange = { collection: "hypotheses" | "gaps" | "links"; object_id: string;
+  before: Hypothesis | EvidenceGap | EvidenceLink | null; after: Hypothesis | EvidenceGap | EvidenceLink | null; proposal_keys: string[] };
+export type ReasoningRun = { status: "applied" | "undone"; changes: ReasoningChange[]; proposals: ReasoningProposal[];
+  evidence: Array<AgentEvidenceRef & { source_ref: InfoUnit["source_refs"][number] }> };
+export type ReasoningState = { hypotheses: Hypothesis[]; gaps: EvidenceGap[]; links: EvidenceLink[]; accepted_proposals: Record<string, string>;
+  investigation_runs?: Record<string, ReasoningRun> };
 type ProposalFields = {
   content: string | null; hypothesis_ids: string[]; meaning: LinkMeaning | null;
   judgment: Judgment | null; rationale: string; evidence_refs: AgentEvidenceRef[];
@@ -410,10 +417,16 @@ export async function editIssueReasoning(caseId: string, edit: ReasoningEdit): P
   }));
 }
 
-export async function acceptReasoningProposal(caseId: string, input: {
-  issue: string; run_id: string; proposal_id?: string; proposal_index?: number; position: CardPosition;
-}): Promise<{ workspaces: IssueWorkspaces; object_id: string; already_accepted: boolean }> {
-  return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/reasoning-proposals/accept`, {
+export async function reverseInvestigationChanges(caseId: string, input: {
+  issue: string; run_id: string; restore: boolean;
+}): Promise<{ workspaces: IssueWorkspaces; workspace_commit: ReasoningRun }> {
+  return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/investigation-changes/reverse`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+  }));
+}
+
+export async function retryInvestigationChanges(caseId: string, input: { issue: string; run_id: string }): Promise<{ workspaces: IssueWorkspaces }> {
+  return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/investigation-changes/retry`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
   }));
 }
