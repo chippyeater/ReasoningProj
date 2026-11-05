@@ -64,7 +64,8 @@ class TestInvestigationTools(unittest.TestCase):
         self.assertEqual(self.disk_snapshot(), self.before_files)
 
     def assert_result(self, result, status, code=None):
-        self.assertEqual(set(result), {"status", "items", "has_more", "error"})
+        core = {"status", "items", "has_more", "error"}
+        self.assertTrue(core <= set(result) <= core | {"total_count", "next_offset"})
         self.assertEqual(result["status"], status, result)
         self.assertEqual(result["has_more"], status == "truncated")
         if code:
@@ -190,14 +191,13 @@ class TestInvestigationTools(unittest.TestCase):
             ([" "], "invalid_info_unit_ids"),
         ):
             with self.subTest(ids=ids), patch("app.investigation_tools.read_parsed_document") as read:
-                for tool in (get_relations, get_evidence):
-                    self.assert_result(tool(self.case, ids), "invalid_request", code)
+                self.assert_result(get_relations(self.case, ids), "invalid_request", code)
                 read.assert_not_called()
 
     def test_id_scope_is_the_supplied_case(self):
         other = create_empty_case("其他案件")
-        for tool in (get_relations, get_evidence):
-            self.assert_result(tool(other, ["U029"]), "invalid_request", "unknown_info_unit")
+        self.assert_result(get_relations(other, ["U029"]), "invalid_request", "unknown_info_unit")
+        self.assert_result(get_evidence(other, "U029"), "invalid_request", "unknown_info_unit")
 
     def test_relations_preserve_incoming_outgoing_ids_and_direction(self):
         result = get_relations(self.case, ["U036"])
@@ -275,9 +275,11 @@ class TestInvestigationTools(unittest.TestCase):
     def test_all_gold_evidence_matches_exact_cached_slices(self):
         for unit in self.case.info_units:
             with self.subTest(unit=unit.id):
-                result = get_evidence(self.case, [unit.id])
+                result = get_evidence(self.case, unit.id)
                 self.assert_result(result, "ok")
                 self.assertEqual(len(result["items"]), len(unit.source_refs))
+                self.assertEqual(result["total_count"], len(unit.source_refs))
+                self.assertIsNone(result["next_offset"])
                 for index, (row, original) in enumerate(zip(result["items"], unit.source_refs)):
                     self.assertEqual(row, {"info_unit_id": unit.id, "source_ref_index": index,
                                            "source_ref": original.model_dump(mode="json")})
@@ -287,7 +289,7 @@ class TestInvestigationTools(unittest.TestCase):
 
     def test_evidence_reads_only_returned_files_and_reuses_cache(self):
         with patch("app.investigation_tools.read_parsed_document", wraps=case_store.read_parsed_document) as read:
-            result = get_evidence(self.case, ["U029", "U026"])
+            result = get_evidence(self.case, "U029")
         self.assert_result(result, "ok")
         self.assertEqual(read.call_count, 1)
         self.assertEqual(read.call_args.args[1].file_id, "file-e256bb1ee8")
@@ -296,8 +298,11 @@ class TestInvestigationTools(unittest.TestCase):
         self.assertNotIn("后来也是跟房东重新签了合同", quotes)
 
     def test_evidence_missing_cache_rejects_partial_result_without_parsing(self):
+        case = self.case.model_copy(deep=True)
+        next(u for u in case.info_units if u.id == "U029").source_refs.append(
+            next(u for u in case.info_units if u.id == "U036").source_refs[0])
         with patch("app.investigation_tools.read_parsed_document", wraps=case_store.read_parsed_document) as read:
-            # U029 succeeds first; U036 fails. No partial response is exposed.
+            # Earlier references succeed; a later file fails. Reject the whole page.
             original_reader = case_store.read_parsed_document
 
             def unavailable(case_id, file):
@@ -307,34 +312,45 @@ class TestInvestigationTools(unittest.TestCase):
                 return original_reader(case_id, file)
 
             read.side_effect = unavailable
-            self.assert_result(get_evidence(self.case, ["U029", "U036"]),
+            self.assert_result(get_evidence(case, "U029"),
                                "error", "parsed_cache_unavailable")
 
     def test_evidence_actual_reader_reports_missing_cache(self):
         with patch("app.case_store.artifact_path", return_value=self.data_dir / "missing.txt"):
-            self.assert_result(get_evidence(self.case, ["U029"]), "error", "parsed_cache_unavailable")
+            self.assert_result(get_evidence(self.case, "U029"), "error", "parsed_cache_unavailable")
 
     def test_evidence_mismatched_quote_is_an_error_not_a_fact(self):
         case = self.case.model_copy(deep=True)
         ref = next(unit for unit in case.info_units if unit.id == "U029").source_refs[0]
         ref.quote = "错" * len(ref.quote)
-        self.assert_result(get_evidence(case, ["U029"]), "error", "source_quote_mismatch")
+        self.assert_result(get_evidence(case, "U029"), "error", "source_quote_mismatch")
 
     def test_evidence_ref_count_budget_preserves_complete_quotes(self):
-        ids = ["U019", "U008", "U004", "U029", "U026"]
-        result = get_evidence(self.case, ids)
-        self.assert_result(result, "truncated")
-        self.assertEqual(len(result["items"]), MAX_EVIDENCE_REFS)
-        self.assertEqual(result["items"][-1]["info_unit_id"], "U004")
-        self.assertEqual(result["items"][-1]["source_ref_index"], 0)
-        for row in result["items"]:
+        case, doc = self.synthetic_evidence_case([f"引用{i}😀" for i in range(29)])
+        rows, offset = [], 0
+        with patch("app.investigation_tools.read_parsed_document", return_value=doc):
+            for expected in (12, 12, 5):
+                result = get_evidence(case, "synthetic", offset=offset)
+                self.assertEqual(result["total_count"], 29)
+                self.assertEqual(len(result["items"]), expected)
+                self.assert_result(result, "truncated" if offset + expected < 29 else "ok")
+                rows.extend(result["items"])
+                offset = result["next_offset"]
+        self.assertIsNone(offset)
+        self.assertEqual([row["source_ref_index"] for row in rows], list(range(29)))
+        self.assertEqual([row["source_ref"] for row in rows],
+                         [ref.model_dump(mode="json") for ref in case.info_units[-1].source_refs])
+        for row in rows:
             ref = row["source_ref"]
             self.assertEqual(len(ref["quote"]), ref["end"] - ref["start"])
 
     def test_exact_ref_count_limit_is_not_falsely_marked_truncated(self):
-        result = get_evidence(self.case, ["U019", "U008", "U026"])
+        case, doc = self.synthetic_evidence_case([str(i) for i in range(12)])
+        with patch("app.investigation_tools.read_parsed_document", return_value=doc):
+            result = get_evidence(case, "synthetic")
         self.assert_result(result, "ok")
-        self.assertEqual(len(result["items"]), 8)
+        self.assertEqual(len(result["items"]), 12)
+        self.assertIsNone(result["next_offset"])
 
     def synthetic_evidence_case(self, quotes):
         case = self.case.model_copy(deep=True)
@@ -355,21 +371,92 @@ class TestInvestigationTools(unittest.TestCase):
         return case, ParsedDocument(file_id=file.file_id, text=text)
 
     def test_evidence_character_budget_never_shortens_quotes_or_offsets(self):
-        case, doc = self.synthetic_evidence_case(["甲" * 2000, "乙" * 2000, "丙"])
+        case, doc = self.synthetic_evidence_case(["甲" * 4000, "乙" * 4000, "丙"])
         with patch("app.investigation_tools.read_parsed_document", return_value=doc):
-            result = get_evidence(case, ["synthetic"])
+            result = get_evidence(case, "synthetic")
+            rest = get_evidence(case, "synthetic", offset=result["next_offset"])
         self.assert_result(result, "truncated")
         self.assertEqual(sum(len(row["source_ref"]["quote"]) for row in result["items"]), MAX_EVIDENCE_CHARS)
         for row in result["items"]:
             ref = row["source_ref"]
             self.assertEqual(doc.text[ref["start"]:ref["end"]], ref["quote"])
         self.assertEqual(result["items"][0]["source_ref"]["start"], 3)
+        self.assertEqual(result["next_offset"], 2)
+        self.assert_result(rest, "ok")
+        self.assertEqual([row["source_ref_index"] for row in result["items"] + rest["items"]], [0, 1, 2])
+        self.assertEqual(rest["items"][0]["source_ref"], case.info_units[-1].source_refs[2].model_dump(mode="json"))
 
     def test_single_oversized_reference_is_an_explicit_error(self):
         case, doc = self.synthetic_evidence_case(["甲" * (MAX_EVIDENCE_CHARS + 1)])
         with patch("app.investigation_tools.read_parsed_document", return_value=doc) as read:
-            self.assert_result(get_evidence(case, ["synthetic"]), "error", "evidence_budget_exceeded")
+            self.assert_result(get_evidence(case, "synthetic"), "error", "evidence_budget_exceeded")
             read.assert_not_called()
+
+    def test_evidence_single_id_offset_and_limit_are_strict_before_io(self):
+        cases = [(dict(info_unit_id=value), "invalid_info_unit_id")
+                 for value in (None, [], ["U029"], "", " ", 1, True)]
+        cases += [(dict(info_unit_id="foreign"), "unknown_info_unit")]
+        cases += [(dict(info_unit_id="U029", offset=value), "invalid_offset")
+                  for value in (-1, 0.5, "0", None, True)]
+        cases += [(dict(info_unit_id="U029", limit=value), "invalid_limit")
+                  for value in (0, -1, 13, 1.5, "12", None, True)]
+        with patch("app.investigation_tools.read_parsed_document") as read:
+            for args, code in cases:
+                with self.subTest(args=args):
+                    self.assert_result(get_evidence(self.case, **args), "invalid_request", code)
+            with self.assertRaises(TypeError):
+                get_evidence(self.case, info_unit_ids=["U029"])
+            read.assert_not_called()
+
+    def test_evidence_empty_page_and_custom_limit_do_not_rebase_indices(self):
+        case, doc = self.synthetic_evidence_case([f"原文{i}" for i in range(4)])
+        with patch("app.investigation_tools.read_parsed_document", return_value=doc):
+            page = get_evidence(case, "synthetic", offset=1, limit=2)
+        self.assertEqual([r["source_ref_index"] for r in page["items"]], [1, 2])
+        self.assertEqual(page["next_offset"], 3)
+        with patch("app.investigation_tools.read_parsed_document") as read:
+            for offset in (4, 5, 10**9):
+                empty = get_evidence(case, "synthetic", offset=offset)
+                self.assert_result(empty, "empty")
+                self.assertEqual(empty["total_count"], 4)
+                self.assertIsNone(empty["next_offset"])
+            read.assert_not_called()
+
+    def test_character_page_can_end_before_budget_is_exactly_full(self):
+        case, doc = self.synthetic_evidence_case(["甲" * 4500, "乙" * 4000, "丙"])
+        with patch("app.investigation_tools.read_parsed_document", return_value=doc):
+            first = get_evidence(case, "synthetic")
+            last = get_evidence(case, "synthetic", offset=first["next_offset"])
+        self.assertEqual(first["next_offset"], 1)
+        self.assertEqual([r["source_ref_index"] for r in first["items"] + last["items"]], [0, 1, 2])
+        self.assertEqual([r["source_ref"] for r in first["items"] + last["items"]],
+                         [r.model_dump(mode="json") for r in case.info_units[-1].source_refs])
+        self.assertFalse(last["has_more"])
+
+    def test_oversized_later_reference_rejects_page_without_skipping(self):
+        case, doc = self.synthetic_evidence_case(["已取得", "甲" * 8001, "不可跳过前项"])
+        with patch("app.investigation_tools.read_parsed_document", return_value=doc):
+            self.assert_result(get_evidence(case, "synthetic"), "error", "evidence_budget_exceeded")
+            first = get_evidence(case, "synthetic", limit=1)
+            self.assertEqual(first["next_offset"], 1)
+            self.assert_result(get_evidence(case, "synthetic", offset=1), "error", "evidence_budget_exceeded")
+
+    def test_evidence_pages_use_stored_order_without_recent_batch_sorting(self):
+        case = self.case.model_copy(deep=True)
+        unit = next(u for u in case.info_units if u.id == "U029")
+        unit.source_refs.append(next(u for u in case.info_units if u.id == "U036").source_refs[0])
+        before = unit.model_dump_json()
+        with patch("app.investigation_tools.recent_extraction_files", side_effect=AssertionError("No evidence sorting")):
+            page = get_evidence(case, "U029", offset=2, limit=1)
+        self.assertEqual(page["items"][0]["source_ref_index"], 2)
+        self.assertEqual(page["items"][0]["source_ref"], unit.source_refs[2].model_dump(mode="json"))
+        self.assertEqual(unit.model_dump_json(), before)
+
+    def test_mismatched_source_metadata_rejects_the_page(self):
+        case = self.case.model_copy(deep=True)
+        unit = next(u for u in case.info_units if u.id == "U029")
+        unit.source_refs[1].source_kind = "other"
+        self.assert_result(get_evidence(case, "U029"), "error", "source_quote_mismatch")
 
     def test_search_and_relations_do_not_read_any_files(self):
         with patch("app.investigation_tools.read_parsed_document") as read:
@@ -380,7 +467,7 @@ class TestInvestigationTools(unittest.TestCase):
     def test_response_mutations_cannot_mutate_case(self):
         search_info_units(self.case, "押金")["items"][0]["content"] = "外部修改"
         get_relations(self.case, ["U029"])["items"][0]["relation"]["evidence_unit_ids"].clear()
-        get_evidence(self.case, ["U029"])["items"][0]["source_ref"]["quote"] = "外部修改"
+        get_evidence(self.case, "U029")["items"][0]["source_ref"]["quote"] = "外部修改"
 
     def test_local_investigation_can_choose_next_step_without_whole_case(self):
         hits = search_info_units(self.case, "实际 损失", types=["position", "state"])
@@ -388,7 +475,8 @@ class TestInvestigationTools(unittest.TestCase):
         edges = get_relations(self.case, ["U029"], relation_types=["contradict"])
         neighbor = edges["items"][0]["adjacent_info_units"][0]
         self.assertEqual(neighbor["id"], "U036")
-        evidence = get_evidence(self.case, ["U029", neighbor["id"]])
+        evidence = get_evidence(self.case, "U029")
+        evidence["items"] += get_evidence(self.case, neighbor["id"])["items"]
         self.assertEqual(len(evidence["items"]), 3)
         self.assertEqual({row["source_ref"]["file_id"] for row in evidence["items"]},
                          {"file-e256bb1ee8", "file-06b00bee7b"})

@@ -71,7 +71,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             if len(requests) == 1:
                 return replies.tool("search_info_units", {"query": "合同 租赁", "limit": 1}, "search")
             if len(requests) == 2:
-                return replies.tool("get_evidence", {"info_unit_ids": [state["materials"]["info_units"]["items"][0]["id"]]}, "read")
+                return replies.tool("get_evidence", {"info_unit_id": state["materials"]["info_units"]["items"][0]["id"]}, "read")
             if len(requests) == 3:
                 return replies.tool("propose_evidence_gap_update", args)
             if before_finish:
@@ -124,8 +124,8 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         refs = requests[2]["materials"]["source_refs"]["items"]
         self.assertIn((self.uid, 9, self.fid), [(r["info_unit_id"], r["source_ref_index"], r["source_ref"]["file_id"]) for r in refs])
         self.assertLessEqual(len(refs), investigation_tools.MAX_EVIDENCE_REFS)
-        # The bounded read prioritizes the new source without renumbering it.
-        self.assertEqual(len(investigation_tools.get_evidence(self.case, [self.uid])["items"]), 8)
+        # The original index is reachable directly, without reordering stored sources.
+        self.assertEqual(investigation_tools.get_evidence(self.case, self.uid, offset=9)["items"][0]["source_ref_index"], 9)
         self.assertEqual(result["workspace_commit"]["status"], "applied")
         self.assertEqual(self.state().gaps[0].addressing_info_unit_ids, [self.old_id])
 
@@ -172,7 +172,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                 self.assertNotIn("revision", json.dumps(state["reasoning"]))
                 if len(requests) == 3:
                     self.assertEqual(state["materials"]["source_refs"]["items"], [])
-                    reply = replies.tool("get_evidence", {"info_unit_ids": [self.uid]}, "read-source")
+                    reply = replies.tool("get_evidence", {"info_unit_id": self.uid}, "read-source")
                 elif len(requests) == 4:
                     reply = replies.tool("propose_evidence_gap_update", {"gap_id": gap["id"],
                         "addressing_info_unit_ids": [self.uid], "status": "open", "evidence_refs": pointers,
@@ -267,7 +267,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             self.assertEqual(state["reasoning"]["gaps"][0]["hypothesis_ids"], self.hids[:1])
             self.assertEqual(len(state["reasoning"]["hypotheses"]), 1)
             if len(requests) == 1:
-                return replies.tool("get_evidence", {"info_unit_ids": [self.uid]}, "source")
+                return replies.tool("get_evidence", {"info_unit_id": self.uid}, "source")
             if len(requests) == 2:
                 return replies.tool("propose_evidence_gap_update", {"gap_id": self.gid,
                     "addressing_info_unit_ids": [self.uid], "status": "open", "evidence_refs": pointers,
@@ -314,7 +314,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             states.append(state)
             turn = len(states)
             if turn <= 2:
-                return replies.tool("get_evidence", {"info_unit_ids": [self.old_id if turn == 1 else self.uid]}, f"read-{turn}")
+                return replies.tool("get_evidence", {"info_unit_id": self.old_id if turn == 1 else self.uid}, f"read-{turn}")
             if turn <= 4:
                 if turn == 4:
                     errors = state["recovery"]["validation_details"]["errors"]

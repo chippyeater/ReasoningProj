@@ -53,7 +53,7 @@ class TestSummaryHandoff(unittest.TestCase):
     audits = fixture.TestInvestigationAgent.audits
 
     def test_rejected_answer_is_recoverable_finish_error(self):
-        result, calls = self.run_script("核对", [fixture.tool("get_evidence", {"info_unit_ids": ["U029"]}),
+        result, calls = self.run_script("核对", [fixture.tool("get_evidence", {"info_unit_id": "U029"}),
             fixture.finish('核对', answer='字' * (agent.MAX_SUMMARY_CHARACTERS + 1), call_id='bad', status='completed'),
             fixture.finish('核对', answer='陈述仍需核实。', status='completed')], selected=["U029"])
         self.assertEqual(len(calls), 3)
@@ -64,7 +64,7 @@ class TestSummaryHandoff(unittest.TestCase):
 
     def test_successful_proposals_survive_model_failure_before_finish(self):
         from app import llm_client
-        result, _ = self.run_script("查损失", [fixture.tool("get_evidence", {"info_unit_ids": ["U029"]}),
+        result, _ = self.run_script("查损失", [fixture.tool("get_evidence", {"info_unit_id": "U029"}),
             proposal_call(suggestion("hypothesis"), [], "h"),
             llm_client.LLMFailure("llm_timeout", "mock timeout")], selected=["U029"],
             work_context={"reasoning": {"hypotheses": [], "gaps": []}}, issue_key=self.case.issue_set[1])

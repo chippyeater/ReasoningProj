@@ -38,7 +38,7 @@ Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成�
 
 `case_info_directory` 仅列当前材料视图之外的轻量 ID、标题、类型目录（总数仍为全案数量）；可见材料裁剪后再过滤目录，保证被省略的节点仍可发现。目录、正式 Gap 的形成依据和回应材料 ID 都不授予读取或引用权限。成功搜索的摘要才进入后续 KnowledgeState，SourceRef 按任务需要实际调用 get_evidence 取得。没有默认来源片段或首轮隐式读取。
 
-后端读取最近成功提交的 Extraction 快照中 `selected_file_ids`，按 SourceRef.file_id 识别涉及的节点，包括追加来源的旧 InfoUnit。搜索仍按关键词匹配，但优先返回本批匹配材料；显式 get_evidence 时优先返回本批来源，保留原 SourceRef 索引及8条/4000字符上限，保证旧节点的新来源不会被前面的旧来源挤出。该优先级不进入模型首轮上下文，不修改持久 Issue 或 Canvas。失败/未提交运行不计入批次；人工 Extraction 历史登记不作为新材料，快照无效时读取工具明确报错，不回退或猜测。
+后端读取最近成功提交的 Extraction 快照中 `selected_file_ids`，按 SourceRef.file_id 识别涉及的节点，包括追加来源的旧 InfoUnit。搜索仍按关键词匹配，但优先返回本批匹配材料；get_evidence 对单个 InfoUnit 按 SourceRef 原序分页，每页最多12条/8000字符，通过 next_offset 继续读取，保留原索引。搜索优先级不进入模型首轮上下文，不修改持久 Issue 或 Canvas。失败/未提交运行不计入批次；人工 Extraction 历史登记不作为新材料，快照无效时搜索明确报错，不回退或猜测。
 
 工作区只保存 status、canvas、reasoning；Extraction 不再读写调查候选范围或工作区基线，也不依赖额外工作区写入。删除了调查范围字段、初始化函数和自动合并逻辑，不保留旧字段读取或迁移分支。
 
@@ -51,7 +51,7 @@ Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成�
 - `proposals`：本轮已成功提交的提案，保留实际 ID、内容、依据、有效状态与依赖；仅在模型投影中省略 null 和空数组。完整提案与提交记录仍保存在审计和 API 结果中。
 - `notices` 与 `recovery`：必要的空结果、截断范围、来源限制和当前错误。
 
-KnowledgeState 按 InfoUnit ID、Relation ID、SourceRef 的节点/索引合并材料，完整状态不随上下文裁剪而删除。每轮从该状态重建视图；正文、关系和来源分别最多约6500/3500/7500字符，总上下文最多24000字符。优先保留本次明确读取的材料、Goal 文本相关材料和近期材料；超限明确列出省略 ID，模型可重新读取，缓存结果也重新进入视图。不发送完整工具历史、活动索引、计划状态、预算计数或运行审计。
+KnowledgeState 按 InfoUnit ID、Relation ID、SourceRef 的节点/索引合并材料，完整状态不随上下文裁剪而删除。每轮从该状态重建视图；正文、关系和来源分别最多约6500/3500/12000字符，总上下文最多24000字符。来源优先展示最近读取页，分页提示保留 total_count/next_offset，成功读取下一页后移除已消费的旧游标；先前来源仍可供 Proposal 校验。其余材料仍按明确读取、Goal 文本相关程度和近期材料保留；超限明确列出省略 ID，模型可重新读取，缓存结果也重新进入视图。不发送完整工具历史、活动索引、计划状态、预算计数或运行审计。
 
 ## Prompt 和可观测性
 

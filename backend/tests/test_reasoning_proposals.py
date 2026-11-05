@@ -55,17 +55,18 @@ class TestReasoningProposals(TestReasoningWorkspace):
     def investigate(self, proposals, selected=None, *, summary_failure=False, read_ids=None, before_finish=None):
         goal = "检查假设的支持、反对依据及证据缺口"
         requests = []
+        read_ids = read_ids or ["U029"]
         real_client = httpx.AsyncClient
         def model(request):
             body = json.loads(request.content)
             requests.append(body)
             step = len(requests) - 1
-            if step == 0:
-                reply = replies.tool("get_evidence", {"info_unit_ids": read_ids or ["U029"]})
-            elif step <= len(proposals or []):
+            if step < len(read_ids):
+                reply = replies.tool("get_evidence", {"info_unit_id": read_ids[step]}, f"source-{step}")
+            elif step - len(read_ids) < len(proposals or []):
                 state = json.loads(body["messages"][1]["content"])
                 ids = [p["proposal_id"] for p in state["proposals"]]
-                reply = proposal_call(proposals[step - 1], ids, f"proposal-{step}")
+                reply = proposal_call(proposals[step - len(read_ids)], ids, f"proposal-{step}")
             elif summary_failure:
                 return httpx.Response(500, text="mock final model failure")
             else:

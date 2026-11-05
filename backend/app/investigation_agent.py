@@ -82,10 +82,14 @@ def tool_definitions() -> list[dict]:
             "limit": limit,
         }),
         _function("get_evidence", (
-            "按已知 InfoUnit ID 读取缓存来源的原始引用与文件位置，用于核对具体措辞、时间、金额和主体。"
-            "返回的 source_ref_index 可用于证据关联、Gap 回应和假设状态建议。"
+            "按一个 info_unit_id 定向读取缓存原文，用于核查摘要中的措辞、时间、金额、主体和来源限定，不要求每个节点都读取。"
+            "offset 是原始 SourceRef 列表位置，默认0；limit 默认及最多12，原文总计最多8000字符，引用不截断。"
+            "has_more 为真时用返回的 next_offset 继续读取同一节点；total_count 是该节点引用总数。"
+            "source_ref_index 保留原索引，可用于 Proposal 引用。"
         ), {
-            "info_unit_ids": ids,
+            "info_unit_id": {"type": "string", "minLength": 1},
+            "offset": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": tools.MAX_EVIDENCE_REFS},
         }),
         _function("search_evidence_gaps", (
             "按需发现当前 Issue 已有的 Evidence Gap，包括初始 reasoning 投影省略的对象。"
@@ -172,6 +176,7 @@ def _arguments(name: str, raw: str) -> dict:
                 **{key: getattr(exc, key) for key in ("lineno", "colno", "pos") if hasattr(exc, key)}}]}) from exc
     fields = {d["function"]["name"]: (set(d["function"]["parameters"]["required"]),
               set(d["function"]["parameters"]["properties"])) for d in tool_definitions()}
+    fields["get_evidence"] = ({"info_unit_id"}, fields["get_evidence"][1])
     fields["search_info_units"] = ({"query"}, fields["search_info_units"][1])
     fields["get_relations"] = ({"info_unit_ids"}, fields["get_relations"][1])
     # Existing formal-Hypothesis calls remain valid; native schemas ask for an explicit empty list.
@@ -196,6 +201,9 @@ def _arguments(name: str, raw: str) -> dict:
     if name in {"search_info_units", "get_relations"}:
         args["limit"] = tools.DEFAULT_LIMIT if args.get("limit") is None else args["limit"]
         args.setdefault("types" if name == "search_info_units" else "relation_types", None)
+    if name == "get_evidence":
+        args.setdefault("offset", 0)
+        args.setdefault("limit", tools.MAX_EVIDENCE_REFS)
     if name == "propose_evidence_link":
         args.setdefault("hypothesis_proposal_ids", [])
     if name == "propose_evidence_gap":
@@ -404,13 +412,15 @@ def _tool_recovery(response, name, args=None, case=None):
         details.update(category="tool", errors=[{"loc": [], "code": error["code"]}])
         if error["code"] == "unknown_info_unit":
             known = {u.id for u in case.info_units} if case else set()
-            values = args.get("info_unit_ids", [])
-            details.update(category="reference", errors=[{"loc": ["info_unit_ids", index],
+            values = [args.get("info_unit_id")] if name == "get_evidence" else args.get("info_unit_ids", [])
+            details.update(category="reference", errors=[{"loc": ["info_unit_id"] if name == "get_evidence" else ["info_unit_ids", index],
                 "code": "reference_not_found", "info_unit_id": uid}
                 for index, uid in enumerate(values) if uid not in known] or
                 [{"loc": ["info_unit_ids"], "code": "reference_not_found"}])
-        elif error["code"] in {"invalid_limit", "invalid_filter", "invalid_info_unit_ids", "invalid_query"}:
+        elif error["code"] in {"invalid_limit", "invalid_filter", "invalid_info_unit_ids", "invalid_info_unit_id", "invalid_offset", "invalid_query"}:
             field = ("limit" if error["code"] == "invalid_limit" else
+                     "offset" if error["code"] == "invalid_offset" else
+                     "info_unit_id" if error["code"] == "invalid_info_unit_id" else
                      "types" if error["code"] == "invalid_filter" and name == "search_info_units" else
                      "relation_types" if error["code"] == "invalid_filter" else
                      "query" if error["code"] == "invalid_query" else "info_unit_ids")
@@ -461,11 +471,12 @@ def _tool_recovery(response, name, args=None, case=None):
         elif code == "reference_out_of_range" or code == "evidence_required" or code == "reference_not_obtained" and "source_ref_index" in item:
             step.update(tool="get_evidence", instruction="Actually read the indicated source with get_evidence; use only successfully returned SourceRef indices and resubmit the corrected tool call.")
             if uid:
-                step["arguments"] = {"info_unit_ids": [uid]}
+                step["arguments"] = {"info_unit_id": uid,
+                    "offset": 0 if code == "reference_out_of_range" else item.get("source_ref_index", 0), "limit": tools.MAX_EVIDENCE_REFS}
             elif code == "evidence_required":
                 ids = args.get("info_unit_ids") or ([args["info_unit_id"]] if args.get("info_unit_id") else args.get("addressing_info_unit_ids"))
                 if ids:
-                    step["arguments"] = {"info_unit_ids": ids}
+                    step["arguments"] = {"info_unit_id": ids[0], "offset": 0, "limit": tools.MAX_EVIDENCE_REFS}
                     step["targets"] = [{"info_unit_id": uid, "info_unit_title": u.title}
                         for uid in ids for u in (case.info_units if case else []) if u.id == uid]
         elif code == "reference_not_obtained":

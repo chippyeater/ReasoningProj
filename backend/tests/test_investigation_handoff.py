@@ -46,10 +46,9 @@ class TestInvestigationHandoff(unittest.TestCase):
         state.hypotheses = [Hypothesis(**h, updated_at="test") for h in context["reasoning"]["hypotheses"]]
         state.gaps = [EvidenceGap(**g, updated_at="test") for g in context["reasoning"]["gaps"]]
         persist_issue_workspaces(self.case, current)
-        response = tools.get_evidence(self.case, ["U029", "U036"])
-        self.assertIn(response["status"], {"ok", "truncated"})
+        rows = [row for uid in ("U029", "U036") for row in tools.get_evidence(self.case, uid)["items"]]
         refs = [{"info_unit_id": row["info_unit_id"], "source_ref_index": row["source_ref_index"]}
-                for row in response["items"]]
+                for row in rows]
         seen = {"units": {ref["info_unit_id"] for ref in refs}, "relations": set(),
                 "evidence": {(ref["info_unit_id"], ref["source_ref_index"]) for ref in refs}}
         return context, seen, refs
@@ -200,7 +199,7 @@ class TestInvestigationHandoff(unittest.TestCase):
                 error = recovery["validation_details"]["errors"][0]
                 self.assertEqual(error["code"], "reference_not_obtained")
                 self.assertIn(error["info_unit_id"], units)
-                return f.tool("get_evidence", {"info_unit_ids": [error["info_unit_id"]]}, "source")
+                return f.tool("get_evidence", {"info_unit_id": error["info_unit_id"]}, "source")
             pointer = state["materials"]["source_refs"]["items"][0]
             uid, index = pointer["info_unit_id"], pointer["source_ref_index"]
             self.assertTrue(any(r["info_unit_id"] == uid and r["source_ref_index"] == index

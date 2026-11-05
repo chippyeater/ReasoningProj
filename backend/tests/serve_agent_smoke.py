@@ -28,7 +28,7 @@ async def model(config, messages, definitions, schema=None, **kwargs):
         uid = units[0]["id"]
         refs = [ref for ref in state["materials"]["source_refs"]["items"] if ref["info_unit_id"] == uid]
         if not refs:
-            return replies.tool("get_evidence", {"info_unit_ids": [uid]}, "contract-source")
+            return replies.tool("get_evidence", {"info_unit_id": uid}, "contract-source")
         ref = refs[0]
         if not proposals:
             return replies.tool("propose_evidence_gap_update", {
@@ -51,7 +51,7 @@ async def model(config, messages, definitions, schema=None, **kwargs):
     uid = "U026" if arrival else "U029"
     needed = {"U029", "U036"} if analysis else {uid}
     if not needed <= ids:
-        return replies.tool("get_evidence", {"info_unit_ids": sorted(needed)}, "sources")
+        return replies.tool("get_evidence", {"info_unit_id": sorted(needed - ids)[0]}, f"source-{len(refs)}")
     candidates = []
     if any(w in goal for w in ("假设", "缺口", "建议")) or analysis:
         first = suggestion("hypothesis")

@@ -112,7 +112,7 @@ class TestIncrementalInvestigationContext(IsolatedCaseTest):
         response = investigation_tools.search_info_units(self.case, "付款", limit=2)
         self.assertEqual({row["id"] for row in response["items"]}, {self.visible, new})
         self.assertTrue(response["has_more"])
-        refs = investigation_tools.get_evidence(self.case, [self.visible])["items"]
+        refs = investigation_tools.get_evidence(self.case, self.visible, offset=1)["items"]
         self.assertEqual(refs[0]["source_ref_index"], 1)
         self.assertEqual(refs[0]["source_ref"]["file_id"], fid)
         self.assertEqual(self.ids(self.actual_context()), [])

@@ -16,7 +16,7 @@ class TestAgentAPI(unittest.TestCase):
     def test_http_runs_dynamic_loop_with_bounded_initial_wire_request(self):
         goal = "核对损失说法"
         requests = []
-        replies = [fixtures.tool("get_evidence", {"info_unit_ids": ["U029"]}),
+        replies = [fixtures.tool("get_evidence", {"info_unit_id": "U029"}),
                    fixtures.finish(goal, status='completed')]
 
         def model(request):

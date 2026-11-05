@@ -53,6 +53,7 @@ class KnowledgeState:
             self.info_units[row["id"]] = deepcopy(row)
         self.relations.update((r["id"], deepcopy(r)) for r in canvas.get("relations", []))
         self.priority_ids = list(self.info_units)
+        self.priority_source_keys = set()
         self.focus_ids = set()
         self.notices = []
         if any(v for k,v in canvas.items() if k.startswith("has_more")):
@@ -91,16 +92,22 @@ class KnowledgeState:
                     material_keys.add(("source_refs", self.ref_key(row)))
                     touched.append(row["info_unit_id"])
             self.priority_ids = list(dict.fromkeys([*touched, *self.priority_ids]))
-            self.focus_ids = (set(args.get("info_unit_ids", touched))
+            if name == "get_evidence":
+                self.priority_source_keys = {self.ref_key(row) for row in response.get("items", [])}
+            self.focus_ids = ({args["info_unit_id"]} if name == "get_evidence" else set(args.get("info_unit_ids", touched))
                               if name in READ_TOOLS - {"search_evidence_gaps"} else self.focus_ids)
         # Audit history stays on the server. Notices preserve distinct scopes,
         # including a truncated query after a later unrelated successful query.
         if name in READ_TOOLS:
             key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
-            self.notices = [n for n in self.notices if n.get("key") != key]
+            self.notices = [n for n in self.notices if n.get("key") != key and not (
+                name == "get_evidence" and response["status"] not in {"invalid_request", "error"}
+                and n["tool"] == name and n["arguments"].get("info_unit_id") == args["info_unit_id"]
+                and n.get("next_offset") == args.get("offset", 0))]
             if response.get("has_more") or response["status"] in {"empty", "error"}:
                 self.notices.append({"key": key, "tool": name, "arguments": deepcopy(args),
                     "status": response["status"], "has_more": response.get("has_more", False),
+                    **({k: response[k] for k in ("total_count", "next_offset") if k in response} if name == "get_evidence" else {}),
                     "error": {k:v for k,v in (response.get("error") or {}).items() if k in {"code", "message"}}})
         self.activities.append({"tool": name, "arguments": deepcopy(args), "executed": executed,
             "cached": bool(response.get("cached")), "status": response["status"],
@@ -164,7 +171,8 @@ def model_context(initial, knowledge, recovery=None):
         "materials": {
             "info_units": section(sorted(knowledge.info_units.items(), key=lambda kv:rank(kv[1])), 6500),
             "relations": section(sorted(knowledge.relations.items(), key=relation_rank), 3500),
-            "source_refs": section(sorted(knowledge.source_refs.items(), key=lambda kv:rank(kv[1])), 7500)},
+            "source_refs": section(sorted(knowledge.source_refs.items(),
+                key=lambda kv:(kv[0] not in knowledge.priority_source_keys, *rank(kv[1]))), 12000)},
         "reasoning": deepcopy(reasoning),
         # Transport defaults stay in the audit/adoption contract. Preserve all
         # populated fields and dependency IDs in the model's working memory.

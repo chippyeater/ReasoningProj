@@ -111,7 +111,7 @@ class TestInvestigationWorkflow(unittest.TestCase):
             if turn == 2:
                 self.assertEqual(state["materials"]["info_units"]["items"][0]["id"], "U029")
                 self.assertEqual(state["materials"]["source_refs"]["items"], [])
-                return f.tool("get_evidence", {"info_unit_ids": ["U029"]}, "read-new")
+                return f.tool("get_evidence", {"info_unit_id": "U029"}, "read-new")
             if turn == 3:
                 self.assertTrue(any(r["source_ref_index"] == ref_index and r["source_ref"]["file_id"] == fid for r in state["materials"]["source_refs"]["items"]))
                 return f.tool("propose_evidence_gap_update", {"gap_id": gid, "addressing_info_unit_ids": ["U029"],

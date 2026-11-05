@@ -24,7 +24,8 @@ class TestInvestigationFinish(unittest.TestCase):
 
     def test_obtained_sources_are_retained_without_a_repeated_citation_handoff(self):
         result, calls = self.run_script("核对", [
-            f.tool("get_evidence", {"info_unit_ids": ["U029", "U036"]}),
+            f.tool("get_evidence", {"info_unit_id": "U029"}, "sources-a"),
+            f.tool("get_evidence", {"info_unit_id": "U036"}, "sources-b"),
             f.finish("核对", status="completed", answer="材料存在双方陈述，真实性仍待独立核实。")])
         obtained = {(row["info_unit_id"], row["source_ref_index"])
                     for row in self.audits()[0]["knowledge_state"]["source_refs"].values()}
@@ -47,7 +48,7 @@ class TestInvestigationFinish(unittest.TestCase):
         case = self.case.model_copy(deep=True)
         for ref in next(u for u in case.info_units if u.id == "U029").source_refs:
             ref.quote += "未通过缓存核验的转写"
-        result, _ = self.run_script("核对", [f.tool("get_evidence", {"info_unit_ids": ["U029"]}),
+        result, _ = self.run_script("核对", [f.tool("get_evidence", {"info_unit_id": "U029"}),
             f.finish("核对", questions=["来源未通过核验，不能确认结论。"])], case=case, selected=["U029"])
         self.assertEqual(result["evidence_refs"], [])
         self.assertEqual(result["completion_status"], "evidence_insufficient")

@@ -79,7 +79,7 @@ class TestInvestigationAgent(unittest.TestCase):
     def test_fact_query_reads_without_plan_and_finishes_in_three_calls(self):
         answer = "据张某陈述，新租客3月8日入住，尚未独立核实。"
         result, calls = self.run_script("什么时候入住", [tool("search_info_units", {"query": "入住"}),
-            tool("get_evidence", {"info_unit_ids": ["U026"]}, "source"),
+            tool("get_evidence", {"info_unit_id": "U026"}, "source"),
             finish('什么时候入住', statement=answer, status='completed')])
         self.assertEqual(result["answer"], answer)
         self.assertEqual(result["model_call_count"], 3)
@@ -101,7 +101,7 @@ class TestInvestigationAgent(unittest.TestCase):
             self.assertFalse({"activities", "phase", "remaining_budget", "question_state", "tool_policy"} & state.keys())
 
     def test_selected_summary_requires_an_actual_read_before_using_sources(self):
-        result, calls = self.run_script("核对陈述", [tool("get_evidence", {"info_unit_ids": ["U029"]}),
+        result, calls = self.run_script("核对陈述", [tool("get_evidence", {"info_unit_id": "U029"}),
             finish('核对陈述', status='completed')], selected=["U029"])
         state = json.loads(calls[0]["messages"][1]["content"])
         self.assertEqual(state["materials"]["info_units"]["items"][0]["id"], "U029")
@@ -121,14 +121,15 @@ class TestInvestigationAgent(unittest.TestCase):
 
     def test_directory_cannot_establish_case_facts_or_citations(self):
         result, calls = self.run_script("核对损失", [finish("核对损失", call_id="premature"),
-            tool("get_evidence", {"info_unit_ids": ["U029"]}, "read"),
+            tool("get_evidence", {"info_unit_id": "U029"}, "read"),
             finish('核对损失', status='completed')])
         self.assertEqual(json.loads(calls[1]["messages"][1]["content"])["recovery"]["code"], "initial_information_required")
         self.assertEqual(result["completion_status"], "completed")
 
     def test_work_memory_retains_earlier_material_without_duplicate_messages(self):
         result, calls = self.run_script("比较双方陈述", [tool("get_relations", {"info_unit_ids": ["U029"], "relation_types": ["contradict"]}),
-            tool("get_evidence", {"info_unit_ids": ["U029", "U036"]}, "sources"),
+            tool("get_evidence", {"info_unit_id": "U029"}, "sources-a"),
+            tool("get_evidence", {"info_unit_id": "U036"}, "sources-b"),
             tool("search_info_units", {"query": "月租"}, "rent"),
             finish('比较双方陈述', status='completed')])
         materials = json.loads(calls[-1]["messages"][1]["content"])["materials"]
@@ -154,7 +155,7 @@ class TestInvestigationAgent(unittest.TestCase):
         valid = {**invalid, "evidence_refs": [{"info_unit_id": "U026", "source_ref_index": 0}]}
         _, calls = self.run_script("核对", [tool("search_info_units", {"query": "入住"}),
             proposal_call(invalid, [], "invalid"),
-            tool("get_evidence", {"info_unit_ids": ["U026"]}, "source"),
+            tool("get_evidence", {"info_unit_id": "U026"}, "source"),
             proposal_call(valid, [], "valid"), finish("核对", status="completed")], issue_key=self.case.issue_set[1])
         recovery = json.loads(calls[2]["messages"][1]["content"])["recovery"]
         self.assertEqual(recovery["code"], "invalid_investigation_reference")
@@ -164,21 +165,21 @@ class TestInvestigationAgent(unittest.TestCase):
     def test_malformed_arguments_and_removed_parameters_never_dispatch(self):
         result, calls = self.run_script("核对", [tool("search_info_units", {"query": "入住", "step_id": "S1"}),
             tool("get_evidence", '{"info_unit_ids":["U029"],"info_unit_ids":["U036"]}', "duplicate-key"),
-            tool("get_evidence", {"info_unit_ids": ["U029"]}, "read"),
+            tool("get_evidence", {"info_unit_id": "U029"}, "read"),
             finish('核对', status='completed')])
         self.assertTrue(all(c["result"]["status"] == "invalid_request" for c in self.audits()[0]["tool_calls"][:2]))
         self.assertEqual(result["completion_status"], "completed")
 
     def test_real_tool_failure_can_end_with_specific_limitation(self):
         with patch.object(tools, "get_evidence", side_effect=OSError("unavailable")):
-            result, calls = self.run_script("核对来源", [tool("get_evidence", {"info_unit_ids": ["U029"]}),
+            result, calls = self.run_script("核对来源", [tool("get_evidence", {"info_unit_id": "U029"}),
                 finish("核对来源", questions=["来源文件读取失败，尚不能核对陈述。"] )])
         self.assertEqual(json.loads(calls[-1]["messages"][1]["content"])["recovery"]["code"], "investigation_tool_failed")
         self.assertEqual(result["completion_status"], "evidence_insufficient")
         self.assertEqual(result["evidence_refs"], [])
 
     def test_unknown_id_failure_cannot_substitute_for_actual_read(self):
-        _, calls = self.run_script("核对", [tool("get_evidence", {"info_unit_ids": ["foreign"]}),
+        _, calls = self.run_script("核对", [tool("get_evidence", {"info_unit_id": "foreign"}),
             finish("核对", call_id="too-soon"), tool("search_info_units", {"query": "月租"}, "read"), finish("核对")])
         self.assertEqual(json.loads(calls[2]["messages"][1]["content"])["recovery"]["code"], "initial_information_required")
 
@@ -200,7 +201,7 @@ class TestInvestigationAgent(unittest.TestCase):
             "finish_investigation"})
 
     def test_repeated_read_keeps_finish_available(self):
-        result, _ = self.run_script("核对", [tool("get_evidence", {"info_unit_ids": ["U029"]}, str(i)) for i in range(4)] + [finish("核对")])
+        result, _ = self.run_script("核对", [tool("get_evidence", {"info_unit_id": "U029"}, str(i)) for i in range(4)] + [finish("核对")])
         self.assertEqual(result["stop_reason"], "finish_investigation")
         self.assertEqual(result["summary_status"], "completed")
         self.assertIsNotNone(result["answer"])
@@ -259,7 +260,7 @@ class TestInvestigationAgent(unittest.TestCase):
             tool("get_relations", {"info_unit_ids": ["U029"], "relation_types": ["contradict"]}, "relation"),
             tool("search_info_units", {"query": "不存在凭证丙"}, "empty-c"),
             tool("search_info_units", {"query": "不存在凭证丁"}, "empty-d"),
-            tool("get_evidence", {"info_unit_ids": ["U029"]}, "source"), finish("比较依据")])
+            tool("get_evidence", {"info_unit_id": "U029"}, "source"), finish("比较依据")])
         reads = self.audits()[0]["tool_calls"]
         self.assertEqual([r["no_progress"] for r in reads], [1, 2, 0, 1, 2, 0, 0])
         self.assertTrue(reads[2]["read_progress"])
@@ -292,7 +293,7 @@ class TestInvestigationAgent(unittest.TestCase):
 
     def test_empty_read_cannot_gain_progress_by_reordering_existing_memory(self):
         case, context = self.large_material_case()
-        result, calls = self.run_script("比较条件", [tool("get_evidence", {"info_unit_ids": [f"large-{i}"]}, str(n))
+        result, calls = self.run_script("比较条件", [tool("get_evidence", {"info_unit_id": f"large-{i}"}, str(n))
             for n, i in enumerate((1, 0, 1))] + [finish("比较条件")], case=case, work_context=context)
         views = [json.loads(c["messages"][1]["content"])["materials"]["info_units"] for c in calls]
         self.assertNotEqual(views[0]["items"], views[1]["items"])
@@ -337,7 +338,7 @@ class TestInvestigationAgent(unittest.TestCase):
     def test_selected_source_is_not_implicitly_read_and_explicit_failure_grants_no_source(self):
         case = self.case.model_copy(deep=True)
         next(u for u in case.info_units if u.id == "U029").source_refs[0].quote += "错误转写"
-        result, calls = self.run_script("核对陈述", [tool("get_evidence", {"info_unit_ids": ["U029"]}),
+        result, calls = self.run_script("核对陈述", [tool("get_evidence", {"info_unit_id": "U029"}),
             finish("核对陈述", status="evidence_insufficient", questions=["初始来源未通过核验，尚不能核对原句。"] )], selected=["U029"], case=case)
         state = json.loads(calls[0]["messages"][1]["content"])
         self.assertEqual(state["materials"]["source_refs"]["items"], [])

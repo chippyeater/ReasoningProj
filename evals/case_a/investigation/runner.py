@@ -103,7 +103,7 @@ def _mock_reply(config, messages, definitions, schema=None, **kwargs):
     from app.llm_client import ToolReply
     state = json.loads(messages[1]["content"])
     if not state["materials"]["source_refs"]["items"]:
-        name, args = "get_evidence", {"info_unit_ids": ["U004"]}
+        name, args = "get_evidence", {"info_unit_id": "U004", "offset": 0, "limit": 12}
     else:
         name = "finish_investigation"
         args = {"answer": "Offline protocol sample; source access is not semantic investigation completion.",

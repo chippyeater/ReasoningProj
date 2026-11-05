@@ -23,7 +23,7 @@ class TestInvestigationMemory(unittest.TestCase):
     def test_merge_by_id_retains_sources_and_relations_after_later_reads(self):
         initial = self.initial(); memory = state.KnowledgeState(initial)
         for name, args in (("search_info_units", {"query": "损失"}),
-                           ("get_evidence", {"info_unit_ids": ["U029"]}),
+                           ("get_evidence", {"info_unit_id": "U029"}),
                            ("get_relations", {"info_unit_ids": ["U029"]}),
                            ("search_info_units", {"query": "月租"})):
             memory.merge(name, args, getattr(tools, name)(self.case, **args))
@@ -104,7 +104,7 @@ class TestInvestigationMemory(unittest.TestCase):
 
     def test_failed_reads_never_merge_items_or_grant_permissions(self):
         memory = state.KnowledgeState(self.initial())
-        memory.merge("get_evidence", {"info_unit_ids": ["foreign"]},
+        memory.merge("get_evidence", {"info_unit_id": "foreign"},
             {"status": "invalid_request", "items": [], "has_more": False, "error": {"code": "unknown_info_unit"}})
         self.assertFalse(memory.acquisition()["has_material"])
         self.assertFalse(memory.acquisition()["has_read_result"])

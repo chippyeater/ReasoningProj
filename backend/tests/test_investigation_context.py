@@ -33,7 +33,8 @@ class TestInvestigationContext(unittest.TestCase):
         self.canvas(["U029", "U036", h], ["U029"], h)
         requests = []
         responses = [replies.tool("get_relations", {"info_unit_ids": ["U029"], "relation_types": ["contradict"]}),
-            replies.tool("get_evidence", {"info_unit_ids": ["U029", "U036"]}, "sources"),
+            replies.tool("get_evidence", {"info_unit_id": "U029"}, "sources-a"),
+            replies.tool("get_evidence", {"info_unit_id": "U036"}, "sources-b"),
             replies.finish('核查损失', statement='双方陈述存在分歧，仍需独立核实。', status='completed')]
         def model(request):
             requests.append(json.loads(request.content))

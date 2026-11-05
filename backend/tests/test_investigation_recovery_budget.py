@@ -24,7 +24,7 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
             "info_unit_ids": list(ids), "evidence_refs": []}, f"hyp-{index}")
 
     def mixed_calls(self):
-        return [f.tool("get_evidence", {"info_unit_ids": [uid]}, f"read-{i}")
+        return [f.tool("get_evidence", {"info_unit_id": uid}, f"read-{i}")
                 for i, uid in enumerate(("U029", "U036", "U026", "U004"))] + [self.hypothesis(i) for i in range(4)]
 
     def test_four_reads_four_proposals_share_budget_and_finish_remains(self):
@@ -139,18 +139,18 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
         from test_reasoning_proposals import suggestion, proposal_call
         bad = {**suggestion("hypothesis"), "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 99}]}
         _, calls = self.run_script("核对", [proposal_call(bad, [], "bad"),
-            f.tool("get_evidence", {"info_unit_ids": ["U029"]}, "recover"),
+            f.tool("get_evidence", {"info_unit_id": "U029"}, "recover"),
             f.finish('核对', status='completed')], selected=["U029"], issue_key=self.case.issue_set[1])
         errors = self.recovery(calls[1])["validation_details"]["errors"]
         error = next(e for e in errors if e["code"] == "reference_out_of_range")
         self.assertEqual(error["source_ref_index"], 99)
         self.assertEqual(error["info_unit_id"], "U029")
         self.assertTrue(error["info_unit_title"])
-        self.assertEqual(error["next_action"]["arguments"], {"info_unit_ids": ["U029"]})
+        self.assertEqual(error["next_action"]["arguments"], {"info_unit_id": "U029", "offset": 0, "limit": 12})
 
     def test_failure_recovery_does_not_encourage_blind_retry(self):
         with patch.object(tools, "get_evidence", side_effect=OSError("unavailable")):
-            _, calls = self.run_script("核对", [f.tool("get_evidence", {"info_unit_ids": ["U029"]}, "failed"),
+            _, calls = self.run_script("核对", [f.tool("get_evidence", {"info_unit_id": "U029"}, "failed"),
                 f.finish("核对")])
         self.assertEqual(self.recovery(calls[1])["next_action"]["steps"][0]["code"], "investigation_tool_failed")
         self.assertFalse(json.loads(calls[1]["messages"][1]["content"])["materials"]["source_refs"]["items"])

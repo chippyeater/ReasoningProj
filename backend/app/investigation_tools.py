@@ -20,8 +20,8 @@ MAX_LIMIT = 8
 MAX_NODE_IDS = 5
 SUMMARY_CHARS = 120
 MAX_QUERY_CHARS = 200
-MAX_EVIDENCE_REFS = 8
-MAX_EVIDENCE_CHARS = 4000
+MAX_EVIDENCE_REFS = 12
+MAX_EVIDENCE_CHARS = 8000
 
 
 def recent_extraction_files(case: CaseData) -> set[str]:
@@ -224,15 +224,20 @@ def search_evidence_gaps(case: CaseData, query: str | None = None, info_unit_ids
     return _result([view], has_more=len(matches) > offset + limit)
 
 
-def get_evidence(case: CaseData, info_unit_ids: list[str]) -> dict:
+def get_evidence(case: CaseData, info_unit_id: str, offset: int = 0, limit: int = 12) -> dict:
     """Return exact SourceRefs, checked against only their existing cached TXT.
 
-    At most 5 requested nodes, 8 references and 4000 quote characters. References
-    are never shortened. Cache/source failures reject the complete response.
+    One InfoUnit, in stored SourceRef order, up to 12 full quotes / 8000 characters.
+    Pagination keeps original indices. Cache/source failures reject the whole page.
     """
     try:
-        units = _selected_units(case, info_unit_ids)
-        recent_files = recent_extraction_files(case)
+        if not isinstance(info_unit_id, str) or not info_unit_id.strip():
+            raise AppError("invalid_info_unit_id", "info_unit_id must be one nonempty InfoUnit ID")
+        if type(offset) is not int or offset < 0:
+            raise AppError("invalid_offset", "offset must be a nonnegative integer")
+        if type(limit) is not int or not 1 <= limit <= MAX_EVIDENCE_REFS:
+            raise AppError("invalid_limit", "limit must be an integer from 1 to 12")
+        unit = _selected_units(case, [info_unit_id])[0]
     except AppError as exc:
         return _failure(exc)
 
@@ -241,28 +246,29 @@ def get_evidence(case: CaseData, info_unit_ids: list[str]) -> dict:
     files = {file.file_id: file for file in case.files}
     quote_chars = 0
     try:
-        for unit in units:
-            # Keep domain indices stable while making a newly appended source
-            # reachable within the existing bounded response, only when read.
-            for index, ref in sorted(enumerate(unit.source_refs), key=lambda item: item[1].file_id not in recent_files):
-                if len(items) == MAX_EVIDENCE_REFS:
-                    return _result(items, has_more=True)
-                if len(ref.quote) > MAX_EVIDENCE_CHARS:
-                    raise AppError("evidence_budget_exceeded",
-                                   "A complete SourceRef exceeds the tool's 4000-character budget")
-                if quote_chars + len(ref.quote) > MAX_EVIDENCE_CHARS:
-                    return _result(items, has_more=True)
-                file = files[ref.file_id]
-                if ref.file_id not in documents:
-                    documents[ref.file_id] = read_parsed_document(case.case_id, file).text
-                text = documents[ref.file_id]
-                if (ref.source_kind != file.source_kind or ref.end > len(text)
-                        or text[ref.start:ref.end] != ref.quote):
-                    raise AppError("source_quote_mismatch",
-                                   "SourceRef does not match the current case's cached TXT and metadata", 409)
-                items.append({"info_unit_id": unit.id, "source_ref_index": index,
-                              "source_ref": ref.model_dump(mode="json")})
-                quote_chars += len(ref.quote)
+        for index in range(offset, min(len(unit.source_refs), offset + limit)):
+            ref = unit.source_refs[index]
+            if len(ref.quote) > MAX_EVIDENCE_CHARS:
+                raise AppError("evidence_budget_exceeded",
+                               f"SourceRef {index} exceeds the tool's 8000-character budget")
+            if quote_chars + len(ref.quote) > MAX_EVIDENCE_CHARS:
+                break
+            file = files.get(ref.file_id)
+            if file is None:
+                raise AppError("source_quote_mismatch", "SourceRef file does not belong to the current case", 409)
+            if ref.file_id not in documents:
+                documents[ref.file_id] = read_parsed_document(case.case_id, file).text
+            text = documents[ref.file_id]
+            if (ref.source_kind != file.source_kind or ref.end > len(text)
+                    or text[ref.start:ref.end] != ref.quote):
+                raise AppError("source_quote_mismatch",
+                               "SourceRef does not match the current case's cached TXT and metadata", 409)
+            items.append({"info_unit_id": unit.id, "source_ref_index": index,
+                          "source_ref": ref.model_dump(mode="json")})
+            quote_chars += len(ref.quote)
     except AppError as exc:
         return _failure(exc, status="error")
-    return _result(items)
+    next_offset = offset + len(items)
+    has_more = next_offset < len(unit.source_refs)
+    return {**_result(items, has_more=has_more), "total_count": len(unit.source_refs),
+            "next_offset": next_offset if has_more else None}

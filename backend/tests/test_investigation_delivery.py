@@ -65,8 +65,8 @@ class TestInvestigationDelivery(unittest.TestCase):
             state = json.loads(call["messages"][1]["content"])
             self.assertEqual(state["goal"], goal)
             proposals = state["proposals"]
-            if turn == 1:
-                return f.tool("get_evidence", {"info_unit_ids": ["U029", "U036"]}, "read")
+            if turn <= 2:
+                return f.tool("get_evidence", {"info_unit_id": "U029" if turn == 1 else "U036"}, f"read-{turn}")
             if len(proposals) < 2:
                 uid = "U029" if not proposals else "U036"
                 return f.tool("propose_hypothesis", {
@@ -85,7 +85,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         self.assertNotEqual(proposals[0]["content"], proposals[1]["content"])
         self.assertEqual(proposals[2]["hypothesis_proposal_ids"], [p["proposal_id"] for p in proposals[:2]])
         self.assertNotIn("findings", result)
-        self.assertEqual(len(calls), 5)
+        self.assertEqual(len(calls), 6)
         self.assertIn("proposal_receipt", self.audits()[0])
 
     def test_invalid_proposal_does_not_appear_in_memory_or_receipt(self):
@@ -145,7 +145,7 @@ class TestInvestigationDelivery(unittest.TestCase):
                 cited = {**common, "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}
                 result, calls = self.run_script("核对假设依据", [f.tool("search_info_units", {"query": "损失"}),
                     f.tool(name, common, "empty-ref"), f.tool(name, cited, "unobtained-ref"),
-                    f.tool("get_evidence", {"info_unit_ids": ["U029"]}, "source"),
+                    f.tool("get_evidence", {"info_unit_id": "U029"}, "source"),
                     f.tool(name, cited, "valid-ref"), f.finish("核对假设依据", status="completed")],
                     work_context=context, issue_key=self.case.issue_set[1])
                 missing = json.loads(calls[2]["messages"][1]["content"])["recovery"]
@@ -159,7 +159,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         backend = tracing.FakeBackend()
         with patch.object(observability, "load_settings", return_value=tracing.SETTINGS), patch.object(observability, "_get_backend", return_value=backend):
             result, calls = self.run_script("核对陈述", [f.tool("search_info_units", {"query": "损失"}, "search"),
-                f.tool("get_evidence", {"info_unit_ids": ["U029"]}),
+                f.tool("get_evidence", {"info_unit_id": "U029"}),
                 f.finish('核对陈述', status='completed')])
         audit = self.audits()[0]
         prompt = load_prompt(agent.PROMPT_PATH, agent.PROMPT_NAME)

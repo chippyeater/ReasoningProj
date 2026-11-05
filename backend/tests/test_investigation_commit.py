@@ -53,8 +53,7 @@ class TestInvestigationCommit(unittest.TestCase):
             {**fixture.suggestion("evidence_link"), "hypothesis_proposal_indices": [1]}]
         def respond(call, turn):
             if turn <= 4:
-                return agent_fixture.tool("get_evidence", {"info_unit_ids": [
-                    ("U029", "U036", "U026", "U004")[turn - 1]]}, f"read-{turn}")
+                return agent_fixture.tool("get_evidence", {"info_unit_id": ("U029", "U036", "U026", "U004")[turn - 1]}, f"read-{turn}")
             if turn <= 8:
                 state = json.loads(call["messages"][1]["content"])
                 return fixture.proposal_call(proposals[turn - 5],
