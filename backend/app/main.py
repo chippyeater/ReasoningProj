@@ -29,8 +29,8 @@ from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_p
 from app.investigation_agent import run_investigation
 from app.reasoning_models import ReasoningEdit
 from app.reasoning_service import edit_reasoning
-from app.reasoning_models import AcceptReasoningProposal
-from app.reasoning_proposals import accept_proposal
+from app.reasoning_models import InvestigationRunEdit, InvestigationRunRef
+from app.reasoning_proposals import reverse_investigation, retry_investigation
 from app.issue_workspaces import IssueWorkspacePatch, get_issue_workspaces, update_issue_workspace, investigation_context
 from app.observability import flush as flush_observability
 from app.quote_units import QuoteUnit
@@ -273,9 +273,14 @@ async def update_issue_reasoning(case_id: str, payload: ReasoningEdit):
     return {"workspaces": state, "object_id": object_id}
 
 
-@app.post("/api/cases/{case_id}/reasoning-proposals/accept")
-async def accept_reasoning_proposal(case_id: str, payload: AcceptReasoningProposal):
-    return accept_proposal(require_case(case_id), payload)
+@app.post("/api/cases/{case_id}/investigation-changes/reverse")
+async def reverse_investigation_changes(case_id: str, payload: InvestigationRunEdit):
+    return reverse_investigation(require_case(case_id), payload.issue, payload.run_id, restore=payload.restore)
+
+
+@app.post("/api/cases/{case_id}/investigation-changes/retry")
+async def retry_investigation_changes(case_id: str, payload: InvestigationRunRef):
+    return retry_investigation(require_case(case_id), payload.issue, payload.run_id)
 
 
 @app.patch("/api/cases/{case_id}/issue-workspaces")

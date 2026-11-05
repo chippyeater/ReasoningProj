@@ -131,14 +131,17 @@ class TestInvestigationDelivery(unittest.TestCase):
 
     def test_source_required_proposals_reject_empty_and_unobtained_refs_then_recover(self):
         context = self.context()
-        context["reasoning"]["hypotheses"] = [{"id": "formal-hypothesis", "content": "存在租金损失", "revision": 1}]
         for name in ("propose_evidence_link", "propose_hypothesis_status"):
             with self.subTest(name=name):
-                common = {"hypothesis_id": "formal-hypothesis", "rationale": "核对陈述的具体依据", "evidence_refs": []}
+                from app.reasoning_service import edit_reasoning
+                from app.reasoning_models import ReasoningEdit, HypothesisEdit
+                _, hid = edit_reasoning(self.case, ReasoningEdit(issue=self.case.issue_set[1], hypothesis=HypothesisEdit(content=f"存在租金损失 {name}")))
+                context["reasoning"]["hypotheses"] = [{"id": hid, "content": "存在租金损失", "revision": 1}]
+                common = {"hypothesis_id": hid, "rationale": "核对陈述的具体依据", "evidence_refs": []}
                 if name == "propose_evidence_link":
                     common.update(info_unit_id="U029", meaning="related", hypothesis_proposal_ids=[])
                 else:
-                    common.update(info_unit_ids=["U029"], judgment="unverified")
+                    common.update(info_unit_ids=["U029"], judgment="verified")
                 cited = {**common, "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}
                 result, calls = self.run_script("核对假设依据", [f.tool("search_info_units", {"query": "损失"}),
                     f.tool(name, common, "empty-ref"), f.tool(name, cited, "unobtained-ref"),

@@ -80,8 +80,7 @@ class TestGapReferences(unittest.TestCase):
                 self.assertEqual(self.update_gap(addressing_info_unit_ids=ids).status_code, 200)
                 # Includes Gap/Hypothesis revision, timestamps, editors and judgments.
                 self.assertEqual(path.read_bytes(), before)
-        adopted = proposal_fixture.TestReasoningProposals.accept(self, result.json()["run_id"])
-        self.assertEqual(adopted.status_code, 200, adopted.text)
+        self.assertEqual(result.status_code, 200, result.text)
         self.assertEqual(self.gap().status, "open")
         self.assertEqual(self.update_gap(status="resolved").status_code, 200)
         before = path.read_bytes()
@@ -109,8 +108,7 @@ class TestGapReferences(unittest.TestCase):
     def test_empty_noop_preserves_accepted_gap_editor_and_timestamp(self):
         hid = self.hypothesis()
         result, _ = proposal_fixture.TestReasoningProposals.investigate(self, [suggestion("evidence_gap", hid)])
-        adopted = proposal_fixture.TestReasoningProposals.accept(self, result.json()["run_id"])
-        self.assertEqual(adopted.status_code, 200, adopted.text)
+        self.assertEqual(result.status_code, 200, result.text)
         self.assertEqual(self.gap().last_edited_by, "agent_accepted")
         path = case_dir(self.case.case_id) / "issue_workspaces.json"
         before = path.read_bytes()

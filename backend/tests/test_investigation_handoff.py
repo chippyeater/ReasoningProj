@@ -38,6 +38,14 @@ class TestInvestigationHandoff(unittest.TestCase):
             {"id": "formal-b", "content": "原有解释乙", "revision": 1}]
         context["reasoning"]["gaps"] = [{"id": "formal-gap", "content": "原有核查问题",
             "hypothesis_ids": ["formal-a"], "basis_info_unit_ids": [], "revision": 1}]
+        from app.issue_workspaces import get_issue_workspaces, persist_issue_workspaces
+        from app.reasoning_models import Hypothesis, EvidenceGap
+        self._workspace_enabled = True
+        current = get_issue_workspaces(self.case)
+        state = current.workspaces[self.case.issue_set[1]].reasoning
+        state.hypotheses = [Hypothesis(**h, updated_at="test") for h in context["reasoning"]["hypotheses"]]
+        state.gaps = [EvidenceGap(**g, updated_at="test") for g in context["reasoning"]["gaps"]]
+        persist_issue_workspaces(self.case, current)
         response = tools.get_evidence(self.case, ["U029", "U036"])
         self.assertIn(response["status"], {"ok", "truncated"})
         refs = [{"info_unit_id": row["info_unit_id"], "source_ref_index": row["source_ref_index"]}
@@ -166,8 +174,7 @@ class TestInvestigationHandoff(unittest.TestCase):
                 proposals = []
                 for _ in range(2):
                     actions._propose(self.case, seen, context, proposals, kind, rationale="单独审阅该建议。", evidence_refs=ref, **values)
-                self.assertEqual(len(proposals), 2)
-                self.assertNotEqual(proposals[0].proposal_id, proposals[1].proposal_id)
+                self.assertEqual(len(proposals), 0 if kind == "hypothesis_status" else 1)
         self.assertEqual(context, before_context)
         self.assertEqual(seen, before_seen)
         self.assertEqual(self.fixture.disk_snapshot(), before_files)
@@ -260,9 +267,10 @@ class TestInvestigationHandoff(unittest.TestCase):
             self.assertEqual(existing["source"], "reasoning")
 
     def test_distinct_gaps_and_numbered_conditions_are_not_merged(self):
-        context = self.context()
-        context["reasoning"]["hypotheses"] = [{"id": "formal-h", "content": "存在损失", "revision": 1}]
-        targets = {"hypothesis_ids": ["formal-h"], "hypothesis_proposal_ids": []}
+        context, _, _ = self.comparison_context()
+        context["reasoning"]["hypotheses"] = [context["reasoning"]["hypotheses"][0]]
+        context["reasoning"]["gaps"] = []
+        targets = {"hypothesis_ids": ["formal-a"], "hypothesis_proposal_ids": []}
         result, _ = self.run_script("区分待核实条件", [
             f.tool("search_info_units", {"query": "损失"}, "read"),
             *[self.gap(content, [], f"gap-{i}", hypothesis_targets=targets) for i, content in enumerate([

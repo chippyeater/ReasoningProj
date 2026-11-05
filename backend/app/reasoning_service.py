@@ -3,11 +3,12 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.errors import AppError
-from app.issue_workspaces import get_issue_workspaces, persist_issue_workspaces
+from app.issue_workspaces import get_issue_workspaces, persist_issue_workspaces, workspace_transaction
 from app.reasoning_models import EvidenceGap, EvidenceLink, Hypothesis, ReasoningEdit, ReasoningState
 from app.schemas import CaseData, Point
 
 
+@workspace_transaction
 def edit_reasoning(case: CaseData, edit: ReasoningEdit, *, proposal_key: str | None = None,
                    current=None, persist: bool = True):
     current = current if current is not None else get_issue_workspaces(case)
@@ -92,10 +93,12 @@ def edit_reasoning(case: CaseData, edit: ReasoningEdit, *, proposal_key: str | N
             elif added or removed:
                 raise AppError("gap_addressing_requires_existing", "Create the Gap before adding addressing material")
         # Compare the final merged data, not the submitted append list or editor.
-        unchanged_gap = bool(edit.gap and existing and all(values[field] == getattr(existing, field) for field in (
-            "content", "hypothesis_ids", "basis_info_unit_ids", "addressing_info_unit_ids", "status")))
+        fields = (("content", "hypothesis_ids", "basis_info_unit_ids", "addressing_info_unit_ids", "status") if edit.gap else
+                  ("content", "judgment", "work_status") if edit.hypothesis else
+                  ("hypothesis_id", "info_unit_id", "meaning", "rationale"))
+        unchanged_gap = bool(existing and all(values[field] == getattr(existing, field) for field in fields))
         if unchanged_gap:
-            obj = existing
+            return current, existing.id
         elif edit.link:
             if any(link.hypothesis_id == draft.hypothesis_id and link.info_unit_id == draft.info_unit_id
                    and link.id != draft.id for link in collection):

@@ -4,6 +4,10 @@ Issue text is the stable key while Issue editing is outside the MVP scope.
 The legacy workspace is never overwritten by these operations.
 """
 import json
+from contextlib import contextmanager
+from functools import wraps
+from threading import RLock, local
+import os
 from typing import Literal
 
 from pydantic import Field, ValidationError, model_validator
@@ -14,6 +18,52 @@ from app.schemas import CaseData, ContractModel, Text, WorkspaceState
 from app.reasoning_models import ReasoningState, migrate_stored_reasoning_state
 
 IssueStatus = Literal["pending", "investigating", "closed"]
+
+_workspace_mutex = RLock()
+_held_locks = local()
+
+
+@contextmanager
+def workspace_lock(case):
+    """Serialize read/modify/replace, including across server processes."""
+    with _workspace_mutex:
+        path = case_dir(case.case_id) / "issue_workspaces.lock"
+        held = getattr(_held_locks, "paths", set())
+        if path in held:
+            yield
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a+b") as stream:
+            if not stream.tell():
+                stream.write(b"\0")
+                stream.flush()
+            stream.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream, fcntl.LOCK_EX)
+            _held_locks.paths = held | {path}
+            try:
+                yield
+            finally:
+                _held_locks.paths = held
+                stream.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+def workspace_transaction(function):
+    @wraps(function)
+    def locked(case, *args, **kwargs):
+        if kwargs.get("persist") is False:
+            return function(case, *args, **kwargs)
+        with workspace_lock(case):
+            return function(case, *args, **kwargs)
+    return locked
 
 
 class IssueCanvas(WorkspaceState):
@@ -110,6 +160,7 @@ def get_issue_workspaces(case: CaseData) -> IssueWorkspaces:
                            workspaces=projected)
 
 
+@workspace_transaction
 def update_issue_workspace(case: CaseData, patch: IssueWorkspacePatch) -> IssueWorkspaces:
     current = get_issue_workspaces(case)
     if patch.issue not in current.workspaces:
@@ -131,6 +182,7 @@ def update_issue_workspace(case: CaseData, patch: IssueWorkspacePatch) -> IssueW
     return current
 
 
+@workspace_transaction
 def persist_issue_workspaces(case: CaseData, current: IssueWorkspaces) -> None:
     # Preserve dormant entries if a later extraction changes issue_set.
     saved = _read(case)

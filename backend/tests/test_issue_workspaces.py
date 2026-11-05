@@ -17,7 +17,7 @@ class TestIssueWorkspaces(unittest.TestCase):
         current = self.fixture.disk_snapshot()
         for name, raw in self.fixture.before_files.items():
             self.assertEqual(current[name], raw)
-        self.assertTrue(all('/runs/' in name.replace('\\', '/') or name.replace('\\', '/').endswith('/issue_workspaces.json')
+        self.assertTrue(all('/runs/' in name.replace('\\', '/') or name.replace('\\', '/').endswith(('/issue_workspaces.json', '/issue_workspaces.lock'))
                             for name in current.keys() - self.fixture.before_files.keys()))
 
     def test_independent_persistence_and_legacy_preservation(self):

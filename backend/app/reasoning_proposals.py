@@ -1,14 +1,14 @@
-"""Adopt a server-audited suggestion, never arbitrary client-authored evidence."""
+"""Stage validated Proposals, then atomically commit or undo an Investigation run."""
 import hashlib
 import json
 
-from app.case_store import artifact_path
+from app.case_store import load_case_snapshot, read_parsed_document, artifact_path
 from app.errors import AppError
-from app.issue_workspaces import get_issue_workspaces, persist_issue_workspaces
-from app.reasoning_models import (GapEdit, HypothesisEdit, LinkEdit, ReasoningEdit, ReasoningState,
-                                  PROPOSAL_ADAPTER, proposal_material_ids, migrate_stored_evidence_link,
-                                  migrate_stored_reasoning_state)
+from app.issue_workspaces import get_issue_workspaces, persist_issue_workspaces, workspace_transaction
+from app.reasoning_models import GapEdit, HypothesisEdit, LinkEdit, ReasoningEdit, ReasoningState, proposal_material_ids, PROPOSAL_ADAPTER
 from app.reasoning_service import edit_reasoning
+from app.reasoning_models import ReasoningChange, ReasoningRun
+from app.schemas import Point
 
 
 def evidence_hash(case, ids):
@@ -16,21 +16,12 @@ def evidence_hash(case, ids):
     return hashlib.sha256(json.dumps([units.get(uid) for uid in ids], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def proposal_receipt(case, issue_key, context, proposals):
+def proposal_receipt(case, issue_key, proposals, baseline):
     if issue_key is None:
         raise AppError("invalid_reasoning_proposal", "No Issue is bound to the proposal")
-    reasoning = get_issue_workspaces(case).workspaces[issue_key].reasoning
-    gap_ids = {p.gap_id for p in proposals if p.kind == "evidence_gap_update"}
-    gaps = [g for g in reasoning.gaps if g.id in gap_ids]
-    hypothesis_ids = {h["id"] for h in context.get("reasoning", {}).get("hypotheses", [])}
-    hypothesis_ids.update(hid for g in gaps for hid in g.hypothesis_ids)
-    targets = ReasoningState(hypotheses=[h for h in reasoning.hypotheses if h.id in hypothesis_ids], gaps=gaps)
-    return {"issue": issue_key,
-            "target_revisions": {h["id"]: h["revision"] for h in context.get("reasoning", {}).get("hypotheses", [])},
-            "target_gap_revisions": {g["id"]: g["revision"] for g in context.get("reasoning", {}).get("gaps", [])},
-            # Full target values stay in the server receipt, outside the bounded model context.
-            "target_state": targets.model_dump(mode="json"),
+    return {"issue": issue_key, "baseline": baseline.model_dump(mode="json"),
             "evidence_hashes": [evidence_hash(case, proposal_material_ids(p)) for p in proposals]}
+
 
 
 def validate_proposal_dependencies(proposals):
@@ -67,7 +58,9 @@ def _proposal_edit(proposal, hypothesis_ids, state, issue, position=None):
     elif proposal.kind == "evidence_gap":
         edit.gap = GapEdit(content=proposal.content, hypothesis_ids=hypothesis_ids, basis_info_unit_ids=proposal.basis_info_unit_ids)
     elif proposal.kind == "evidence_link":
-        edit.link = LinkEdit(hypothesis_id=hypothesis_ids[0], info_unit_id=proposal.info_unit_ids[0],
+        existing = next((link for link in state.links if link.hypothesis_id == hypothesis_ids[0]
+                         and link.info_unit_id == proposal.info_unit_ids[0]), None)
+        edit.link = LinkEdit(id=existing.id if existing else None, hypothesis_id=hypothesis_ids[0], info_unit_id=proposal.info_unit_ids[0],
                              meaning=proposal.meaning, rationale=proposal.rationale)
     elif proposal.kind == "evidence_gap_update":
         gap = next(g for g in state.gaps if g.id == proposal.gap_id)
@@ -79,129 +72,173 @@ def _proposal_edit(proposal, hypothesis_ids, state, issue, position=None):
     return edit
 
 
-def _expected_reasoning(case, current, issue, run_id, proposals, receipt):
-    """Replay only this run's additive approvals with the real edit/revision rules.
+def _objects(state):
+    return {(section, obj.id): obj for section in ("hypotheses", "gaps", "links") for obj in getattr(state, section)}
 
-    accepted_proposals preserves adoption order. Replaying on a detached workspace
-    accounts for Gap no-ops without crediting user edits or another run's writes.
-    """
-    shadow = current.model_copy(deep=True)
-    workspace = shadow.workspaces[issue]
-    workspace.reasoning = ReasoningState.model_validate(migrate_stored_reasoning_state(receipt.get("target_state", {
-        # Existing receipts contain revision baselines but no full Gap values.
-        # Hypothesis increments remain provable; Gap append no-ops do not.
-        "hypotheses": [{**h.model_dump(), "revision": receipt["target_revisions"][h.id]}
-                       for h in workspace.reasoning.hypotheses if h.id in receipt["target_revisions"]]})))
-    for obj in [*workspace.reasoning.hypotheses, *workspace.reasoning.gaps]:
-        revisions = receipt["target_revisions"] if hasattr(obj, "judgment") else receipt.get("target_gap_revisions", {})
-        if obj.revision != revisions.get(obj.id, obj.revision):
-            raise AppError("stale_reasoning_proposal", "Reasoning changed during investigation", 409)
-    indices = {proposal_key(run_id, proposals, i): i for i in range(len(proposals))}
-    for key, object_id in current.workspaces[issue].reasoning.accepted_proposals.items():
-        if key not in indices:
-            continue
-        proposal = proposals[indices[key]]
-        # A judgment change is not an independent evidence addition.
-        if proposal.kind == "hypothesis_status":
-            continue
-        state = workspace.reasoning
+
+def stage_proposals(case, issue, proposals, current, run_id):
+    """Reuse real edits on a detached workspace; no item persists or checks siblings' revisions."""
+    validate_proposal_dependencies(proposals)
+    staged = current.model_copy(deep=True)
+    state = staged.workspaces[issue].reasoning
+    original = _objects(state.model_copy(deep=True))
+    causes = {}
+    statuses = {}
+    # Allocate formal parent IDs before resolving shared Gap / Link references.
+    order = sorted(range(len(proposals)), key=lambda i: proposals[i].kind != "hypothesis")
+    for index in order:
+        proposal = proposals[index]
+        key = proposal_key(run_id, proposals, index)
+        if proposal.kind in {"hypothesis_status", "evidence_gap_update"}:
+            target = proposal.hypothesis_ids[0] if proposal.kind == "hypothesis_status" else proposal.gap_id
+            value = proposal.judgment if proposal.kind == "hypothesis_status" else proposal.status
+            if target in statuses and statuses[target] != value:
+                raise AppError("conflicting_reasoning_proposals", "Conflicting statuses for the same object", 409,
+                    details={"category": "proposal_semantics", "errors": [{"loc": ["status" if proposal.kind == "evidence_gap_update" else "judgment"],
+                        "code": "conflicting_reasoning_proposals", "message": "Keep the previously staged status; do not submit a conflicting status in this run"}]})
+            statuses[target] = value
         hypothesis_ids = [*proposal.hypothesis_ids, *(state.accepted_proposals[proposal_key(run_id, proposals, i)]
                           for i in dependency_indices(proposal, proposals))]
-        edit = _proposal_edit(proposal, hypothesis_ids, state, issue)
-        shadow, generated_id = edit_reasoning(case, edit, proposal_key=key, current=shadow, persist=False)
-        workspace = shadow.workspaces[issue]
-        # Replay allocates temporary IDs; preserve the IDs of actual approvals.
-        for obj in [*workspace.reasoning.hypotheses, *workspace.reasoning.gaps, *workspace.reasoning.links]:
-            if obj.id == generated_id:
-                obj.id = object_id
-                break
-        workspace.reasoning.accepted_proposals[key] = object_id
-    return workspace.reasoning
+        if proposal.kind == "evidence_link":
+            target = (hypothesis_ids[0], proposal.info_unit_ids[0])
+            value = (proposal.meaning, proposal.rationale)
+            if target in statuses and statuses[target] != value:
+                raise AppError("conflicting_reasoning_proposals", "This evidence link already has a different staged edit", 409)
+            statuses[target] = value
+        before = _objects(state.model_copy(deep=True))
+        try:
+            edit = _proposal_edit(proposal, hypothesis_ids, state, issue,
+                Point(x=800 + (index % 2) * 440, y=160 + (index // 2) * 220))
+            staged, object_id = edit_reasoning(case, edit, proposal_key=key, current=staged, persist=False)
+        except StopIteration as exc:
+            raise AppError("unknown_reasoning_object", "Proposal target no longer exists", 409) from exc
+        state = staged.workspaces[issue].reasoning
+        after = _objects(state)
+        changed = [oid for oid in before.keys() | after.keys() if before.get(oid) != after.get(oid)]
+        if changed:
+            state.accepted_proposals[key] = object_id
+            for oid in changed:
+                causes.setdefault(oid, []).append(key)
+    final = _objects(state)
+    changes = [ReasoningChange(collection=section, object_id=oid, before=original.get((section, oid)),
+                              after=final.get((section, oid)), proposal_keys=causes.get((section, oid), []))
+               for section, oid in dict.fromkeys([*original, *final])
+               if original.get((section, oid)) != final.get((section, oid))]
+    return staged, changes
 
 
-def _same_target(actual, expected):
-    # Replay timestamps are intentionally fresh; revisions and all data must match.
-    return actual.model_dump(exclude={"updated_at"}) == expected.model_dump(exclude={"updated_at"})
-
-
-def accept_proposal(case, request):
+@workspace_transaction
+def commit_investigation(case, issue, run_id, proposals, receipt, *, validate=None):
+    # Reload under the same lock used by source snapshot and workspace writers.
+    case = load_case_snapshot(case.case_id) or case
     current = get_issue_workspaces(case)
-    if request.issue not in current.workspaces:
-        raise AppError("unknown_issue", "Issue does not belong to the case")
+    if issue not in current.workspaces or receipt["issue"] != issue:
+        raise AppError("unknown_issue", "Investigation Issue is no longer available", 409)
+    state = current.workspaces[issue].reasoning
+    previous = state.investigation_runs.get(run_id)
+    if previous:
+        return previous.model_dump(mode="json")
+    if state.model_dump(mode="json") != receipt["baseline"]:
+        raise AppError("stale_reasoning_proposal", "Reasoning changed during investigation; no changes were committed", 409)
+    if [evidence_hash(case, proposal_material_ids(p)) for p in proposals] != receipt["evidence_hashes"]:
+        raise AppError("stale_reasoning_proposal", "Evidence changed during investigation; no changes were committed", 409)
+    units, files = {u.id: u for u in case.info_units}, {f.file_id: f for f in case.files}
+    documents = {}
+    for proposal in proposals:
+        for pointer in proposal.evidence_refs:
+            ref = units[pointer.info_unit_id].source_refs[pointer.source_ref_index]
+            if ref.file_id not in documents:
+                documents[ref.file_id] = read_parsed_document(case.case_id, files[ref.file_id]).text
+            if documents[ref.file_id][ref.start:ref.end] != ref.quote:
+                raise AppError("stale_reasoning_proposal", "Source quote no longer matches cached TXT", 409)
+    if validate:
+        validate(case)
+    staged, changes = stage_proposals(case, issue, proposals, current, run_id)
+    if not changes:
+        return {"status": "no_change", "changes": []}
+    refs = sorted({(ref.info_unit_id, ref.source_ref_index) for p in proposals for ref in p.evidence_refs})
+    record = ReasoningRun(changes=changes, proposals=proposals, evidence=[{
+        "info_unit_id": uid, "source_ref_index": index, "source_ref": units[uid].source_refs[index]
+    } for uid, index in refs])
+    staged.workspaces[issue].reasoning.investigation_runs[run_id] = record
+    # The journal and all object edits share one atomic file replacement.
+    persist_issue_workspaces(case, staged)
+    return record.model_dump(mode="json")
+
+
+@workspace_transaction
+def retry_investigation(case, issue, run_id):
+    """Retry only a server-audited normal Finish, without any model call or rebase."""
+    from app.investigation_agent import MAX_NON_FINISH_TOOL_CALLS
     try:
-        audit = json.loads(artifact_path(case.case_id, f"runs/{request.run_id}.output.json").read_text(encoding="utf-8"))
-        receipt = audit["proposal_receipt"]
-        if (audit["status"] not in {"success", "partial"} or receipt["issue"] != request.issue
-                or audit["run_id"] != request.run_id or audit["result"]["run_id"] != request.run_id):
-            raise ValueError("Proposal belongs to a different Issue or run")
-        proposals = [PROPOSAL_ADAPTER.validate_python(migrate_stored_evidence_link(p)) for p in audit["result"]["proposals"]]
-        index = request.proposal_index if request.proposal_id is None else next(
-            (i for i, p in enumerate(proposals) if p.proposal_id == request.proposal_id), len(proposals))
-        proposal = proposals[index]
-    except (OSError, ValueError, KeyError, IndexError, TypeError) as exc:
-        raise AppError("invalid_reasoning_proposal", "No validated suggestion exists at this reference", 409) from exc
+        audit = json.loads(artifact_path(case.case_id, f"runs/{run_id}.output.json").read_text(encoding="utf-8"))
+        result, receipt = audit["result"], audit["proposal_receipt"]
+        budget = result["tool_budget_used"]
+        if (audit["run_id"] != run_id or result["run_id"] != run_id or receipt["issue"] != issue
+                or audit["status"] != "success" or audit["stop_reason"] != "finish_investigation"
+                or result["summary_status"] != "completed" or result["completion_status"] == "budget_exhausted"
+                or result.get("workspace_commit", {}).get("status") == "budget_exhausted"
+                or budget["read"] + budget["proposal"] >= MAX_NON_FINISH_TOOL_CALLS
+                or "baseline" not in receipt):
+            raise ValueError("Only a normally finished current-contract run can be retried")
+        proposals = [PROPOSAL_ADAPTER.validate_python(p) for p in result["proposals"]]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise AppError("invalid_investigation_retry", "No normally finished proposal batch can be recovered", 409) from exc
+    record = commit_investigation(case, issue, run_id, proposals, receipt)
+    # Keep the original output immutable; the atomic workspace journal records recovery.
+    return {"workspaces": get_issue_workspaces(case), "workspace_commit": record}
+
+
+@workspace_transaction
+def reverse_investigation(case, issue, run_id, *, restore=False):
+    current = get_issue_workspaces(case)
+    if issue not in current.workspaces:
+        raise AppError("unknown_issue", "Issue does not belong to the case", 409)
+    workspace = current.workspaces[issue]
+    record = workspace.reasoning.investigation_runs.get(run_id)
+    if record is None:
+        raise AppError("unknown_investigation_change", "No committed changes exist for this run", 404)
+    desired = "applied" if restore else "undone"
+    if record.status == desired:
+        return {"workspaces": current, "workspace_commit": record.model_dump(mode="json")}
+    objects = _objects(workspace.reasoning)
+    for change in record.changes:
+        expected = change.before if restore else change.after
+        if objects.get((change.collection, change.object_id)) != expected:
+            raise AppError("stale_investigation_change", "A changed object was edited later; undo/restore would overwrite it", 409)
+    for change in record.changes:
+        collection = getattr(workspace.reasoning, change.collection)
+        existing = next((obj for obj in collection if obj.id == change.object_id), None)
+        value = change.after if restore else change.before
+        if value is None:
+            collection[:] = [obj for obj in collection if obj.id != change.object_id]
+        elif existing is not None:
+            collection[collection.index(existing)] = value.model_copy(deep=True)
+        else:
+            collection.append(value.model_copy(deep=True))
+    record.status = desired
+    # Revalidate the whole graph: later objects may depend on a run's new parents.
     try:
-        validate_proposal_dependencies(proposals)
-    except AppError as exc:
-        exc.status_code = 409
-        raise
-    state = current.workspaces[request.issue].reasoning
-    key = proposal_key(request.run_id, proposals, index)
-    if key in state.accepted_proposals:
-        return {"workspaces": current, "object_id": state.accepted_proposals[key], "already_accepted": True}
-    if evidence_hash(case, proposal_material_ids(proposal)) != receipt["evidence_hashes"][index]:
-        raise AppError("stale_reasoning_proposal", "Evidence changed; investigate again before adopting", 409)
-    targets = {h.id: h for h in state.hypotheses}
-    hypothesis_ids = list(proposal.hypothesis_ids)
-    for parent_index in dependency_indices(proposal, proposals):
-        parent_key = proposal_key(request.run_id, proposals, parent_index)
-        hid = state.accepted_proposals.get(parent_key)
-        if hid not in targets or targets[hid].proposal_key != parent_key:
-            raise AppError("proposal_dependency_not_accepted", "Adopt the referenced Hypothesis in this run first", 409)
-        parent = proposals[parent_index]
-        if evidence_hash(case, parent.info_unit_ids) != receipt["evidence_hashes"][parent_index]:
-            raise AppError("stale_reasoning_proposal", "Hypothesis evidence changed; investigate again before adopting", 409)
-        hypothesis_ids.append(hid)
-    try:
-        expected = _expected_reasoning(case, current, request.issue, request.run_id, proposals, receipt)
-    except (AppError, ValueError, KeyError, StopIteration) as exc:
-        raise AppError("stale_reasoning_proposal", "Approved reasoning no longer matches this run", 409) from exc
-    expected_hypotheses = {h.id: h for h in expected.hypotheses}
-    if proposal.kind == "evidence_gap_update":
-        gap = next((g for g in state.gaps if g.id == proposal.gap_id), None)
-        expected_gap = next((g for g in expected.gaps if g.id == proposal.gap_id), None)
-        if gap is None or (not _same_target(gap, expected_gap) if expected_gap else
-                           gap.revision != receipt.get("target_gap_revisions", {}).get(proposal.gap_id)):
-            raise AppError("stale_reasoning_proposal", "Target Gap changed; investigate again before adopting", 409)
-        for i, sibling in enumerate(proposals):
-            if (sibling.kind == "evidence_gap_update" and sibling.gap_id == gap.id
-                    and proposal_key(request.run_id, proposals, i) in state.accepted_proposals
-                    and sibling.status != proposal.status):
-                raise AppError("stale_reasoning_proposal", "Gap status suggestions conflict", 409)
-        hypothesis_ids = list(gap.hypothesis_ids)
-    for hid in hypothesis_ids:
-        target, baseline = targets.get(hid), expected_hypotheses.get(hid)
-        if target is None or (not _same_target(target, baseline) if baseline else
-                              target.revision != receipt["target_revisions"].get(hid)):
-            raise AppError("stale_reasoning_proposal", "User reasoning changed; investigate again before adopting", 409)
-        # A judgment proposal must still refer to the original evidence state.
-        if proposal.kind == "hypothesis_status" and target.revision != receipt["target_revisions"].get(hid):
-            raise AppError("stale_reasoning_proposal", "Evidence reasoning changed before judgment approval", 409)
-    # Validate the actual siblings whose effects explain the target revisions.
-    objects = {obj.id: obj for obj in [*state.gaps, *state.links]}
-    for obj in [*expected.gaps, *expected.links]:
-        affected = obj.hypothesis_ids if hasattr(obj, "hypothesis_ids") else [obj.hypothesis_id]
-        if set(affected) & set(hypothesis_ids) and (obj.id not in objects or not _same_target(objects[obj.id], obj)):
-            raise AppError("stale_reasoning_proposal", "Related evidence reasoning changed", 409)
-    for i, sibling in enumerate(proposals):
-        object_id = state.accepted_proposals.get(proposal_key(request.run_id, proposals, i))
-        obj = objects.get(object_id)
-        affected = (obj.hypothesis_ids if hasattr(obj, "hypothesis_ids") else [obj.hypothesis_id]) if obj else []
-        if set(affected) & set(hypothesis_ids) and evidence_hash(case, proposal_material_ids(sibling)) != receipt["evidence_hashes"][i]:
-            raise AppError("stale_reasoning_proposal", "Approved sibling evidence changed", 409)
-    # Gap updates retain their own associations rather than receiving target IDs.
-    edit = _proposal_edit(proposal, hypothesis_ids, state, request.issue, request.position)
-    current, object_id = edit_reasoning(case, edit, proposal_key=key, current=current, persist=False)
-    current.workspaces[request.issue].reasoning.accepted_proposals[key] = object_id
+        workspace.reasoning = ReasoningState.model_validate(workspace.reasoning.model_dump())
+    except ValueError as exc:
+        raise AppError("stale_investigation_change", "Later reasoning depends on these objects", 409) from exc
+    known = {u.id for u in case.info_units}
+    if any(link.info_unit_id not in known for link in workspace.reasoning.links) or any(
+            not set(g.basis_info_unit_ids + g.addressing_info_unit_ids) <= known for g in workspace.reasoning.gaps):
+        raise AppError("stale_investigation_change", "Referenced case material no longer exists", 409)
+    present = {obj.id for obj in [*workspace.reasoning.hypotheses, *workspace.reasoning.gaps]}
+    deleted = {c.object_id for c in record.changes if c.collection != "links" and c.object_id not in present}
+    canvas = workspace.canvas
+    canvas.visible_node_ids = [uid for uid in canvas.visible_node_ids if uid not in deleted]
+    canvas.selected_node_ids = [uid for uid in canvas.selected_node_ids if uid not in deleted]
+    if canvas.focused_node_id in deleted:
+        canvas.focused_node_id = None
+    for uid in deleted:
+        canvas.node_positions.pop(uid, None)
+        canvas.display_levels.pop(uid, None)
+    for index, change in enumerate(record.changes):
+        if change.collection != "links" and change.object_id in present and change.object_id not in canvas.visible_node_ids:
+            canvas.visible_node_ids.append(change.object_id)
+            canvas.node_positions.setdefault(change.object_id, Point(x=800, y=160 + index * 220))
     persist_issue_workspaces(case, current)
-    return {"workspaces": current, "object_id": object_id, "already_accepted": False}
+    return {"workspaces": current, "workspace_commit": record.model_dump(mode="json")}

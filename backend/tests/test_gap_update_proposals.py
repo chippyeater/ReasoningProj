@@ -60,7 +60,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                                  if ref.file_id == self.fid)
         self.run = self.case.stage_runs[-1]
 
-    def investigate(self, **overrides):
+    def investigate(self, *, before_finish=None, **overrides):
         requests = []
         args = {"gap_id": self.gid, "addressing_info_unit_ids": [self.uid], "status": "open",
                 "rationale": "合同仅记载起租约定，尚无实际履行凭证；部分回应，仍需实际收款或入住记录核对。",
@@ -74,6 +74,8 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                 return replies.tool("get_evidence", {"info_unit_ids": [state["materials"]["info_units"]["items"][0]["id"]]}, "read")
             if len(requests) == 3:
                 return replies.tool("propose_evidence_gap_update", args)
+            if before_finish:
+                before_finish()
             return replies.finish("检查新合同对已有缺口的回应", [self.uid], refs=[(self.uid, self.source_index)],
                                   statement="新合同只载明约定，实际履行仍待核实。", status="evidence_insufficient",
                                   questions=["实际起租履行情况尚待独立核实。"])
@@ -85,17 +87,13 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual(len(requests), 4, response.text)
         return response.json(), requests
 
-    def accept(self, result, **changes):
-        return self.client.post(f"/api/cases/{self.cid}/reasoning-proposals/accept", json={
-            "issue": self.issue, "run_id": result["run_id"], "proposal_id": result["proposals"][0]["proposal_id"], **changes})
-
-    def test_new_contract_partly_addresses_original_shared_gap_and_requires_adoption(self):
+    def test_new_contract_partly_addresses_original_shared_gap_automatically(self):
         self.supplement()
         path = self.data_dir / self.cid / "issue_workspaces.json"
         before = path.read_bytes()
         result, requests = self.investigate()
-        self.assertEqual(path.read_bytes(), before)  # Context/Proposal generation leaves Canvas and reasoning alone.
-        self.assertEqual(self.state().gaps[0], self.original_gap)
+        self.assertNotEqual(path.read_bytes(), before)
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
         self.assertNotIn("recent_extraction", requests[0])
         self.assertEqual(requests[0]["materials"]["info_units"]["items"], [])
         self.assertEqual(requests[0]["materials"]["source_refs"]["items"], [])
@@ -107,9 +105,6 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update"])
         self.assertEqual(result["proposals"][0]["gap_id"], self.gid)
         judgments = [h.judgment for h in self.state().hypotheses]
-        accepted = self.accept(result)
-        self.assertEqual(accepted.status_code, 200, accepted.text)
-        self.assertEqual(accepted.json()["object_id"], self.gid)
         gap = self.state().gaps[0]
         self.assertEqual(len(self.state().gaps), 1)
         for field in ("id", "content", "basis_info_unit_ids", "hypothesis_ids"):
@@ -119,12 +114,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual(gap.revision, self.original_gap.revision + 1)
         self.assertEqual([h.judgment for h in self.state().hypotheses], judgments)
         audit = json.loads((self.data_dir / self.cid / f"runs/{result['run_id']}.output.json").read_text(encoding="utf-8"))
-        self.assertEqual(audit["proposal_receipt"]["target_gap_revisions"][self.gid], self.original_gap.revision)
-        after = path.read_bytes()
-        again = self.accept(result)
-        self.assertEqual(again.status_code, 200, again.text)
-        self.assertTrue(again.json()["already_accepted"])
-        self.assertEqual(path.read_bytes(), after)
+        self.assertEqual(next(g["revision"] for g in audit["proposal_receipt"]["baseline"]["gaps"] if g["id"] == self.gid), self.original_gap.revision)
 
     def test_merged_old_node_uses_new_source_beyond_existing_evidence_tool_window(self):
         self.supplement(merge=True)
@@ -138,7 +128,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertLessEqual(len(refs), investigation_tools.MAX_EVIDENCE_REFS)
         # The bounded read prioritizes the new source without renumbering it.
         self.assertEqual(len(investigation_tools.get_evidence(self.case, [self.uid])["items"]), 8)
-        self.assertEqual(self.accept(result).status_code, 200)
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
         self.assertEqual(self.state().gaps[0].addressing_info_unit_ids, [self.old_id])
 
     def hidden_gap_run(self, extra_count=2):
@@ -200,8 +190,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             response = self.client.post(f"/api/cases/{self.cid}/agent/run", json={"goal": "核查新增合同",
                 "current_issue": self.issue, "selected_reasoning_ids": self.hids[:3]})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(path.read_bytes(), original_bytes)
-        self.assertEqual(self.state(), before)
+        self.assertNotEqual(path.read_bytes(), original_bytes)
         result = response.json()
         self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update"])
         self.assertEqual(result["proposals"][0]["gap_id"], self.gid)
@@ -210,14 +199,13 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual(audit["tool_calls"][1]["no_progress"], 0)
         for call, recorded in zip(requests, audit["model_calls"]):
             self.assertEqual(call, recorded["request"])
-        self.assertEqual(audit["proposal_receipt"]["target_gap_revisions"][self.gid], before.gaps[0].revision)
-        self.assertTrue(set(self.hids) <= audit["proposal_receipt"]["target_revisions"].keys())
+        self.assertEqual(next(g["revision"] for g in audit["proposal_receipt"]["baseline"]["gaps"] if g["id"] == self.gid), before.gaps[0].revision)
+        self.assertTrue(set(self.hids) <= {h["id"] for h in audit["proposal_receipt"]["baseline"]["hypotheses"]})
         return result, before
 
     def test_hidden_gap_is_discovered_and_updated_without_recreating_or_judging(self):
         result, before = self.hidden_gap_run()
-        accepted = self.accept(result)
-        self.assertEqual(accepted.status_code, 200, accepted.text)
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
         after = self.state()
         self.assertEqual(len(after.gaps), 1)
         for field in ("id", "content", "basis_info_unit_ids", "hypothesis_ids"):
@@ -225,17 +213,17 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual(after.gaps[0].addressing_info_unit_ids, [self.uid])
         self.assertEqual([h.judgment for h in after.hypotheses], [h.judgment for h in before.hypotheses])
 
-    def test_discovered_gap_still_rejects_stale_approval(self):
+    def test_discovered_gap_changes_refuse_undo_after_user_edit(self):
         result, _ = self.hidden_gap_run()
         self.edit(gap={"id": self.gid, "content": "用户修改了履行核查问题。", "hypothesis_ids": self.hids})
-        response = self.accept(result)
+        response = self.client.post(f"/api/cases/{self.cid}/investigation-changes/reverse", json={
+            "issue": self.issue, "run_id": result["run_id"]})
         self.assertEqual(response.status_code, 409, response.text)
-        self.assertEqual(response.json()["detail"]["code"], "stale_reasoning_proposal")
+        self.assertEqual(response.json()["detail"]["code"], "stale_investigation_change")
 
     def test_discovery_projection_cannot_shorten_the_formal_gap_associations(self):
         result, before = self.hidden_gap_run(extra_count=4)
-        response = self.accept(result)
-        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
         after = self.state()
         self.assertEqual(after.gaps[0].hypothesis_ids, self.hids)
         self.assertEqual(len(after.gaps[0].hypothesis_ids), 6)
@@ -250,26 +238,23 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         result, requests = self.investigate()
         self.assertEqual(len(requests[0]["reasoning"]["hypotheses"]), 3)
         self.assertTrue(requests[0]["reasoning"]["gaps"][0]["references_truncated"])
-        response = self.accept(result)
-        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
         self.assertEqual(self.state().gaps[0].hypothesis_ids, self.hids)
         self.assertTrue(all(h.judgment == "unverified" for h in self.state().hypotheses))
 
-    def test_gap_revision_and_material_changes_reject_stale_proposals(self):
+    def test_gap_revision_and_material_changes_during_run_reject_whole_commit(self):
         self.supplement()
-        result, _ = self.investigate()
-        self.edit(gap={"id": self.gid, "content": "用户修正后的履行核验条件", "hypothesis_ids": self.hids})
-        stale = self.accept(result)
-        self.assertEqual(stale.status_code, 409, stale.text)
-        self.assertEqual(stale.json()["detail"]["code"], "stale_reasoning_proposal")
+        result, _ = self.investigate(before_finish=lambda: self.edit(gap={"id": self.gid,
+            "content": "用户修正后的履行核验条件", "hypothesis_ids": self.hids}))
+        self.assertEqual(result["workspace_commit"]["status"], "conflict")
         self.assertEqual(self.state().gaps[0].addressing_info_unit_ids, [])
-        result, _ = self.investigate()
-        current = case_store.load_case(self.cid)
-        next(u for u in current.info_units if u.id == self.uid).content = "用户修正了新合同摘要内容。"
-        case_store.save_case(current, set_current=False)
-        stale = self.accept(result)
-        self.assertEqual(stale.status_code, 409, stale.text)
-        self.assertEqual(stale.json()["detail"]["code"], "stale_reasoning_proposal")
+        def edit_material():
+            current = case_store.load_case(self.cid)
+            next(u for u in current.info_units if u.id == self.uid).content = "用户修正了新合同摘要内容。"
+            case_store.save_case(current, set_current=False)
+        result, _ = self.investigate(before_finish=edit_material)
+        self.assertEqual(result["workspace_commit"]["status"], "conflict")
+        self.assertEqual(self.state().gaps[0].addressing_info_unit_ids, [])
 
     def test_single_proposition_partial_evidence_updates_original_gap_and_judgment_separately(self):
         self.edit(gap={"id": self.gid, "content": self.original_gap.content,
@@ -302,10 +287,9 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                 "goal": "核对新合同", "current_issue": self.issue})
         self.assertEqual(response.status_code, 200, response.text)
         result = response.json()
-        self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update", "hypothesis_status"])
-        self.assertEqual(result["proposals"][1]["hypothesis_ids"], self.hids[:1])
-        self.assertEqual(self.state(), before)  # Both suggestions remain pending.
-        self.assertEqual(self.accept(result).status_code, 200)
+        self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update"])
+        self.assertIsNone(requests[3]["recovery"])  # Unchanged judgment is a successful no-op.
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
         after = self.state()
         self.assertEqual([h.id for h in after.hypotheses], self.hids[:1])
         self.assertEqual(after.hypotheses[0].judgment, "unverified")
@@ -326,6 +310,37 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                 self.assertIsNotNone(requests[3]["recovery"])
                 self.assertEqual(self.state().gaps[0], self.original_gap)
 
+    def test_wrong_basis_citation_is_repaired_in_same_run_without_new_gap(self):
+        self.supplement()
+        states = []
+        async def model(config, messages, definitions, schema=None, **kwargs):
+            state = json.loads(messages[1]["content"])
+            states.append(state)
+            turn = len(states)
+            if turn <= 2:
+                return replies.tool("get_evidence", {"info_unit_ids": [self.old_id if turn == 1 else self.uid]}, f"read-{turn}")
+            if turn <= 4:
+                if turn == 4:
+                    errors = state["recovery"]["validation_details"]["errors"]
+                    self.assertTrue(any(e["code"] == "proposal_evidence_outside_materials" for e in errors))
+                    self.assertEqual(state["proposals"], [])
+                return replies.tool("propose_evidence_gap_update", {"gap_id": self.gid,
+                    "addressing_info_unit_ids": [self.uid], "status": "open", "rationale": "补充合同部分回应原缺口。",
+                    "evidence_refs": [{"info_unit_id": self.old_id if turn == 3 else self.uid,
+                                      "source_ref_index": 0 if turn == 3 else self.source_index}]}, f"update-{turn}")
+            return replies.finish("修正缺口回应", [self.uid], refs=[(self.uid, self.source_index)], status="evidence_insufficient",
+                questions=["实际履行仍待核实。"])
+        with patch.object(llm_client, "load_config", return_value=replies.CONFIG), patch.object(
+                llm_client, "call_tools", new=AsyncMock(side_effect=model)):
+            response = self.client.post(f"/api/cases/{self.cid}/agent/run", json={"goal": "修正缺口回应", "current_issue": self.issue})
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
+        self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update"])
+        self.assertEqual(len(self.state().gaps), 1)
+        self.assertEqual(self.state().gaps[0].id, self.gid)
+        self.assertEqual(self.state().gaps[0].addressing_info_unit_ids, [self.uid])
+
     def test_latest_committed_batch_ignores_failed_runs_and_only_affects_search(self):
         self.supplement(count=12)
         failed = self.run.model_copy(deep=True, update={"id": "run-failed", "status": RunStatus.failed, "input_snapshot_path": None})
@@ -343,9 +358,10 @@ class TestGapUpdateProposals(IsolatedCaseTest):
     def test_same_material_noop_uses_existing_edit_semantics(self):
         self.supplement()
         result, _ = self.investigate()
-        self.assertEqual(self.accept(result).status_code, 200)
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
         state = self.state().model_dump()
         second, _ = self.investigate()
-        self.assertEqual(self.accept(second).status_code, 200)
+        self.assertEqual(second["workspace_commit"]["status"], "no_change")
+        self.assertEqual(second["proposals"], [])
         self.assertEqual(self.state().gaps[0].model_dump(), state["gaps"][0])
         self.assertEqual([h.model_dump() for h in self.state().hypotheses], state["hypotheses"])

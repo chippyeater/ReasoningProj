@@ -13,7 +13,6 @@ class TestEvidenceLinkMigration(unittest.TestCase):
     edit = fixture.TestReasoningProposals.edit
     hypothesis = fixture.TestReasoningProposals.hypothesis
     investigate = fixture.TestReasoningProposals.investigate
-    accept = fixture.TestReasoningProposals.accept
 
     def test_stored_link_is_migrated_on_read_then_saved_with_stable_id(self):
         hid = self.hypothesis()
@@ -39,7 +38,7 @@ class TestEvidenceLinkMigration(unittest.TestCase):
         self.assertEqual(self.edit(link={"id": lid, "hypothesis_id": hid, "info_unit_id": "U029",
             "meaning": "verify", "rationale": "旧请求不合法"}).status_code, 422)
 
-    def test_stored_proposal_can_be_adopted_without_rewriting_historical_audit(self):
+    def test_historical_audit_has_no_replay_entry_and_is_not_rewritten(self):
         hid = self.hypothesis()
         proposal = {**fixture.suggestion("evidence_link", hid), "meaning": "related"}
         response, _ = self.investigate([proposal], [hid])
@@ -50,8 +49,8 @@ class TestEvidenceLinkMigration(unittest.TestCase):
         audit["result"]["proposals"][0]["meaning"] = "verify"
         path.write_text(json.dumps(audit, ensure_ascii=False), encoding="utf-8")
         before = path.read_bytes()
-        accepted = self.accept(run_id)
-        self.assertEqual(accepted.status_code, 200, accepted.text)
+        rejected = self.client.post(f"/api/cases/{self.case.case_id}/reasoning-proposals/accept", json={"issue": self.issue, "run_id": run_id})
+        self.assertEqual(rejected.status_code, 404, rejected.text)
         link = get_issue_workspaces(self.case).workspaces[self.issue].reasoning.links[0]
         self.assertEqual(link.meaning, "related")
         self.assertEqual(path.read_bytes(), before)

@@ -393,8 +393,12 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
         if proposal.kind == "evidence_gap_update":
             check([proposal.gap_id], gap_ids, ["proposals", offset, "gap_id"], gap_ids, "gap")
         check([(p.info_unit_id, p.source_ref_index) for p in proposal.evidence_refs], set(pointers), ["proposals", offset, "evidence_refs"])
-        if any(p.info_unit_id not in proposal_material_ids(proposal) for p in proposal.evidence_refs):
-            invalid("invalid_reasoning_proposal", "reference", ["proposals", offset, "evidence_refs"], "Proposal evidence must refer to its retrieved InfoUnits")
+        for ref_index, ref in enumerate(proposal.evidence_refs):
+            if ref.info_unit_id not in proposal_material_ids(proposal):
+                invalid("invalid_reasoning_proposal", "reference", ["proposals", offset, "evidence_refs", ref_index],
+                    "Proposal citations must refer to its own material IDs", "proposal_evidence_outside_materials",
+                    value=(ref.info_unit_id, ref.source_ref_index),
+                    fix=f"Cite only {material_field}: {proposal_material_ids(proposal)}. Gap updates cite responding material, not the original Gap basis.")
     if issues:
         first = issues[0]
         raise AppError(first.get("error_code", "invalid_reasoning_proposal"), "Artifact validation failed; fix all listed fields",
@@ -472,7 +476,10 @@ def _tool_recovery(response, name, args=None, case=None):
         target = {key: item[key] for key in ("info_unit_id", "info_unit_title", "source_ref_index", "relation_id", "hypothesis_id", "gap_id",
                                              "finding_index", "obtained_source_ref_indices") if key in item}
         step = {"loc": argument_loc, "code": code, **target}
-        if code == "finding_sources_missing" and item.get("available_evidence_refs"):
+        if code == "proposal_evidence_outside_materials":
+            ids = args.get("addressing_info_unit_ids", args.get("basis_info_unit_ids", args.get("info_unit_ids", [])))
+            step.update(tool=name, instruction=item["fix"], material_ids=ids)
+        elif code == "finding_sources_missing" and item.get("available_evidence_refs"):
             step.update(tool="finish_investigation", evidence_refs=deepcopy(item["available_evidence_refs"]),
                 instruction="Use these already obtained valid evidence_refs to correct this Finding at loc, then resubmit finish_investigation; no additional read is needed for these pointers. Cite them only if they support the statement. Otherwise remove the unsupported Finding or put unresolved conditions in open_questions; never invent a citation.")
         elif code == "finding_sources_missing":
@@ -621,7 +628,7 @@ async def run_investigation(case: CaseData, goal: str,
                             issue_key: str | None = None) -> dict:
     """One goal-driven loop. Task plans and activity history are not model input."""
     from app import investigation_actions as actions
-    from app.reasoning_proposals import proposal_receipt
+    from app.reasoning_proposals import proposal_receipt, commit_investigation
     if not isinstance(goal, str) or not goal.strip() or len(goal) > 2000:
         raise AppError("invalid_investigation_goal", "goal must contain 1 to 2000 nonblank characters")
     bound_case = case.model_copy(deep=True)
@@ -638,6 +645,9 @@ async def run_investigation(case: CaseData, goal: str,
         formal = workspace.reasoning
         if work_context is None:
             work_context = investigation_context(bound_case, issue_key, goal, selected_info_unit_ids=selected_info_unit_ids)
+        elif work_context.get("current_issue", issue_key) != issue_key:
+            raise AppError("unknown_issue", "Investigation context belongs to another Issue")
+        work_context["current_issue"] = issue_key
     selected = [] if not selected_info_unit_ids else tools._selected_units(bound_case, selected_info_unit_ids)
     initial_input = {"goal": goal, "core_issue": bound_case.core_issue,
         "case_info_directory": case_info_directory(bound_case),
@@ -664,6 +674,7 @@ async def run_investigation(case: CaseData, goal: str,
     stop_reason, recovery, answer_basis = None, None, None
     finish_required = False
     completion = "evidence_insufficient"
+    workspace_commit = {"status": "pending", "changes": []}
 
     def bucket(name):
         return ("read" if name in READ_TOOLS else "proposal" if name in actions.PROPOSAL_TOOLS
@@ -679,6 +690,7 @@ async def run_investigation(case: CaseData, goal: str,
         result = actions.artifacts(bound_case, seen, work_context, goal, proposals, findings, open_questions, completion)
         return {**result.model_dump(mode="json"), "answer": answer, "answer_basis": answer_basis,
             "summary_status": summary_status, "limitations": list(dict.fromkeys(limitations)), "run_id": run_id,
+            "workspace_commit": workspace_commit,
             "stop_reason": stop_reason or "running", "tool_call_count": executed,
             "tool_attempt_count": attempts, "tool_budget_used": dict(used), "model_call_count": len(audit["model_calls"])}
 
@@ -690,7 +702,7 @@ async def run_investigation(case: CaseData, goal: str,
         audit["stop_reason"] = stop_reason
         audit["result"] = snapshot()
         if proposals:
-            audit["proposal_receipt"] = proposal_receipt(bound_case, issue_key, work_context, proposals)
+            audit["proposal_receipt"] = proposal_receipt(bound_case, issue_key, proposals, formal)
         _write_audit(bound_case.case_id, output_path, audit)
 
     def record_final_state():
@@ -867,7 +879,7 @@ async def run_investigation(case: CaseData, goal: str,
                 merged_keys = knowledge.merge(name, args, response, executed=tool_audit["executed"])
                 read_progress = name in READ_TOOLS and not failed and bool(
                     merged_keys & (_context_keys(model_context(initial_input, knowledge, recovery)) - _context_keys(state)))
-                progressed = read_progress if name in READ_TOOLS else not failed and not response.get("cached")
+                progressed = read_progress if name in READ_TOOLS else not failed and not response.get("cached") and not response.get("no_change")
                 if category in {"read", "proposal"}:
                     no_progress = 0 if progressed else no_progress + 1
                 tool_audit.update(read_progress=bool(read_progress), no_progress=no_progress)
@@ -881,7 +893,27 @@ async def run_investigation(case: CaseData, goal: str,
                 stop_reason = "finish_investigation"
                 output = snapshot(answer, "completed")
                 audit.update(status="success", stop_reason=stop_reason, result=output)
+                # Save every validated artifact before the single workspace write.
                 _write_audit(bound_case.case_id, output_path, audit)
+                if proposals and completion != "budget_exhausted" and not non_finish_exhausted():
+                    try:
+                        def validate_commit(current_case):
+                            actions.artifacts(current_case, seen, work_context, goal, proposals, findings, open_questions, completion)
+                        workspace_commit = commit_investigation(case, issue_key, run_id, proposals,
+                            audit["proposal_receipt"], validate=validate_commit)
+                    except Exception as exc:
+                        workspace_commit = {"status": "conflict" if isinstance(exc, AppError) and exc.status_code == 409 else "failed",
+                            "changes": [], "error": {"code": getattr(exc, "code", "workspace_commit_failed"), "message": str(exc)}}
+                        limitations.append("本轮提案未写入推理工作区；结果已保留，可检查后重新调查。")
+                else:
+                    workspace_commit = {"status": "budget_exhausted" if proposals else "no_change", "changes": []}
+                output = snapshot(answer, "completed")
+                audit["result"] = output
+                try:
+                    _write_audit(bound_case.case_id, output_path, audit)
+                except AppError:
+                    # The workspace's atomic run journal remains authoritative.
+                    output["limitations"].append("最终审计输出保存失败；已写入变更以工作区运行记录为准。")
                 record_final_state()
                 trace.finish_success(output)
                 return output

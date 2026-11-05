@@ -28,13 +28,7 @@ class TestInvestigationWorkflow(unittest.TestCase):
         self.assertEqual(result.status_code, 200, result.text)
         return result.json(), requests
 
-    def accept(self, result, index):
-        response = self.client.post(f"/api/cases/{self.case.case_id}/reasoning-proposals/accept", json={
-            "issue": self.issue, "run_id": result["run_id"], "proposal_id": result["proposals"][index]["proposal_id"]})
-        self.assertEqual(response.status_code, 200, response.text)
-        return response.json()["object_id"]
-
-    def test_two_rounds_preserve_shared_gap_identity_and_require_user_approval(self):
+    def test_two_rounds_automatically_commit_and_preserve_shared_gap_identity(self):
         self.client = TestClient(main.app)
         self.issue = self.case.issue_set[1]
         for file in self.case.files:
@@ -80,9 +74,10 @@ class TestInvestigationWorkflow(unittest.TestCase):
                             answer="双方说法存在分歧，实际损失尚未证实；可审阅两种解释和共同核查条件。")
         result, _ = self.run_agent(goal, first)
         self.assertEqual([p["kind"] for p in result["proposals"]], ["hypothesis", "hypothesis", "evidence_gap"])
-        self.assertEqual(get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses, [])
-        hids = [self.accept(result, index) for index in (0, 1)]
-        gid = self.accept(result, 2)
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
+        first_state = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
+        hids = [h.id for h in first_state.hypotheses]
+        gid = first_state.gaps[0].id
         original = get_issue_workspaces(self.case).workspaces[self.issue].reasoning.model_copy(deep=True)
         self.assertEqual(original.gaps[0].hypothesis_ids, hids)
 
@@ -130,35 +125,15 @@ class TestInvestigationWorkflow(unittest.TestCase):
                             statement="补充文件记载计租和收款连续。", answer="新文件回应了原核查条件；原缺口和假设判断的更新建议均待你确认。")
         response, _ = self.run_agent("检查新证据", second)
         self.assertEqual([p["kind"] for p in response["proposals"]], ["evidence_gap_update", "hypothesis_status", "hypothesis_status"])
-        self.assertEqual(get_issue_workspaces(updated).workspaces[self.issue].reasoning, original)
+        self.assertEqual(response["workspace_commit"]["status"], "applied")
         self.assertEqual([p["judgment"] for p in response["proposals"][1:]], ["refuted", "verified"])
-        self.accept(response, 0)
         final = get_issue_workspaces(updated).workspaces[self.issue].reasoning
         self.assertEqual([h.id for h in final.hypotheses], hids)
-        self.assertEqual([h.judgment for h in final.hypotheses], ["unverified", "unverified"])
+        self.assertEqual([h.judgment for h in final.hypotheses], ["refuted", "verified"])
         self.assertEqual(len(final.gaps), 1)
         for field in ("id", "content", "basis_info_unit_ids", "hypothesis_ids"):
             self.assertEqual(getattr(final.gaps[0], field), getattr(original.gaps[0], field))
         self.assertEqual(final.gaps[0].addressing_info_unit_ids, ["U029"])
         self.assertEqual(final.gaps[0].status, "resolved")
-        # Approving the Gap revises its Hypotheses. Old judgment suggestions
-        # remain stale; a fresh read supplies current revisions for approval.
-        stale = self.client.post(f"/api/cases/{self.case.case_id}/reasoning-proposals/accept", json={
-            "issue": self.issue, "run_id": response["run_id"], "proposal_id": response["proposals"][1]["proposal_id"]})
-        self.assertEqual(stale.status_code, 409, stale.text)
-        def judgments(state, turn):
-            if turn == 1:
-                return f.tool("get_evidence", {"info_unit_ids": ["U029"]}, "current-source")
-            if turn in (2, 3):
-                return f.tool("propose_hypothesis_status", {"hypothesis_id": hids[turn - 2],
-                    "judgment": "refuted" if turn == 2 else "verified", "info_unit_ids": ["U029"],
-                    "rationale": "依据已核查的新来源，建议用户确认当前判断。", "evidence_refs": pointers}, f"current-status-{turn}")
-            return f.finish("核对当前判断", ["U029"], refs=[("U029", ref_index)], status="completed",
-                            answer="已重新核查来源，判断建议待用户确认。")
-        refreshed, _ = self.run_agent("核对当前判断", judgments)
-        self.assertEqual(len(refreshed["proposals"]), 2)
-        for index in (0, 1):
-            self.accept(refreshed, index)
-        state = get_issue_workspaces(updated).workspaces[self.issue].reasoning
-        self.assertEqual([h.judgment for h in state.hypotheses], ["refuted", "verified"])
-        self.assertEqual(state.gaps, final.gaps)
+        self.assertEqual([h.content for h in final.hypotheses], [h.content for h in original.hypotheses])
+        self.assertEqual(final.links, [])  # Judgment citations are not formal EvidenceLinks.

@@ -55,9 +55,12 @@ class TestInvestigationAgent(unittest.TestCase):
         current = self.fixture.disk_snapshot()
         for name, raw in self.fixture.before_files.items():
             self.assertEqual(current[name], raw)
-        self.assertTrue(all("/runs/" in name.replace(chr(92), "/") for name in current.keys() - self.fixture.before_files.keys()))
+        allowed = {"issue_workspaces.json", "issue_workspaces.lock"} if getattr(self, "_workspace_enabled", False) else set()
+        self.assertTrue(all("/runs/" in name.replace(chr(92), "/") or name.replace(chr(92), "/").split("/")[-1] in allowed
+                            for name in current.keys() - self.fixture.before_files.keys()))
 
     def run_script(self, goal, replies, selected=None, case=None, **kwargs):
+        self._workspace_enabled = getattr(self, "_workspace_enabled", False) or kwargs.get("issue_key") is not None
         calls = []
         async def respond(config, messages, definitions, schema=None, *, tool_choice="auto"):
             calls.append({"messages": deepcopy(messages), "tool_choice": tool_choice, "definitions": definitions, "schema": schema})

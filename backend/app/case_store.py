@@ -174,6 +174,12 @@ def _validate_artifacts(case: CaseData) -> None:
 
 
 def save_case(case: CaseData, set_current: bool = True) -> Path:
+    from app.issue_workspaces import workspace_lock
+    with workspace_lock(case):
+        return _save_case(case, set_current)
+
+
+def _save_case(case: CaseData, set_current: bool) -> Path:
     # Revalidate because service code may have modified nested lists in place.
     case = CaseData.model_validate(case.model_dump(mode="json"))
     _validate_artifacts(case)

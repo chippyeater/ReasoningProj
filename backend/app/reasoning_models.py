@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
-from app.schemas import ContractModel, Point, Text
+from app.schemas import ContractModel, Point, Text, SourceRef
 
 ReasoningText = Annotated[str, Field(min_length=1, max_length=600, pattern=r"\S")]
 Judgment = Literal["unverified", "verified", "refuted"]
@@ -56,32 +56,6 @@ class EvidenceLink(ContractModel):
     origin: Literal["user", "agent"] = "user"
     last_edited_by: Literal["user", "agent_accepted"] = "user"
     proposal_key: str | None = None
-
-
-class ReasoningState(ContractModel):
-    hypotheses: list[Hypothesis] = Field(default_factory=list)
-    gaps: list[EvidenceGap] = Field(default_factory=list)
-    links: list[EvidenceLink] = Field(default_factory=list)
-    accepted_proposals: dict[str, str] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def references(self):
-        ids = [obj.id for obj in [*self.hypotheses, *self.gaps, *self.links]]
-        if len(ids) != len(set(ids)):
-            raise ValueError("Reasoning IDs must be unique")
-        hypotheses = {h.id for h in self.hypotheses}
-        pairs = [(link.hypothesis_id, link.info_unit_id) for link in self.links]
-        if len(pairs) != len(set(pairs)):
-            raise ValueError("Only one evidence link per InfoUnit and Hypothesis")
-        for gap in self.gaps:
-            if not gap.hypothesis_ids or not set(gap.hypothesis_ids) <= hypotheses:
-                raise ValueError("Gap must refer to current Issue hypotheses")
-            if any(len(ids) != len(set(ids)) for ids in (
-                    gap.hypothesis_ids, gap.basis_info_unit_ids, gap.addressing_info_unit_ids)):
-                raise ValueError("Duplicate gap references")
-        if any(link.hypothesis_id not in hypotheses for link in self.links):
-            raise ValueError("Unknown link Hypothesis")
-        return self
 
 
 class HypothesisEdit(ContractModel):
@@ -216,15 +190,58 @@ def proposal_material_ids(proposal: ReasoningProposal) -> list[str]:
     return proposal.info_unit_ids
 
 
-class AcceptReasoningProposal(ContractModel):
-    issue: Text
-    run_id: Annotated[str, Field(pattern=r"^investigation-[a-f0-9]{32}$")]
-    proposal_index: Annotated[int, Field(ge=0, lt=6)] | None = None
-    proposal_id: Annotated[str, Field(pattern=r"^proposal-[a-f0-9]{32}$")] | None = None
-    position: Point | None = None
+class ReasoningChange(ContractModel):
+    collection: Literal["hypotheses", "gaps", "links"]
+    object_id: Text
+    before: Hypothesis | EvidenceGap | EvidenceLink | None
+    after: Hypothesis | EvidenceGap | EvidenceLink | None
+    proposal_keys: list[str] = Field(default_factory=list)
+
+
+class ReasoningRunEvidence(ContractModel):
+    info_unit_id: Text
+    source_ref_index: int
+    source_ref: SourceRef
+
+
+class ReasoningRun(ContractModel):
+    status: Literal["applied", "undone"] = "applied"
+    changes: list[ReasoningChange]
+    proposals: list[ReasoningProposal] = Field(default_factory=list)
+    evidence: list[ReasoningRunEvidence] = Field(default_factory=list)
+
+
+class ReasoningState(ContractModel):
+    hypotheses: list[Hypothesis] = Field(default_factory=list)
+    gaps: list[EvidenceGap] = Field(default_factory=list)
+    links: list[EvidenceLink] = Field(default_factory=list)
+    accepted_proposals: dict[str, str] = Field(default_factory=dict)
+    investigation_runs: dict[str, ReasoningRun] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def reference(self):
-        if (self.proposal_index is None) == (self.proposal_id is None):
-            raise ValueError("Use exactly one proposal_id or legacy proposal_index")
+    def references(self):
+        ids = [obj.id for obj in [*self.hypotheses, *self.gaps, *self.links]]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Reasoning IDs must be unique")
+        hypotheses = {h.id for h in self.hypotheses}
+        pairs = [(link.hypothesis_id, link.info_unit_id) for link in self.links]
+        if len(pairs) != len(set(pairs)):
+            raise ValueError("Only one evidence link per InfoUnit and Hypothesis")
+        for gap in self.gaps:
+            if not gap.hypothesis_ids or not set(gap.hypothesis_ids) <= hypotheses:
+                raise ValueError("Gap must refer to current Issue hypotheses")
+            if any(len(ids) != len(set(ids)) for ids in (
+                    gap.hypothesis_ids, gap.basis_info_unit_ids, gap.addressing_info_unit_ids)):
+                raise ValueError("Duplicate gap references")
+        if any(link.hypothesis_id not in hypotheses for link in self.links):
+            raise ValueError("Unknown link Hypothesis")
         return self
+
+
+class InvestigationRunRef(ContractModel):
+    issue: Text
+    run_id: Annotated[str, Field(pattern=r"^investigation-[a-f0-9]{32}$")]
+
+
+class InvestigationRunEdit(InvestigationRunRef):
+    restore: bool = False
