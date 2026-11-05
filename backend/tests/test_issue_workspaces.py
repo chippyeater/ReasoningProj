@@ -72,7 +72,7 @@ class TestIssueWorkspaces(unittest.TestCase):
         issue = self.case.issue_set[1]
         requests = []
         replies = [fixtures.tool("get_evidence", {"info_unit_ids": ["U029"]}),
-                   fixtures.finish("核对来源", ["U029"], refs=[("U029", 0)], status="completed")]
+                   fixtures.finish('核对来源', status='completed')]
 
         def model(request):
             requests.append(json.loads(request.content))

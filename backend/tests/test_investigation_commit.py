@@ -63,7 +63,7 @@ class TestInvestigationCommit(unittest.TestCase):
                 before_finish()
             if invalid_finish:
                 return agent_fixture.tool("finish_investigation", {"bad_field": turn}, f"bad-{turn}")
-            return agent_fixture.finish("核对", ["U029"], refs=[("U029", 0)], status="budget_exhausted")
+            return agent_fixture.finish('核对', status='budget_exhausted')
         return agent_fixture.TestInvestigationAgent.run_script(self, "核对", respond, issue_key=self.issue)
 
     def test_first_run_creates_parents_shared_gap_and_link_in_one_write(self):
@@ -154,6 +154,21 @@ class TestInvestigationCommit(unittest.TestCase):
         with self.assertRaises(AppError):
             self.replay(result)
 
+    def test_historical_audit_with_findings_can_retry_without_rewriting_it(self):
+        with patch("app.issue_workspaces.write_json", side_effect=OSError("disk full")):
+            result, _ = self.run_proposals([fixture.suggestion("hypothesis")])
+        path = case_dir(self.case.case_id) / f"runs/{result['run_id']}.output.json"
+        audit = json.loads(path.read_text(encoding="utf-8"))
+        audit["result"]["findings"] = [{"statement": "历史调查的陈述", "info_unit_ids": ["U029"],
+            "relation_ids": [], "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}]
+        path.write_text(json.dumps(audit, ensure_ascii=False), encoding="utf-8")
+        saved = path.read_bytes()
+        response = self.retry(result["run_id"])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["workspace_commit"]["status"], "applied")
+        self.assertEqual(path.read_bytes(), saved)
+        self.assertEqual(len(self.state().hypotheses), 1)
+
     def test_finish_preserves_user_issue_switch_during_investigation(self):
         from app.issue_workspaces import update_issue_workspace, IssueWorkspacePatch
         hid = self.hypothesis()
@@ -230,6 +245,7 @@ class TestInvestigationCommit(unittest.TestCase):
         self.assertEqual(result["completion_status"], "budget_exhausted")
         self.assertEqual(result["workspace_commit"]["status"], "applied")
         self.assertEqual(len(result["workspace_commit"]["changes"]), 4)
+        self.assertNotIn("findings", result)
         state = self.state()
         self.assertEqual(len(state.hypotheses), 2)
         self.assertEqual(set(state.gaps[0].hypothesis_ids), {h.id for h in state.hypotheses})

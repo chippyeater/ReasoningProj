@@ -76,9 +76,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                 return replies.tool("propose_evidence_gap_update", args)
             if before_finish:
                 before_finish()
-            return replies.finish("检查新合同对已有缺口的回应", [self.uid], refs=[(self.uid, self.source_index)],
-                                  statement="新合同只载明约定，实际履行仍待核实。", status="evidence_insufficient",
-                                  questions=["实际起租履行情况尚待独立核实。"])
+            return replies.finish('检查新合同对已有缺口的回应', statement='新合同只载明约定，实际履行仍待核实。', status='evidence_insufficient', questions=['实际起租履行情况尚待独立核实。'])
         with patch.object(llm_client, "load_config", return_value=replies.CONFIG), patch.object(
                 llm_client, "call_tools", new=AsyncMock(side_effect=model)):
             response = self.client.post(f"/api/cases/{self.cid}/agent/run", json={
@@ -180,8 +178,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                         "addressing_info_unit_ids": [self.uid], "status": "open", "evidence_refs": pointers,
                         "rationale": "补充合同仅记载起租约定，实际履行仍需核对。"}, "update-original")
                 else:
-                    reply = replies.finish("核查新增合同", [self.uid], refs=[(self.uid, self.source_index)],
-                        questions=["实际履行仍待核实。"], status="evidence_insufficient")
+                    reply = replies.finish('核查新增合同', questions=['实际履行仍待核实。'], status='evidence_insufficient')
             return httpx.Response(200, json=reply.response)
         real_client = httpx.AsyncClient
         with patch.object(llm_client, "load_config", return_value=replies.CONFIG), patch.object(
@@ -279,8 +276,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                 return replies.tool("propose_hypothesis_status", {"hypothesis_id": self.hids[0],
                     "judgment": "unverified", "info_unit_ids": [self.uid], "evidence_refs": pointers,
                     "rationale": "约定起租不足以证明已履行及没有损失，保留待验证判断。"}, "status")
-            return replies.finish("核对新合同", [self.uid], refs=[(self.uid, self.source_index)],
-                status="evidence_insufficient", questions=["实际履行与收款尚待核实。"])
+            return replies.finish('核对新合同', status='evidence_insufficient', questions=['实际履行与收款尚待核实。'])
         with patch.object(llm_client, "load_config", return_value=replies.CONFIG), patch.object(
                 llm_client, "call_tools", new=AsyncMock(side_effect=model)):
             response = self.client.post(f"/api/cases/{self.cid}/agent/run", json={
@@ -328,8 +324,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                     "addressing_info_unit_ids": [self.uid], "status": "open", "rationale": "补充合同部分回应原缺口。",
                     "evidence_refs": [{"info_unit_id": self.old_id if turn == 3 else self.uid,
                                       "source_ref_index": 0 if turn == 3 else self.source_index}]}, f"update-{turn}")
-            return replies.finish("修正缺口回应", [self.uid], refs=[(self.uid, self.source_index)], status="evidence_insufficient",
-                questions=["实际履行仍待核实。"])
+            return replies.finish('修正缺口回应', status='evidence_insufficient', questions=['实际履行仍待核实。'])
         with patch.object(llm_client, "load_config", return_value=replies.CONFIG), patch.object(
                 llm_client, "call_tools", new=AsyncMock(side_effect=model)):
             response = self.client.post(f"/api/cases/{self.cid}/agent/run", json={"goal": "修正缺口回应", "current_issue": self.issue})

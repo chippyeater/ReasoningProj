@@ -6,9 +6,9 @@
 
 只有一个工具调用循环。首轮提供三个读取工具、Hypothesis/Gap 创建和 Finish；工具可用性依据服务器绑定的正式 Issue 对象判断，不依赖投影是否显示该对象。仅在已有正式 Hypothesis 时提供状态建议、当前 Issue 实际存在 Gap 时提供 Gap Update 和 search_evidence_gaps、有正式或本轮待确认 Hypothesis 时提供 Evidence Link，原生 `tool_choice=auto`。没有规划阶段、Question/InvestigationStep 模型、计划更新工具或关联参数。读取范围、工具顺序、Proposal 数量和结束时机由 Goal 与读取结果决定。
 
-通过 finish 交付 `answer`、`answer_basis`、可选内容的 `findings`、`open_questions` 和 `completion_status`。空 Findings/Proposal 合法。answer_basis 为 general（能力/通用回答）、case_metadata（可靠案件统计）或 case_material（案件判断）；它描述答复依据，不创建另一条执行流程。涉及案件依据的成果必须选择 case_material。目录不授予材料或引用权限；尚无材料/有效读取结果时，案件判断返回可恢复错误。实际 empty、读取 error、空案件或预算限制可以支持明确的证据不足说明，不能证明事实。后端不以关键词猜测 Goal，也不能独立证明自然语言任务已经充分覆盖。
+通过 finish 交付 `answer`、`answer_basis`、`open_questions` 和 `completion_status`，不再要求或生成 Finding；空 Proposal 合法。answer_basis 为 general（能力/通用回答）、case_metadata（可靠案件统计）或 case_material（案件判断）；它描述答复依据，不创建另一条执行流程。涉及案件依据的成果必须选择 case_material。目录不授予材料或引用权限；尚无材料/有效读取结果时，案件判断返回可恢复错误。实际 empty、读取 error、空案件或预算限制可以支持明确的证据不足说明，不能证明事实。后端不以关键词猜测 Goal，也不能独立证明自然语言任务已经充分覆盖。
 
-Findings、Proposal 引用须属于当前案件并实际取得；SourceRef 仅通过实际调用 get_evidence 后取得，并由缓存 TXT 核验。证据不足须列明未解条件；completed 不可同时宣称 Goal 仍有未解条件。答复保留原文、Markdown，长度上限与工具 Schema 一致为1000字符；非法答复不截断、不发布，成功 Proposal 不因之后模型失败而丢失。
+Proposal 引用须属于当前案件并实际取得；SourceRef 仅通过实际调用 get_evidence 后取得，并由缓存 TXT 核验。结果中的材料与来源列表由系统根据本轮取得的内容和 Proposal 汇总，供追溯，不代表每段来源支持总结中的所有判断，也不会自动建立 EvidenceLink。历史审计中的 Finding 保留原样，读取历史记录不使用新运行的严格输出模型，前端忽略旧字段。证据不足须列明未解条件；completed 不可同时宣称 Goal 仍有未解条件。答复保留原文、Markdown，长度上限与工具 Schema 一致为1000字符；非法答复不截断、不发布，成功 Proposal 不因之后模型失败而丢失。
 
 读取与所有 Proposal 共享8次非 Finish 调用预算，失败、重复和缓存调用均计数；每轮最多6个有效 Proposal。finish 独立最多3次，总预算11次，最多14次模型调用（含不遵循工具协议的纠正余量）；重复无进展最多3次。预算与完整活动只由后端记录，耗尽的工具从下次 Schema 移除。连续非法调用/重复读取、模型失败和审计写入失败均有显式结束或异常，不自动重试付费请求。普通文本不能冒充已验证交付：产生 `finish_required` 后，后端持续关闭读取和 Proposal 工具，仅开放 Finish，越界调用在执行前拒绝；Finish 参数错误不会重新开放调查。
 

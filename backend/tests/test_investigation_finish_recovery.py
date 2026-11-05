@@ -3,6 +3,7 @@ import json
 import unittest
 
 import test_investigation_agent as f
+from app.errors import AppError
 
 
 class TestInvestigationFinishRecovery(unittest.TestCase):
@@ -25,7 +26,7 @@ class TestInvestigationFinishRecovery(unittest.TestCase):
             with self.subTest(reason=reason):
                 case, reads = self.closing_reads(reason)
                 bad = f.tool("finish_investigation", {"answer": "仍缺核验材料。", "answer_basis": "case_material",
-                    "findings": [], "open_questions": "应为问题列表", "completion_status": "evidence_insufficient"}, "bad-finish")
+                    "open_questions": "应为问题列表", "completion_status": "evidence_insufficient"}, "bad-finish")
                 def respond(call, turn):
                     if turn <= len(reads):
                         return reads[turn - 1]
@@ -49,12 +50,16 @@ class TestInvestigationFinishRecovery(unittest.TestCase):
                 self.assertEqual(result["tool_budget_used"]["finish"], 2)
 
     def test_unavailable_read_recommendation_preserves_reference_details(self):
-        case, reads = self.closing_reads("no_progress")
-        _, calls = self.run_script("核对", [*reads,
-            f.finish("核对", ["U029"], refs=[("U029", 99)], call_id="bad-finish"),
-            f.finish("核对", questions=["来源索引无效，结论尚缺有效依据。"])], case=case, selected=["U029"])
-        state = json.loads(calls[-1]["messages"][1]["content"])
-        recovery = state["recovery"]
+        from app import investigation_agent as agent, investigation_tools as tools
+        case, _ = self.closing_reads("no_progress")
+        # Reference repair remains necessary for Proposal errors after tools close.
+        response = tools._failure(AppError("invalid_investigation_reference", "Invalid source"))
+        response["error"]["validation_details"] = {"errors": [{
+                "loc": ["proposals", 0, "evidence_refs", 0], "code": "reference_out_of_range",
+                "info_unit_id": "U029", "source_ref_index": 99}]}
+        agent._tool_recovery(response, "propose_hypothesis", case=case)
+        recovery = response["error"]
+        agent._finish_only_recovery(recovery)
         error = next(e for e in recovery["validation_details"]["errors"] if e["code"] == "reference_out_of_range")
         self.assertEqual(error["info_unit_id"], "U029")
         self.assertEqual(error["info_unit_title"], next(u.title for u in case.info_units if u.id == "U029"))
@@ -65,7 +70,6 @@ class TestInvestigationFinishRecovery(unittest.TestCase):
             self.assertEqual(step["tool"], "finish_investigation")
             self.assertEqual(step["unavailable_tool"], "get_evidence")
             self.assertNotIn("arguments", step)
-        self.assertEqual([d["function"]["name"] for d in calls[-1]["definitions"]], ["finish_investigation"])
 
     def test_closed_phase_still_limits_failed_finish_submissions_to_three(self):
         case, reads = self.closing_reads("no_progress")

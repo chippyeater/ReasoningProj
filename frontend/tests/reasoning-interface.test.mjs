@@ -25,7 +25,7 @@ const state = { hypotheses: [{ id: 'hyp-existing', content: '租金已足额收�
   gaps: [], links: [], accepted_proposals: {} };
 const caseData = { info_units: [{ id: 'info-rent', title: '收款记录', source_refs: [] }], files: [], relations: [] };
 const result = { run_id: 'investigation-test', proposals: [], evidence: [], evidence_refs: [],
-  findings: [], limitations: [], open_questions: [], relevant_info_unit_ids: [], relevant_relation_ids: [],
+  limitations: [], open_questions: [], relevant_info_unit_ids: [], relevant_relation_ids: [],
   summary_status: 'completed', completion_status: 'evidence_insufficient', answer_basis: 'case_material',
   goal: '核对收款', answer: '实际收款尚待核实。' };
 const proposal = { proposal_id: 'proposal-test', kind: 'hypothesis', content: '房东少收租金',
@@ -76,7 +76,7 @@ test('historical basis uses the committed source snapshot after case material ch
 
 test('result has one missing-source warning and metadata answers do not imply missing evidence', () => {
   const html = render(InvestigationResultPanel, { result, infoUnits: [], relations: [], onLocate() {}, onClose() {} });
-  assert.equal(html.split('本轮尚未提交可定位的原文依据').length - 1, 1);
+  assert.equal(html.split('本轮尚未取得可定位的原文依据').length - 1, 1);
   assert.doesNotMatch(html, /主要发现尚未取得/);
   const general = render(InvestigationResultPanel, { result: { ...result, answer_basis: 'general' },
     infoUnits: [], relations: [], onLocate() {}, onClose() {} });
@@ -100,4 +100,32 @@ test('only a normal Finish with failed persistence offers a write retry', () => 
       workspace_commit: { status, changes: [] } } });
     assert.equal(html.includes('重试写入本轮变更'), status === 'failed');
   }
+});
+
+test('new and historical results show summary and sources while ignoring old Findings', () => {
+  const evidence = { info_unit_id: 'info-rent', source_ref_index: 0, file_id: 'file-rent',
+    filename: '收款凭证.txt', quote: '已收到租金。', start: 0, end: 6, source_kind: 'record' };
+  for (const legacy of [{}, { findings: [{ statement: '历史 Finding 不再展示', info_unit_ids: ['info-rent'],
+    relation_ids: [], evidence_refs: [{ info_unit_id: 'info-rent', source_ref_index: 0 }] }] }]) {
+    const html = render(InvestigationResultPanel, { result: { ...result, ...legacy,
+      evidence: [evidence], evidence_refs: [{ info_unit_id: 'info-rent', source_ref_index: 0 }],
+      relevant_info_unit_ids: ['info-rent'], open_questions: ['核对其他月份收款。'] },
+      infoUnits: caseData.info_units, relations: [], onLocate() {}, onClose() {} });
+    assert.match(html, /实际收款尚待核实/);
+    assert.match(html, /收款凭证.txt/);
+    assert.match(html, /已收到租金/);
+    assert.match(html, /核对其他月份收款/);
+    assert.doesNotMatch(html, /历史 Finding|已核查的发现|investigation-finding/);
+  }
+});
+
+test('unfinished result preserves failure and material display without Findings', () => {
+  const html = render(InvestigationResultPanel, { result: { ...result, summary_status: 'failed',
+    limitations: ['来源文件暂时无法读取。'], proposals: [proposal] },
+    infoUnits: caseData.info_units, relations: [], onLocate() {}, onClose() {} });
+  assert.match(html, /role="alert"/);
+  assert.match(html, /已取得的材料与暂存提案仍可查看/);
+  assert.match(html, /本轮未写入推理工作区/);
+  assert.match(html, /部分材料暂时无法读取/);
+  assert.doesNotMatch(html, /已核查的发现/);
 });

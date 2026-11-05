@@ -106,10 +106,8 @@ def _mock_reply(config, messages, definitions, schema=None, **kwargs):
         name, args = "get_evidence", {"info_unit_ids": ["U004"]}
     else:
         name = "finish_investigation"
-        refs = [{"info_unit_id": "U004", "source_ref_index": i} for i in (0, 1)]
-        finding = "Offline protocol sample; source access is not semantic investigation completion."
-        args = {"answer": finding, "answer_basis": "case_material", "open_questions": [],
-            "findings": [{"statement": finding, "info_unit_ids": ["U004"], "relation_ids": [], "evidence_refs": refs}],
+        args = {"answer": "Offline protocol sample; source access is not semantic investigation completion.",
+            "answer_basis": "case_material", "open_questions": [],
             "completion_status": "completed"}
     call = {"id": uuid4().hex, "type": "function", "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}}
     message = {"role": "assistant", "content": None, "tool_calls": [call]}

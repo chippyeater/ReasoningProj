@@ -3,8 +3,6 @@ import json
 import re
 from uuid import uuid4
 
-from pydantic import TypeAdapter
-
 from app.errors import AppError
 from app.reasoning_models import PROPOSAL_ADAPTER, proposal_material_ids
 
@@ -59,25 +57,21 @@ def _check_duplicate(proposal, context, proposals, case):
                     "existing_object": existing}]})
 
 
-def artifacts(case, seen, context, goal, proposals, findings, questions, status):
+def artifacts(case, seen, context, goal, proposals, questions, status):
     """Reuse citation/kind validation; no final model JSON is involved."""
-    from app.investigation_agent import Finding, _validate_result
-    findings = [f.model_dump(mode="json") for f in TypeAdapter(list[Finding]).validate_python(findings, strict=True)]
+    from app.investigation_agent import _validate_result
     units, relations, refs = [], [], []
-    for item in [*findings, *(p.model_dump(mode="json") for p in proposals)]:
+    for item in (p.model_dump(mode="json") for p in proposals):
         material_ids = (item["basis_info_unit_ids"] if item.get("kind") == "evidence_gap" else
                         item["addressing_info_unit_ids"] if item.get("kind") == "evidence_gap_update" else item["info_unit_ids"])
         for uid in material_ids:
             if uid not in units:
                 units.append(uid)
-        for rid in item.get("relation_ids", []):
-            if rid not in relations:
-                relations.append(rid)
         for ref in item["evidence_refs"]:
             if ref not in refs:
                 refs.append(ref)
     return _validate_result(json.dumps({
-        "goal": goal, "findings": findings, "relevant_info_unit_ids": units,
+        "goal": goal, "relevant_info_unit_ids": units,
         "relevant_relation_ids": relations, "evidence_refs": refs, "open_questions": questions,
         "completion_status": status, "proposals": [p.model_dump(mode="json") for p in proposals],
     }, ensure_ascii=False), goal, case, seen, context)
@@ -91,7 +85,7 @@ def _propose(case, seen, context, proposals, kind, **values):
         **values, "proposal_id": f"proposal-{uuid4().hex}",
     })
     # No append until every citation and current-run dependency has passed.
-    artifacts(case, seen, context, "validate pending suggestion", [*proposals, proposal], [], [], "evidence_insufficient")
+    artifacts(case, seen, context, "validate pending suggestion", [*proposals, proposal], [], "evidence_insufficient")
     _check_duplicate(proposal, context, proposals, case)
     from app.issue_workspaces import get_issue_workspaces
     from app.reasoning_proposals import stage_proposals
@@ -143,15 +137,15 @@ def propose_evidence_gap_update(case, seen, context, proposals, *, gap_id, addre
                     rationale=rationale, evidence_refs=evidence_refs)
 
 
-def finish_investigation(case, seen, context, goal, proposals, *, answer, findings,
+def finish_investigation(case, seen, context, goal, proposals, *, answer,
                          open_questions, completion_status, answer_basis, knowledge,
                          budget_exhausted=False, read_budget_exhausted=False):
-    """Deliver a concise answer to the Goal, preserving actual staged Proposals for whole-run validation and atomic commit even when the non-Finish tool budget is exhausted. No writes occur on abnormal termination or concurrent reasoning/evidence changes. answer_basis distinguishes general knowledge/capabilities, case metadata, and case material. Case judgments require obtained material; failed/empty reads can justify an explicit evidence limitation. Findings are optional; when supplied use obtained IDs and source pointers. Report unresolved conditions in open_questions and use evidence_insufficient when they prevent answering the Goal. No fixed retrieval depth or Proposal count."""
+    """Deliver a concise answer to the Goal, preserving staged Proposals for whole-run validation and atomic commit even when the non-Finish tool budget is exhausted. No writes occur on abnormal termination or concurrent reasoning/evidence changes. answer_basis distinguishes general knowledge/capabilities, case metadata, and case material. Case judgments require obtained material; failed/empty reads can justify an explicit evidence limitation. The system preserves obtained source pointers for inspection. Report unresolved conditions in open_questions and use evidence_insufficient when they prevent answering the Goal. No fixed retrieval depth or Proposal count."""
     from app.investigation_agent import _validate_summary
     acquisition = knowledge.acquisition()
     if answer_basis not in {"general", "case_metadata", "case_material"}:
         raise AppError("invalid_tool_arguments", "Unknown answer_basis")
-    if findings or any(proposal_material_ids(p) or p.evidence_refs for p in proposals):
+    if any(proposal_material_ids(p) or p.evidence_refs for p in proposals):
         if answer_basis != "case_material":
             raise AppError("invalid_answer_basis", "Material-backed artifacts require case_material answer_basis")
     if answer_basis == "case_material":
@@ -166,26 +160,7 @@ def finish_investigation(case, seen, context, goal, proposals, *, answer, findin
         raise AppError("unresolved_goal", "Unresolved Goal conditions require evidence_insufficient")
     if completion_status == "budget_exhausted" and not budget_exhausted:
         raise AppError("budget_available", "Use an accurate completion_status; execution budget remains available")
-    result = artifacts(case, seen, context, goal, proposals, findings, open_questions, completion_status)
-    units = {unit.id: unit for unit in case.info_units}
-    errors = []
-    for index, finding in enumerate(result.findings):
-        if finding.evidence_refs:
-            continue
-        for uid in finding.info_unit_ids:
-            unit = units[uid]
-            indices = sorted(source_index for obtained_uid, source_index in seen["evidence"]
-                             if obtained_uid == uid and 0 <= source_index < len(unit.source_refs))
-            if indices:
-                errors.append({"loc": ["findings", index, "evidence_refs"], "code": "finding_sources_missing",
-                    "finding_index": index, "info_unit_id": uid, "info_unit_title": unit.title,
-                    "obtained_source_ref_indices": indices,
-                    "available_evidence_refs": [{"info_unit_id": uid, "source_ref_index": i} for i in indices],
-                    "message": f"Finding {index} omits already obtained SourceRefs for {uid} ({unit.title}): {indices}",
-                    "fix": "Add the available obtained source pointers to this Finding if they support it; otherwise remove the unsupported Finding or put unresolved conditions in open_questions."})
-    if errors:
-        raise AppError("finding_sources_missing", "Include obtained source pointers with factual Findings",
-                       details={"category": "reference", "errors": errors})
+    result = artifacts(case, seen, context, goal, proposals, open_questions, completion_status)
     return result, _validate_summary(answer, proposals)
 
 

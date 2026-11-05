@@ -7,7 +7,6 @@ export type AgentResult = {
   answer?: string | null;
   summary_status?: "pending" | "completed" | "failed";
   limitations?: string[];
-  findings: Array<{ statement: string; info_unit_ids: string[]; relation_ids: string[]; evidence_refs: AgentEvidenceRef[] }>;
   relevant_info_unit_ids: string[];
   relevant_relation_ids: string[];
   evidence_refs: AgentEvidenceRef[];

@@ -43,16 +43,8 @@ class InvestigationOutput(BaseModel):
 Pointers = Annotated[list[ProposalEvidenceRef], Field(max_length=64)]
 
 
-class Finding(InvestigationOutput):
-    statement: BoundedText
-    info_unit_ids: IDs
-    relation_ids: IDs
-    evidence_refs: Pointers
-
-
 class InvestigationResult(InvestigationOutput):
     goal: Annotated[str, Field(min_length=1, max_length=2000, pattern=r"\S")]
-    findings: Annotated[list[Finding], Field(max_length=12)]
     relevant_info_unit_ids: IDs
     relevant_relation_ids: IDs
     evidence_refs: Pointers
@@ -144,16 +136,12 @@ def tool_definitions() -> list[dict]:
         definition = _function(name, PROPOSAL_TOOLS[name].__doc__, deepcopy(properties))
         definition["function"]["parameters"]["$defs"] = schema["$defs"]
         definitions.append(definition)
-    finding_schema = Finding.model_json_schema()
-    finding_defs = finding_schema.pop("$defs")
     definition = _function("finish_investigation", finish_investigation.__doc__, {
         "answer": {"type": "string", "minLength": 1, "maxLength": MAX_SUMMARY_CHARACTERS},
         "answer_basis": {"type": "string", "enum": ["general", "case_metadata", "case_material"]},
-        "findings": {"type": "array", "items": finding_schema, "maxItems": 12},
         "open_questions": InvestigationResult.model_json_schema()["properties"]["open_questions"],
         "completion_status": InvestigationResult.model_json_schema()["properties"]["completion_status"],
     })
-    definition["function"]["parameters"]["$defs"] = finding_defs
     definitions.append(definition)
     return definitions
 
@@ -362,17 +350,9 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
     if result.goal != goal:
         invalid("investigation_result_invalid", "result_semantics", ["goal"], "Final goal must match the requested goal")
     if result.completion_status == "unsupported" and (
-            result.findings or result.relevant_info_unit_ids or result.relevant_relation_ids
+            result.relevant_info_unit_ids or result.relevant_relation_ids
             or result.evidence_refs or result.proposals or not result.open_questions):
-        invalid("investigation_result_invalid", "result_semantics", ["completion_status"], "Unsupported requests require an explanation and no findings")
-    for offset, finding in enumerate(result.findings):
-        check(finding.info_unit_ids, set(result.relevant_info_unit_ids), ["findings", offset, "info_unit_ids"])
-        check(finding.relation_ids, set(result.relevant_relation_ids), ["findings", offset, "relation_ids"], relations, "relation")
-        refs = [(ref.info_unit_id, ref.source_ref_index) for ref in finding.evidence_refs]
-        check(refs, set(pointers), ["findings", offset, "evidence_refs"])
-        if not (finding.info_unit_ids or finding.relation_ids or refs):
-            invalid("invalid_investigation_reference", "reference", ["findings", offset], "Each finding requires a retrieved basis",
-                    "finding_basis_required", fix="Add obtained InfoUnit IDs, Relation IDs or SourceRefs to this Finding; actually read missing material first. If no basis exists, remove this Finding and put the unresolved question in open_questions.")
+        invalid("investigation_result_invalid", "result_semantics", ["completion_status"], "Unsupported requests require an explanation and no material-backed artifacts")
     targets = {obj["id"] for kind in ("hypotheses", "gaps")
                for obj in (work_context or {}).get("reasoning", {}).get(kind, [])}
     hypothesis_ids = {obj["id"] for obj in (work_context or {}).get("reasoning", {}).get("hypotheses", [])}
@@ -447,8 +427,6 @@ def _tool_recovery(response, name, args=None, case=None):
             argument_loc = ["info_unit_id" if argument_loc[0] == "info_unit_ids" else "hypothesis_id"]
         if name == "propose_evidence_gap" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_proposal_ids"]):
             argument_loc = ["hypothesis_targets", *argument_loc]
-        if name == "finish_investigation" and argument_loc[:1] in (["info_unit_ids"], ["relevant_relation_ids"], ["evidence_refs"]):
-            argument_loc = ["findings"]
         item.setdefault("argument_loc", argument_loc)
         if "info_unit_id" not in item:
             value = args
@@ -473,19 +451,11 @@ def _tool_recovery(response, name, args=None, case=None):
         item.setdefault("message", error.get("message", item["code"]))
         code = item["code"]
         uid, title = item.get("info_unit_id"), item.get("info_unit_title")
-        target = {key: item[key] for key in ("info_unit_id", "info_unit_title", "source_ref_index", "relation_id", "hypothesis_id", "gap_id",
-                                             "finding_index", "obtained_source_ref_indices") if key in item}
+        target = {key: item[key] for key in ("info_unit_id", "info_unit_title", "source_ref_index", "relation_id", "hypothesis_id", "gap_id") if key in item}
         step = {"loc": argument_loc, "code": code, **target}
         if code == "proposal_evidence_outside_materials":
             ids = args.get("addressing_info_unit_ids", args.get("basis_info_unit_ids", args.get("info_unit_ids", [])))
             step.update(tool=name, instruction=item["fix"], material_ids=ids)
-        elif code == "finding_sources_missing" and item.get("available_evidence_refs"):
-            step.update(tool="finish_investigation", evidence_refs=deepcopy(item["available_evidence_refs"]),
-                instruction="Use these already obtained valid evidence_refs to correct this Finding at loc, then resubmit finish_investigation; no additional read is needed for these pointers. Cite them only if they support the statement. Otherwise remove the unsupported Finding or put unresolved conditions in open_questions; never invent a citation.")
-        elif code == "finding_sources_missing":
-            step.update(tool="get_evidence", instruction="No obtained source pointer is available for this material. If this Finding needs its original source, call get_evidence for the indicated InfoUnit before resubmitting Finish. Otherwise remove the unsupported Finding or put unresolved conditions in open_questions; never invent an index.")
-            if uid:
-                step["arguments"] = {"info_unit_ids": [uid]}
         elif code == "reference_not_found":
             step.update(tool="search_info_units", instruction="Search the current case for valid IDs by title/keywords; never guess an ID. Use returned materials before resubmitting.")
         elif code == "reference_out_of_range" or code == "evidence_required" or code == "reference_not_obtained" and "source_ref_index" in item:
@@ -505,8 +475,6 @@ def _tool_recovery(response, name, args=None, case=None):
                 step.update(tool="search_info_units", instruction="Actually search by the missing InfoUnit title or keywords to obtain its content; if original text is required call get_evidence next, then resubmit. Directory titles alone do not grant evidence.")
                 if title:
                     step["arguments"] = {"query": title}
-        elif code == "finding_basis_required" or "Each finding requires a retrieved basis" in item["message"]:
-            step.update(tool=name, instruction="For this Finding add obtained InfoUnit IDs, Relation IDs or SourceRefs; actually read missing material first. If no basis exists remove the Finding and put the unresolved question in open_questions, then resubmit finish_investigation.")
         elif code == "hypothesis_target_required":
             step.update(tool=name, instruction=item["fix"])
         elif code == "duplicate_proposal":
@@ -533,10 +501,6 @@ def _tool_recovery(response, name, args=None, case=None):
         hint = "仅使用本轮成功返回的 Hypothesis proposal_id，或上下文中的正式 Hypothesis ID；不能使用其他运行或其他建议类型。"
     elif "duplicate_reference" in codes:
         hint = "删除指出字段中的重复引用，保留原始有效 ID；不要原样重试。"
-    elif "finding_basis_required" in codes:
-        hint = "为对应 Finding 补充实际取得的 InfoUnit、Relation 或 SourceRef；确无依据时删除该 Finding，将未解决问题放入 open_questions。"
-    elif "finding_sources_missing" in codes:
-        hint = "优先将错误详情中已取得的有效来源引用补入对应 Finding；确需新来源且读取工具可用时才补读。无可用依据时删除无依据结论或写入 open_questions，不得编造引用。"
     elif "reference_out_of_range" in codes or "reference_not_found" in codes:
         hint = "ID 不存在时使用当前案件检索工具取得有效 ID；来源下标越界时对对应 InfoUnit 调用 get_evidence，使用返回的有效索引。不得猜测。"
     elif "reference_not_obtained" in codes or "evidence_required" in codes:
@@ -570,8 +534,8 @@ def _finish_only_recovery(recovery):
             step["unavailable_arguments"] = step.pop("arguments")
         step["tool"] = "finish_investigation"
         step["instruction"] = (f"Correct {step.get('loc', [])} ({step.get('code', 'tool_error')}) in finish_investigation "
-            "using only already obtained valid IDs and SourceRefs for the indicated material. "
-            "Do not call the unavailable tool or invent references. Remove unsupported Findings or put unresolved conditions in open_questions, then resubmit Finish.")
+            "using only already obtained material. "
+            "Do not call the unavailable tool or invent evidence. Describe unresolved conditions in open_questions, then resubmit Finish.")
         return step
 
     action = recovery.setdefault("next_action", {"steps": []})
@@ -667,7 +631,7 @@ async def run_investigation(case: CaseData, goal: str,
     seen["relations"].update(r.id for r in bound_case.relations
         if r.id in {row["id"] for row in canvas.get("relations", [])} and {r.source_id, r.target_id} <= seen["units"])
     knowledge = None
-    proposals, findings, open_questions, limitations = [], [], [], []
+    proposals, open_questions, limitations = [], [], []
     fingerprints, call_ids = {}, set()
     used = {"read": 0, "proposal": 0, "finish": 0}
     attempts = executed = no_progress = 0
@@ -687,8 +651,12 @@ async def run_investigation(case: CaseData, goal: str,
         return finish_required or non_finish_exhausted() or no_progress >= MAX_NO_PROGRESS
 
     def snapshot(answer=None, summary_status="pending"):
-        result = actions.artifacts(bound_case, seen, work_context, goal, proposals, findings, open_questions, completion)
-        return {**result.model_dump(mode="json"), "answer": answer, "answer_basis": answer_basis,
+        result = actions.artifacts(bound_case, seen, work_context, goal, proposals, open_questions, completion).model_dump(mode="json")
+        if answer_basis not in {"general", "case_metadata"} and completion != "unsupported":
+            # Provenance records obtained material, without asserting support for the answer.
+            result.update(relevant_info_unit_ids=sorted(seen["units"]), relevant_relation_ids=sorted(seen["relations"]),
+                evidence_refs=[{"info_unit_id": uid, "source_ref_index": index} for uid, index in sorted(seen["evidence"])])
+        return {**result, "answer": answer, "answer_basis": answer_basis,
             "summary_status": summary_status, "limitations": list(dict.fromkeys(limitations)), "run_id": run_id,
             "workspace_commit": workspace_commit,
             "stop_reason": stop_reason or "running", "tool_call_count": executed,
@@ -838,7 +806,6 @@ async def run_investigation(case: CaseData, goal: str,
                                 read_budget_exhausted=investigation_closed(),
                                 budget_exhausted=non_finish_exhausted())
                             result, answer = finished
-                            findings = [f.model_dump(mode="json") for f in result.findings]
                             open_questions, completion = result.open_questions, result.completion_status
                             answer_basis = args["answer_basis"]
                             response = {"status": "ok", "completion_status": completion}
@@ -899,7 +866,7 @@ async def run_investigation(case: CaseData, goal: str,
                 if proposals:
                     try:
                         def validate_commit(current_case):
-                            actions.artifacts(current_case, seen, work_context, goal, proposals, findings, open_questions, completion)
+                            actions.artifacts(current_case, seen, work_context, goal, proposals, open_questions, completion)
                         workspace_commit = commit_investigation(case, issue_key, run_id, proposals,
                             audit["proposal_receipt"], validate=validate_commit)
                     except Exception as exc:
@@ -922,7 +889,7 @@ async def run_investigation(case: CaseData, goal: str,
         error = trace.error_payload(exc)
         stop_reason = "model_failed" if isinstance(exc, llm_client.LLMFailure) else "error"
         persist()
-        partial = isinstance(exc, (llm_client.LLMFailure, AppError)) and bool(proposals or findings) and getattr(exc, "code", None) != "investigation_audit_failed"
+        partial = isinstance(exc, (llm_client.LLMFailure, AppError)) and bool(proposals) and getattr(exc, "code", None) != "investigation_audit_failed"
         audit.update(status="partial" if partial else "failed", error=error, stop_reason=stop_reason,
                      result=snapshot(None, "failed"))
         if isinstance(exc, llm_client.LLMFailure):

@@ -84,7 +84,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         self.assertEqual([p["kind"] for p in proposals], ["hypothesis", "hypothesis", "evidence_gap"])
         self.assertNotEqual(proposals[0]["content"], proposals[1]["content"])
         self.assertEqual(proposals[2]["hypothesis_proposal_ids"], [p["proposal_id"] for p in proposals[:2]])
-        self.assertEqual(result["findings"], [])
+        self.assertNotIn("findings", result)
         self.assertEqual(len(calls), 5)
         self.assertIn("proposal_receipt", self.audits()[0])
 
@@ -160,7 +160,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         with patch.object(observability, "load_settings", return_value=tracing.SETTINGS), patch.object(observability, "_get_backend", return_value=backend):
             result, calls = self.run_script("核对陈述", [f.tool("search_info_units", {"query": "损失"}, "search"),
                 f.tool("get_evidence", {"info_unit_ids": ["U029"]}),
-                f.finish("核对陈述", ["U029"], refs=[("U029", 0)])])
+                f.finish('核对陈述', status='completed')])
         audit = self.audits()[0]
         prompt = load_prompt(agent.PROMPT_PATH, agent.PROMPT_NAME)
         generations = [s for s in backend.client.spans if s.start.get("as_type") == "generation"]

@@ -70,8 +70,7 @@ class TestInvestigationWorkflow(unittest.TestCase):
                 self.assertEqual(state["recovery"]["code"], "duplicate_proposal")
                 return gap(state, "duplicate-gap")
             self.assertEqual(state["recovery"]["code"], "duplicate_proposal")
-            return f.finish(goal, ["U029", "U036"], status="evidence_insufficient", questions=["计租衔接及实际收款仍待核实。"],
-                            answer="双方说法存在分歧，实际损失尚未证实；可审阅两种解释和共同核查条件。")
+            return f.finish(goal, status='evidence_insufficient', questions=['计租衔接及实际收款仍待核实。'], answer='双方说法存在分歧，实际损失尚未证实；可审阅两种解释和共同核查条件。')
         result, _ = self.run_agent(goal, first)
         self.assertEqual([p["kind"] for p in result["proposals"]], ["hypothesis", "hypothesis", "evidence_gap"])
         self.assertEqual(result["workspace_commit"]["status"], "applied")
@@ -121,8 +120,7 @@ class TestInvestigationWorkflow(unittest.TestCase):
                 return f.tool("propose_hypothesis_status", {"hypothesis_id": hids[turn - 4],
                     "judgment": "refuted" if turn == 4 else "verified", "info_unit_ids": ["U029"],
                     "rationale": "新来源记载收款连续，建议由用户核对并确认判断。", "evidence_refs": pointers}, f"status-{turn}")
-            return f.finish("检查新证据", ["U029"], refs=[("U029", ref_index)], status="completed",
-                            statement="补充文件记载计租和收款连续。", answer="新文件回应了原核查条件；原缺口和假设判断的更新建议均待你确认。")
+            return f.finish('检查新证据', status='completed', statement='补充文件记载计租和收款连续。', answer='新文件回应了原核查条件；原缺口和假设判断的更新建议均待你确认。')
         response, _ = self.run_agent("检查新证据", second)
         self.assertEqual([p["kind"] for p in response["proposals"]], ["evidence_gap_update", "hypothesis_status", "hypothesis_status"])
         self.assertEqual(response["workspace_commit"]["status"], "applied")

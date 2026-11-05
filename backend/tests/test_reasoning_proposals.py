@@ -71,7 +71,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
             else:
                 if before_finish:
                     before_finish()
-                reply = replies.finish(goal, ["U029"], refs=[("U029", 0)], status="completed")
+                reply = replies.finish(goal, status='completed')
             return httpx.Response(200, json=reply.response)
         with patch.object(llm_client.httpx, "AsyncClient", side_effect=lambda **kwargs:
                           real_client(transport=httpx.MockTransport(model), **kwargs)):

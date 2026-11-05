@@ -34,8 +34,7 @@ class TestInvestigationContext(unittest.TestCase):
         requests = []
         responses = [replies.tool("get_relations", {"info_unit_ids": ["U029"], "relation_types": ["contradict"]}),
             replies.tool("get_evidence", {"info_unit_ids": ["U029", "U036"]}, "sources"),
-            replies.finish("核查损失", ["U029", "U036"], ["R010"], [("U029", 0), ("U036", 0)],
-            statement="双方陈述存在分歧，仍需独立核实。")]
+            replies.finish('核查损失', statement='双方陈述存在分歧，仍需独立核实。', status='completed')]
         def model(request):
             requests.append(json.loads(request.content))
             return httpx.Response(200, json=responses[len(requests) - 1].response)
@@ -60,7 +59,7 @@ class TestInvestigationContext(unittest.TestCase):
         serialized = json.dumps(initial["reasoning"])
         for field in ("node_positions", "viewport", "offset_x", "display_levels", "source_refs", "quote_units", "files"):
             self.assertNotIn(field, serialized)
-        self.assertEqual(len(response.json()["evidence_refs"]), 2)
+        self.assertEqual(len(response.json()["evidence_refs"]), 3)  # All actually obtained sources, without Finding selection.
 
     def test_large_canvas_only_supplies_selection_focus_and_bounded_endpoint_relations(self):
         self.canvas([u.id for u in self.case.info_units], ["U036"], "U029")

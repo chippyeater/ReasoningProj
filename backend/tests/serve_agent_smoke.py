@@ -35,8 +35,7 @@ async def model(config, messages, definitions, schema=None, **kwargs):
                 "gap_id": state["reasoning"]["gaps"][0]["id"], "addressing_info_unit_ids": [uid], "status": "open",
                 "rationale": "合同只约定起租，实际履行和收款尚待核实，故仅部分回应原缺口。",
                 "evidence_refs": [{"info_unit_id": uid, "source_ref_index": ref["source_ref_index"]}]})
-        return replies.finish(goal, [uid], refs=[(uid, ref["source_ref_index"])], status="evidence_insufficient",
-                              questions=["实际履行情况仍未核实。"], answer="补充合同回应了约定部分，仍需实际履行记录；可审阅对原缺口的更新建议。")
+        return replies.finish(goal, status='evidence_insufficient', questions=['实际履行情况仍未核实。'], answer='补充合同回应了约定部分，仍需实际履行记录；可审阅对原缺口的更新建议。')
     refs = state["materials"]["source_refs"]["items"]
     ids = {r["info_unit_id"] for r in refs}
     if "失败" in goal and "总结失败" not in goal:
@@ -92,9 +91,7 @@ async def model(config, messages, definitions, schema=None, **kwargs):
         answer = "实际租金损失尚未证实。已提出竞争性解释与共同缺口，请优先核对计租日与收款记录；完成后可查看、编辑与撤销变更。"
     if "超长总结" in goal:
         answer = "重复的完整调查报告。" * 150
-    return replies.finish(goal, [uid], refs=[(uid, 0)], statement="材料记载的是当事人陈述，仍需独立核实。", answer=answer,
-        status="evidence_insufficient" if analysis else "completed",
-        questions=["尚缺计租及收款记录以核实是否少收租金。"] if analysis else [])
+    return replies.finish(goal, statement='材料记载的是当事人陈述，仍需独立核实。', answer=answer, status='evidence_insufficient' if analysis else 'completed', questions=['尚缺计租及收款记录以核实是否少收租金。'] if analysis else [])
 
 
 async def extract(config, prompt, model_input, schema):

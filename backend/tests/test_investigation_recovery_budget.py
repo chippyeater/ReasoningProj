@@ -59,8 +59,7 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
 
     def test_finish_neither_increments_nor_resets_no_progress_and_can_recover(self):
         bad = f.tool("finish_investigation", {"answer": "结论尚无依据。", "answer_basis": "case_material",
-            "findings": [{"statement": "未核验结论", "info_unit_ids": [], "relation_ids": [], "evidence_refs": []}],
-            "open_questions": ["尚缺实际材料。"], "completion_status": "evidence_insufficient"}, "bad-finish")
+            "open_questions": [], "completion_status": "evidence_insufficient"}, "bad-finish")
         result, calls = self.run_script("核对", [
             f.tool("search_info_units", {"query": "不存在凭证甲"}, "empty-1"), bad,
             f.tool("search_info_units", {"query": "不存在凭证乙"}, "empty-2"),
@@ -68,8 +67,8 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
             f.finish("核对", status="evidence_insufficient")])
         self.assertEqual([c["no_progress"] for c in self.audits()[0]["tool_calls"]], [1, 1, 2, 3, 3])
         step = self.recovery(calls[2])["next_action"]["steps"][0]
-        self.assertEqual(step["code"], "finding_basis_required")
-        self.assertEqual(step["loc"], ["findings", 0])
+        self.assertEqual(step["code"], "missing_evidence_limitation")
+        self.assertEqual(step["loc"], [])
         self.assertIn("open_questions", step["instruction"])
         self.assertEqual([d["function"]["name"] for d in calls[-1]["definitions"]], ["finish_investigation"])
         self.assertEqual(result["summary_status"], "completed")
@@ -86,8 +85,7 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
 
     def test_finish_failure_after_no_progress_can_be_corrected(self):
         bad = f.tool("finish_investigation", {"answer": "缺少核验材料。", "answer_basis": "case_material",
-            "findings": [{"statement": "无依据判断", "info_unit_ids": [], "relation_ids": [], "evidence_refs": []}],
-            "open_questions": ["缺少材料。"], "completion_status": "evidence_insufficient"}, "bad-finish")
+            "open_questions": [], "completion_status": "evidence_insufficient"}, "bad-finish")
         with patch.object(actions, "finish_investigation", wraps=actions.finish_investigation) as finish_tool:
             result, calls = self.run_script("核对", [
                 *[f.tool("search_info_units", {"query": f"不存在凭证{i}"}, f"empty-{i}") for i in range(3)],
@@ -138,9 +136,11 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
         self.assertEqual(result["proposals"][0]["info_unit_ids"], ["U029", "U036"])
 
     def test_invalid_source_recovery_carries_info_unit_and_index(self):
-        _, calls = self.run_script("核对", [f.finish("核对", ["U029"], refs=[("U029", 99)], call_id="bad"),
+        from test_reasoning_proposals import suggestion, proposal_call
+        bad = {**suggestion("hypothesis"), "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 99}]}
+        _, calls = self.run_script("核对", [proposal_call(bad, [], "bad"),
             f.tool("get_evidence", {"info_unit_ids": ["U029"]}, "recover"),
-            f.finish("核对", ["U029"], refs=[("U029", 0)])], selected=["U029"])
+            f.finish('核对', status='completed')], selected=["U029"], issue_key=self.case.issue_set[1])
         errors = self.recovery(calls[1])["validation_details"]["errors"]
         error = next(e for e in errors if e["code"] == "reference_out_of_range")
         self.assertEqual(error["source_ref_index"], 99)

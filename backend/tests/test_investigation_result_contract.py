@@ -29,9 +29,7 @@ class TestInvestigationResultContract(unittest.TestCase):
             return {"kind": kind, "content": "需要核实的假设或证据缺口", "hypothesis_ids": [],
                     ("basis_info_unit_ids" if kind == "evidence_gap" else "info_unit_ids"): ["U029"], "meaning": None, "judgment": None,
                     "rationale": "当事人陈述需要独立材料核查。", "evidence_refs": [deepcopy(pointer)]}
-        return {"goal": "核实实际损失", "findings": [
-            {"statement": "材料中存在当事人陈述，尚未独立核实。", "info_unit_ids": ["U029"],
-             "relation_ids": [], "evidence_refs": [deepcopy(pointer)]} for _ in range(3)],
+        return {"goal": "核实实际损失",
             "relevant_info_unit_ids": ["U029"], "relevant_relation_ids": [], "evidence_refs": [pointer],
             "open_questions": ["实际损失仍需核查。"], "completion_status": "evidence_insufficient",
             "proposals": [proposal("hypothesis"), proposal("hypothesis"),

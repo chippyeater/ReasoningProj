@@ -52,10 +52,10 @@ class TestSummaryHandoff(unittest.TestCase):
     run_script = fixture.TestInvestigationAgent.run_script
     audits = fixture.TestInvestigationAgent.audits
 
-    def test_rejected_answer_is_recoverable_finish_error_without_partial_findings(self):
+    def test_rejected_answer_is_recoverable_finish_error(self):
         result, calls = self.run_script("核对", [fixture.tool("get_evidence", {"info_unit_ids": ["U029"]}),
-            fixture.finish("核对", ["U029"], refs=[("U029", 0)], answer="字"*(agent.MAX_SUMMARY_CHARACTERS + 1), call_id="bad"),
-            fixture.finish("核对", ["U029"], refs=[("U029", 0)], answer="陈述仍需核实。")], selected=["U029"])
+            fixture.finish('核对', answer='字' * (agent.MAX_SUMMARY_CHARACTERS + 1), call_id='bad', status='completed'),
+            fixture.finish('核对', answer='陈述仍需核实。', status='completed')], selected=["U029"])
         self.assertEqual(len(calls), 3)
         self.assertEqual(result["answer"], "陈述仍需核实。")
         error = json.loads(calls[2]["messages"][1]["content"])["recovery"]
@@ -71,6 +71,6 @@ class TestSummaryHandoff(unittest.TestCase):
         self.assertEqual(result["summary_status"], "failed")
         self.assertIsNone(result["answer"])
         self.assertEqual(len(result["proposals"]), 1)
-        self.assertEqual(result["findings"], [])
+        self.assertNotIn("findings", result)
         self.assertEqual(self.audits()[0]["status"], "partial")
         self.assertTrue(self.audits()[0]["proposal_receipt"])

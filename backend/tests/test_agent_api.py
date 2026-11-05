@@ -17,7 +17,7 @@ class TestAgentAPI(unittest.TestCase):
         goal = "核对损失说法"
         requests = []
         replies = [fixtures.tool("get_evidence", {"info_unit_ids": ["U029"]}),
-                   fixtures.finish(goal, ["U029"], refs=[("U029", 0)], status="completed")]
+                   fixtures.finish(goal, status='completed')]
 
         def model(request):
             requests.append(json.loads(request.content))
@@ -39,7 +39,8 @@ class TestAgentAPI(unittest.TestCase):
         self.assertEqual(obtained[0]["source_ref"]["quote"], next(u for u in self.case.info_units if u.id == "U029").source_refs[0].quote)
         self.assertNotIn("quote_units", json.dumps(initial))
         self.assertEqual(len(memory["info_units"]["items"]), 1)
-        self.assertEqual(response.json()["evidence_refs"], [{"info_unit_id": "U029", "source_ref_index": 0}])
+        self.assertEqual(response.json()["evidence_refs"], [{"info_unit_id": "U029", "source_ref_index": i} for i in (0, 1)])
+        self.assertNotIn("findings", response.json())
         ref = next(unit for unit in self.case.info_units if unit.id == "U029").source_refs[0]
         self.assertEqual(response.json()["evidence"][0]["quote"], ref.quote)
         self.assertEqual(response.json()["evidence"][0]["start"], ref.start)

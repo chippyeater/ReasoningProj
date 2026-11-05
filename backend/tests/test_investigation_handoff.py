@@ -193,7 +193,8 @@ class TestInvestigationHandoff(unittest.TestCase):
                 self.assertTrue(all("obtained_source_ref_indices" not in u for u in units.values()))
                 self.assertFalse(state["materials"]["source_refs"]["items"])
                 uid = next(iter(units))
-                return f.finish("核对押金条款", [uid], refs=[(uid, 0)], call_id="unread-source")
+                return f.tool("propose_hypothesis", {"content": "押金扣除可能缺少依据", "rationale": "条款尚需核实",
+                    "info_unit_ids": [uid], "evidence_refs": [{"info_unit_id": uid, "source_ref_index": 0}]}, "unread-source")
             if turn == 3:
                 recovery = state["recovery"]
                 error = recovery["validation_details"]["errors"][0]
@@ -204,10 +205,13 @@ class TestInvestigationHandoff(unittest.TestCase):
             uid, index = pointer["info_unit_id"], pointer["source_ref_index"]
             self.assertTrue(any(r["info_unit_id"] == uid and r["source_ref_index"] == index
                                 for r in state["materials"]["source_refs"]["items"]))
-            return f.finish("核对押金条款", [uid], refs=[(uid, index)], call_id="corrected")
-        result, _ = self.run_script("核对押金条款", respond)
+            if turn == 4:
+                return f.tool("propose_hypothesis", {"content": "押金扣除可能缺少依据", "rationale": "条款尚需核实",
+                    "info_unit_ids": [uid], "evidence_refs": [{"info_unit_id": uid, "source_ref_index": index}]}, "corrected")
+            return f.finish('核对押金条款', status='completed')
+        result, _ = self.run_script("核对押金条款", respond, issue_key=self.case.issue_set[1])
         self.assertEqual(result["summary_status"], "completed")
-        self.assertEqual(result["tool_budget_used"], {"read": 2, "proposal": 0, "finish": 2})
+        self.assertEqual(result["tool_budget_used"], {"read": 2, "proposal": 2, "finish": 1})
 
     def test_competing_hypotheses_share_one_gap_and_format_only_retries_do_not_append(self):
         contents = [
@@ -332,15 +336,14 @@ class TestInvestigationHandoff(unittest.TestCase):
         errors = self.state(calls[-1])["recovery"]["validation_details"]["errors"]
         self.assertTrue(any(e["argument_loc"] == ["answer_basis"] for e in errors))
 
-    def test_finish_required_does_not_grant_source_permission_or_exhaust_shared_budget(self):
+    def test_finish_required_keeps_obtained_material_without_granting_sources(self):
         result, calls = self.run_script("核对损失", [
             f.tool("search_info_units", {"query": "损失"}, "read"), f.final("资料取得，可以结束。"),
-            f.finish("核对损失", ["U029"], refs=[("U029", 0)], call_id="unread-source"),
             f.finish("核对损失", questions=["没有取得该陈述的原始来源，无法核实。"], call_id="limited")])
         step = self.state(calls[-1])["recovery"]["next_action"]["steps"][0]
-        self.assertEqual(step["code"], "reference_not_obtained")
+        self.assertEqual(step["code"], "finish_required")
         self.assertEqual(step["tool"], "finish_investigation")
-        self.assertEqual(step["unavailable_tool"], "get_evidence")
+        self.assertEqual(self.state(calls[-1])["recovery"]["constraints"]["allowed_tools"], ["finish_investigation"])
         self.assertFalse(result["evidence_refs"])
         self.assertEqual(result["completion_status"], "evidence_insufficient")
-        self.assertEqual(result["tool_budget_used"], {"read": 1, "proposal": 0, "finish": 2})
+        self.assertEqual(result["tool_budget_used"], {"read": 1, "proposal": 0, "finish": 1})
