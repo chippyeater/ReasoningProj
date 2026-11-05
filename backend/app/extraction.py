@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import uuid4
@@ -502,10 +503,43 @@ def assess_evidence_support(content: str, references: list[SourceRef]) -> dict:
     }
 
 
+def _resolve_issue_labels(existing: list[str], incoming: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Resolve only formatting variants of incoming labels; never merge saved keys.
+
+    Semantic reuse belongs to the Extraction model, which sees existing labels.
+    Retain words, numbers, conditions and internal punctuation rather than guess
+    that similar disputes mean the same thing.
+    """
+    def key(label):
+        return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", label).casefold()).strip().rstrip("?。 ")
+
+    issues = list(existing)
+    by_key = {}
+    for label in existing:
+        by_key.setdefault(key(label), []).append(label)
+    aliases = {}
+    for label in incoming:
+        if label in issues:
+            aliases[label] = label
+            continue
+        matches = by_key.get(key(label), [])
+        if len(matches) > 1:
+            raise ExtractionFailure("extraction_issue_ambiguous", "Issue formatting matches multiple existing Issues; use an exact existing label",
+                errors=[{"field": "issue_set", "code": "ambiguous_issue_label", "label": label, "existing_issues": matches}])
+        if matches:
+            aliases[label] = matches[0]
+        else:
+            aliases[label] = label
+            issues.append(label)
+            by_key.setdefault(key(label), []).append(label)
+    return issues, aliases
+
+
 def materialize_extraction(draft: ModelExtraction, case: CaseData,
                            diagnostics: dict | None = None, *,
                            file_ids: list[str] | None = None) -> tuple[ExtractionOutput, list[dict]]:
     """Resolve Quote Unit IDs, allocate formal IDs, and validate atomically."""
+    issue_set, issue_labels = _resolve_issue_labels(case.issue_set, draft.issue_set)
     index_events: list[QuoteIndexEvent] = []
     catalog = quote_catalog(case, index_events, file_ids=file_ids)
     stale_rebuild = any(event.reason in {"text_hash_changed", "segmentation_version_changed"}
@@ -545,12 +579,15 @@ def materialize_extraction(draft: ModelExtraction, case: CaseData,
         })
         if not unit_errors:
             payload = unit.model_dump(exclude={"local_id", "evidence_ids", "actor_local_id", "target_local_id"})
+            payload["related_issue"] = issue_labels.get(unit.related_issue, unit.related_issue)
             units.append(InfoUnit(
                 **payload, id=formal_ids[unit.local_id], created_at=created_at, source_refs=references,
                 actor=formal_ids[unit.actor_local_id] if unit.actor_local_id is not None else None,
                 target=formal_ids[unit.target_local_id] if unit.target_local_id is not None else None,
             ))
     detail = {
+        "issue_aliases": [{"proposed_issue": label, "resolved_issue": resolved}
+                          for label, resolved in issue_labels.items() if label != resolved],
         "quote_indexes": [event.model_dump(mode="json") for event in index_events],
         "candidates": candidates,
         "passed_local_ids": [item["local_id"] for item in candidates if item["status"] == "passed"],
@@ -566,8 +603,8 @@ def materialize_extraction(draft: ModelExtraction, case: CaseData,
         raise failure
     units, merges = deduplicate_units(units, case.info_units)
     result = ExtractionOutput(
-        core_issue=case.core_issue if case.info_units or case.issue_set else draft.core_issue,
-        issue_set=list(dict.fromkeys([*case.issue_set, *draft.issue_set])), info_units=units)
+        core_issue=case.core_issue if case.info_units or case.issue_set else issue_labels.get(draft.core_issue, draft.core_issue),
+        issue_set=issue_set, info_units=units)
     validation = validate_extraction(case.case_id, ValidationInput(extraction=result, parsed_files=case.files))
     if not validation.valid:
         failure = ExtractionFailure("extraction_source_invalid", "Source validation failed",

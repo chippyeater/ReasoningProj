@@ -488,6 +488,8 @@ def build_quote_model_input(case: CaseData, file_ids: list[str] | None = None,
     indexes = quote_indexes_for_case(case, file_ids, events)
     return {
         "case_title": case.case_title,
+        "existing_core_issue": case.core_issue,
+        "existing_issue_set": list(case.issue_set),
         "files": [
             {
                 "file_id": index.file_id,

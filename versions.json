@@ -15,8 +15,8 @@
     {
       "name": "extraction",
       "path": "backend/prompts/extraction_system_prompt.md",
-      "version": 1,
-      "sha256": "08d483e75d35b4026987885385dcdc8e0aab94f074995fd559c045d1fd52b1f2"
+      "version": 2,
+      "sha256": "b40af2068ec1d72a56fb57ae0ecf4eeb03085537b75e12c65667db69232ca6e7"
     },
     {
       "name": "extraction_validation_repair",

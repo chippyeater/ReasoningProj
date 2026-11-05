@@ -85,13 +85,14 @@ Set-Location backend
 没有默认来源类型，不根据扩展名或文件内容推断，不存在独立登记接口或 sidecar。
 
 `POST /api/extraction/run` 不接受子集参数：后端选择尚未被已提交成功 Extraction StageRun 处理的 `parsed` 文件，仅发送这些文件的 Quote Units。
+模型同时收到 `existing_issue_set`、`existing_core_issue` 和案件标题，用于复用已有议题，不发送旧材料或推理工作区。Issue 是值得独立组织调查的案件争议焦点；`core_issue` 是主要争议焦点（可空），`current_issue` 是当前工作的议题。具体待核实事实、证据材料和计算条件属于 InfoUnit 或后续 Investigation 的 Evidence Gap。
 成功范围从案件 `stage_runs` 所指向的输入快照 `model_input.files[].file_id` 读取；`partial_success` 沿用成功提交语义，整批选中文件均算已处理。失败 Run、独立审计中尚未提交的成功记录均不算已处理，可以重试。
 `failed` / `unsupported` 文件不会进入模型，排除项和原因逐项记录在运行日志。没有待提取文件返回 204，不调用模型、不写失败 Run；前端显示无新材料提示并跳过 Relation。首次提取选择全部已解析文件，后续仅选择新文件。
 初稿全部合法时 Extraction 只调用一次模型。存在可定位的候选错误时，仅把失败对象、结构化错误、必要实体依赖和有界 Quote Unit 证据候选发送给 `extraction_validation_repair`，最多增加一次修复调用；旧 Evidence Repair 不再形成第二条运行分支。
 修复可以替换失败候选的完整模型字段，但必须保留 `local_id`，且仍须重新通过分类、引用、来源物化和案件完整性校验。首次或修复后合法的节点可以部分接受；未修复节点及依赖失效节点只写入审计，不进入案件。
 最终接受集合一次性原子保存；没有安全候选、不可定位的批次错误、模型/网络/存储错误均整阶段失败。失败不改变已有业务数据或文件成功处理范围。
 后端对内容、类型、子类型、发言人、角色、事件参与者和争点完全一致的新节点进行确定性合并；与唯一旧节点匹配时只追加未存在的 SourceRef，保留旧 ID、标题、内容和其他字段。已有节点之间不重新去重；存在多个旧节点可匹配时保留新节点，不猜测应合并到哪一个。
-实体先合并，再将本批事件的 actor/target 映射到最终实体 ID。原 core_issue、issue_set、Relation 和 Reasoning 工作区保持原样，新争点 label 按顺序追加。后续自动 Relation 继续使用原追加保存路径。
+实体先合并，再将本批事件的 actor/target 映射到最终实体 ID。已有 core_issue（包括 null）、Issue 名称与顺序、Relation 和 Reasoning 工作区保持原样；新材料优先按原名称归属已有 Issue，仅独立的新争议才新增。后端在新节点去重前将可确定的名称格式变体（Unicode/大小写、空白及末尾问号或中文句号）指回已有键，同时映射新节点 related_issue；映射记录在本轮 materialization.issue_aliases，不改写原模型输出。多个既有名称格式等价时不合并旧议题，新别名无法唯一定位则整轮拒绝；不同语义的同义判断仍由本次 Extraction 完成，不用模糊匹配自动合并。后续自动 Relation 继续使用原追加保存路径。
 后端不使用相似度阈值猜测不同表述是否同一事实；语义最小性仍须通过真实评测审查。
 
 `validation.locate_source_ref` 从缓存 TXT 计算 Unicode 字符位置 `[start,end)`。
