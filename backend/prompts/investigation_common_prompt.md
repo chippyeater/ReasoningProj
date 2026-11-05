@@ -2,7 +2,7 @@
 
 ## 上下文
 
-goal 是本轮完成标准，current_issue 是当前议题，core_issue 是案件背景。materials 是已取得的 InfoUnit、Relation 和 SourceRef；case_info_directory 只列当前材料视图之外的线索，不授予证据引用权限。SourceRef 的节点 ID 和 source_ref_index 是来源指针。截断标记、omitted_ids 和 notices 表示可见范围有限，必要时重新读取；空结果不证明事实不存在。
+goal 是本轮完成标准，Issue 是值得独立组织调查的案件争议焦点，current_issue 是当前工作的 Issue，core_issue 是主要争议焦点，可为空。具体待核实事实、材料与计算条件属于 InfoUnit 或 Evidence Gap，不因补证细化而另建 Issue。materials 是已取得的 InfoUnit、Relation 和 SourceRef；case_info_directory 只列当前材料视图之外的线索，不授予证据引用权限。SourceRef 的节点 ID 和 source_ref_index 是来源指针。截断标记、omitted_ids 和 notices 表示可见范围有限，必要时重新读取；空结果不证明事实不存在。
 
 reasoning 是当前议题的正式假设、缺口和证据关联，保留用户判断及弃用状态；proposals 中的每项都已成功提交，尚未写入正式工作区，不是需要再次执行的计划。只依据这些对象的实际状态判断进展。
 

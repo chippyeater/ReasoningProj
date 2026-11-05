@@ -44,7 +44,7 @@ Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成�
 
 只发送 System Prompt 与一个动态 JSON User Message，不重复附带上一轮 Assistant/Tool 消息。动态字段：
 
-- `goal`、`current_issue`、必要案件背景 `core_issue`。
+- `goal`、当前工作议题 `current_issue`、主要争议焦点 `core_issue`（可空）。Issue 是案件争议焦点，具体待核实事实由 InfoUnit 或 Evidence Gap 承载。
 - `case_info_directory`：总数、稳定 ID、标题、类型、截断及省略数量；按 ID 确定排序，最多80项、条目累计6000字符，标题最多120字符。
 - `materials.info_units/relations/source_refs`：本轮实际取得的去重工具投影，各自带 `items/context_truncated/omitted_ids`。成功搜索摘要进入后续轮次；来源指针仅在 source_refs 中提供一次，不再在每个 InfoUnit 上重复列索引；搜索命中不授予来源引用权限，裁剪不会丢失完整工作记忆。
 - `reasoning`：当前 Issue 中相关的正式假设、缺口和证据关联，保留用户判断、弃用/解决状态，不发送修订号、时间戳和显示布局。
