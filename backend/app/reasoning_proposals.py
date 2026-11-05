@@ -170,16 +170,12 @@ def commit_investigation(case, issue, run_id, proposals, receipt, *, validate=No
 @workspace_transaction
 def retry_investigation(case, issue, run_id):
     """Retry only a server-audited normal Finish, without any model call or rebase."""
-    from app.investigation_agent import MAX_NON_FINISH_TOOL_CALLS
     try:
         audit = json.loads(artifact_path(case.case_id, f"runs/{run_id}.output.json").read_text(encoding="utf-8"))
         result, receipt = audit["result"], audit["proposal_receipt"]
-        budget = result["tool_budget_used"]
         if (audit["run_id"] != run_id or result["run_id"] != run_id or receipt["issue"] != issue
                 or audit["status"] != "success" or audit["stop_reason"] != "finish_investigation"
-                or result["summary_status"] != "completed" or result["completion_status"] == "budget_exhausted"
-                or result.get("workspace_commit", {}).get("status") == "budget_exhausted"
-                or budget["read"] + budget["proposal"] >= MAX_NON_FINISH_TOOL_CALLS
+                or result["summary_status"] != "completed"
                 or "baseline" not in receipt):
             raise ValueError("Only a normally finished current-contract run can be retried")
         proposals = [PROPOSAL_ADAPTER.validate_python(p) for p in result["proposals"]]

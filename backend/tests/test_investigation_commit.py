@@ -6,6 +6,7 @@ from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 
 import test_reasoning_proposals as fixture
+import test_investigation_agent as agent_fixture
 from app.case_store import case_dir, artifact_path
 from app.errors import AppError
 from app.issue_workspaces import get_issue_workspaces
@@ -44,6 +45,26 @@ class TestInvestigationCommit(unittest.TestCase):
         response, calls = self.investigate(proposals, selected, read_ids=["U026", "U029", "U036"], **kwargs)
         self.assertEqual(response.status_code, 200, response.text)
         return response.json(), calls
+
+    def run_at_budget(self, *, before_finish=None, invalid_finish=False):
+        proposals = [fixture.suggestion("hypothesis"),
+            {**fixture.suggestion("hypothesis"), "content": "新租客没有实际支付租金"},
+            {**fixture.suggestion("evidence_gap"), "hypothesis_proposal_indices": [0, 1]},
+            {**fixture.suggestion("evidence_link"), "hypothesis_proposal_indices": [1]}]
+        def respond(call, turn):
+            if turn <= 4:
+                return agent_fixture.tool("get_evidence", {"info_unit_ids": [
+                    ("U029", "U036", "U026", "U004")[turn - 1]]}, f"read-{turn}")
+            if turn <= 8:
+                state = json.loads(call["messages"][1]["content"])
+                return fixture.proposal_call(proposals[turn - 5],
+                    [p["proposal_id"] for p in state["proposals"]], f"proposal-{turn}")
+            if before_finish:
+                before_finish()
+            if invalid_finish:
+                return agent_fixture.tool("finish_investigation", {"bad_field": turn}, f"bad-{turn}")
+            return agent_fixture.finish("核对", ["U029"], refs=[("U029", 0)], status="budget_exhausted")
+        return agent_fixture.TestInvestigationAgent.run_script(self, "核对", respond, issue_key=self.issue)
 
     def test_first_run_creates_parents_shared_gap_and_link_in_one_write(self):
         parents = [fixture.suggestion("hypothesis"), {**fixture.suggestion("hypothesis"), "content": "新租客没有实际支付租金"}]
@@ -198,16 +219,72 @@ class TestInvestigationCommit(unittest.TestCase):
         self.assertEqual(self.retry(result["run_id"]).status_code, 409)
         self.assertEqual(self.raw(), saved)
 
-    def test_budget_exhaustion_never_commits_even_with_valid_finish(self):
-        hid = self.hypothesis()
+    def test_eight_tools_then_valid_finish_atomically_commits_all_proposals(self):
+        from app import reasoning_proposals
         saved = self.raw()
-        with patch("app.investigation_agent.MAX_NON_FINISH_TOOL_CALLS", 2):
-            result, _ = self.run_proposals([fixture.suggestion("evidence_link", hid)], [hid])
-        self.assertEqual(result["workspace_commit"]["status"], "budget_exhausted")
-        self.assertEqual(len(result["proposals"]), 1)
+        with patch.object(reasoning_proposals, "persist_issue_workspaces", wraps=reasoning_proposals.persist_issue_workspaces) as save:
+            result, _ = self.run_at_budget(before_finish=lambda: self.assertEqual(self.raw(), saved))
+        self.assertEqual(save.call_count, 1)
+        self.assertEqual(result["tool_budget_used"], {"read": 4, "proposal": 4, "finish": 1})
+        self.assertEqual(result["summary_status"], "completed")
+        self.assertEqual(result["completion_status"], "budget_exhausted")
+        self.assertEqual(result["workspace_commit"]["status"], "applied")
+        self.assertEqual(len(result["workspace_commit"]["changes"]), 4)
+        state = self.state()
+        self.assertEqual(len(state.hypotheses), 2)
+        self.assertEqual(set(state.gaps[0].hypothesis_ids), {h.id for h in state.hypotheses})
+        self.assertEqual(state.links[0].hypothesis_id, state.hypotheses[1].id)
+        self.assertEqual(state.investigation_runs[result["run_id"]].model_dump(mode="json"), result["workspace_commit"])
+
+    def test_eight_tools_then_storage_failure_can_retry_once_without_duplicates(self):
+        saved = self.raw()
+        with patch("app.issue_workspaces.write_json", side_effect=OSError("disk full")):
+            result, _ = self.run_at_budget()
+        self.assertEqual(result["completion_status"], "budget_exhausted")
+        self.assertEqual(result["workspace_commit"]["status"], "failed")
+        self.assertEqual(len(result["proposals"]), 4)
         self.assertEqual(self.raw(), saved)
-        with patch("app.investigation_agent.MAX_NON_FINISH_TOOL_CALLS", 2):
-            self.assertEqual(self.retry(result["run_id"]).status_code, 409)
+        audit_path = case_dir(self.case.case_id) / f"runs/{result['run_id']}.output.json"
+        audit_before = audit_path.read_bytes()
+        from app import reasoning_proposals
+        with patch.object(reasoning_proposals, "persist_issue_workspaces", wraps=reasoning_proposals.persist_issue_workspaces) as save:
+            first = self.retry(result["run_id"])
+            self.assertEqual(first.status_code, 200, first.text)
+            saved = self.raw()
+            second = self.retry(result["run_id"])
+        self.assertEqual(save.call_count, 1)
+        self.assertEqual(first.json()["workspace_commit"]["status"], "applied")
+        self.assertEqual(second.json()["workspace_commit"], first.json()["workspace_commit"])
+        self.assertEqual(audit_path.read_bytes(), audit_before)
+        self.assertEqual(self.raw(), saved)
+        self.assertEqual(len(self.state().hypotheses), 2)
+        self.assertEqual(len(self.state().gaps), 1)
+        self.assertEqual(len(self.state().links), 1)
+
+    def test_eight_tools_without_valid_finish_never_commits_or_allows_retry(self):
+        saved = self.raw()
+        result, _ = self.run_at_budget(invalid_finish=True)
+        self.assertEqual(result["summary_status"], "failed")
+        self.assertEqual(result["completion_status"], "budget_exhausted")
+        self.assertEqual(result["workspace_commit"]["status"], "pending")
+        self.assertEqual(len(result["proposals"]), 4)
+        self.assertEqual(self.retry(result["run_id"]).status_code, 409)
+        self.assertEqual(self.raw(), saved)
+
+    def test_eight_tools_then_concurrent_edit_blocks_commit_and_retry(self):
+        hid = self.hypothesis()
+        def user_edit():
+            self.assertEqual(self.edit(hypothesis={"id": hid, "content": "用户已修正命题"}).status_code, 200)
+        result, _ = self.run_at_budget(before_finish=user_edit)
+        self.assertEqual(result["summary_status"], "completed")
+        self.assertEqual(result["completion_status"], "budget_exhausted")
+        self.assertEqual(result["workspace_commit"]["status"], "conflict")
+        self.assertEqual(len(self.state().hypotheses), 1)
+        self.assertEqual(self.state().hypotheses[0].content, "用户已修正命题")
+        self.assertEqual(self.state().gaps, [])
+        self.assertEqual(self.state().links, [])
+        saved = self.raw()
+        self.assertEqual(self.retry(result["run_id"]).status_code, 409)
         self.assertEqual(self.raw(), saved)
 
     def test_proposals_do_not_write_before_finish_and_concurrent_retries_apply_once(self):

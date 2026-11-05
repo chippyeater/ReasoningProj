@@ -895,7 +895,8 @@ async def run_investigation(case: CaseData, goal: str,
                 audit.update(status="success", stop_reason=stop_reason, result=output)
                 # Save every validated artifact before the single workspace write.
                 _write_audit(bound_case.case_id, output_path, audit)
-                if proposals and completion != "budget_exhausted" and not non_finish_exhausted():
+                # The shared tool budget limits investigation, not a validated Finish's commit.
+                if proposals:
                     try:
                         def validate_commit(current_case):
                             actions.artifacts(current_case, seen, work_context, goal, proposals, findings, open_questions, completion)
@@ -906,7 +907,7 @@ async def run_investigation(case: CaseData, goal: str,
                             "changes": [], "error": {"code": getattr(exc, "code", "workspace_commit_failed"), "message": str(exc)}}
                         limitations.append("本轮提案未写入推理工作区；结果已保留，可检查后重新调查。")
                 else:
-                    workspace_commit = {"status": "budget_exhausted" if proposals else "no_change", "changes": []}
+                    workspace_commit = {"status": "no_change", "changes": []}
                 output = snapshot(answer, "completed")
                 audit["result"] = output
                 try:
