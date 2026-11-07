@@ -164,5 +164,7 @@ def isolated_case():
             if case.model_dump_json() != before:
                 raise ValueError("Evaluation mutated its initial CaseData")
             current = {p.relative_to(data_dir).as_posix(): p.read_bytes() for p in data_dir.rglob("*") if p.is_file()}
-            if any(current.get(p) != raw for p, raw in initial_files.items()) or any("/runs/" not in p for p in current.keys() - initial_files.keys()):
-                raise ValueError("Only isolated run audits may be written during evaluation")
+            allowed = {f"{case.case_id}/issue_workspaces.json", f"{case.case_id}/issue_workspaces.lock"}
+            if any(current.get(p) != raw for p, raw in initial_files.items()) or any(
+                    "/runs/" not in p and p not in allowed for p in current.keys() - initial_files.keys()):
+                raise ValueError("Only isolated run audits and reasoning workspaces may be written during evaluation")

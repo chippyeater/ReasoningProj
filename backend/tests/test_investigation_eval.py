@@ -127,7 +127,7 @@ class TestInvestigationEval(unittest.TestCase):
         original = case_store.DATA_DIR
         with self.assertRaisesRegex(ValueError, "Only isolated run audits"):
             with data.isolated_case() as (_, root):
-                (root / "issue_workspaces.json").write_text("{}")
+                (root / "case.json").write_text("{}")
         self.assertEqual(case_store.DATA_DIR, original)
 
     def test_remote_initialization_is_idempotent_and_keeps_native_history_source(self):
@@ -253,7 +253,8 @@ class TestInvestigationEval(unittest.TestCase):
         self.assertEqual(len(set(report["trace_ids"])), 3)
         self.assertEqual(len({i["initial_case_data_sha256"] for i in report["items"]}), 1)
         self.assertEqual(report["maximum_live_model_calls"], 42)
-        self.assertTrue(all(i["metrics"]["model_call_count"] == 2 for i in report["items"]))
+        self.assertTrue(all(i["metrics"]["model_call_count"] == 6 for i in report["items"]))
+        self.assertTrue(all(i["metrics"]["workspace_commit_applied"] == 1 for i in report["items"]))
 
     def test_single_task_dry_run_invokes_full_agent_exactly_once(self):
         with patch.object(runner.agent, "run_investigation", wraps=runner.agent.run_investigation) as run, \
@@ -264,7 +265,7 @@ class TestInvestigationEval(unittest.TestCase):
         self.assertEqual(report["maximum_live_model_calls"], 14)
         self.assertEqual(report["paid_model_calls"], 0)
         self.assertEqual(run.await_count, 1)
-        self.assertEqual(model.call_count, 2)
+        self.assertEqual(model.call_count, 6)
         for call in model.call_args_list:
             self.assertNotIn("investigation_opportunities", json.dumps(call.args[1:]))
 
@@ -337,6 +338,81 @@ class TestInvestigationEval(unittest.TestCase):
         item = NS(trace_id="d" * 32, item=NS(id="dataset-item", dataset_id="dataset"))
         with self.assertRaisesRegex(ValueError, "association"):
             remote.verify_experiment(client, NS(experiment_id="exp", item_results=[item]), datetime.now(timezone.utc))
+
+    def test_summary_access_is_separate_from_the_unchanged_source_access_metric(self):
+        criteria = {"evidence_groups": [{"id": "claims", "unit_ids": ["U029", "U036"], "mode": "all"}]}
+        audit = {"tool_calls": [], "model_calls": [], "knowledge_state": {
+            "info_units": {"U029": {"id": "U029"}, "U036": {"id": "U036"}}, "source_refs": {}}}
+        metrics, access = scoring.automatic_metrics(audit, {}, 1, criteria)
+        self.assertEqual(metrics["evidence_access_claims"], 0)
+        self.assertEqual(metrics["info_unit_access_claims"], 1)
+        self.assertEqual(metrics["obtained_info_unit_count"], 2)
+        self.assertEqual(metrics["provided_info_unit_count"], 0)  # Historical metric still means source provision.
+        self.assertEqual(access["obtained_info_unit_ids"], ["U029", "U036"])
+        self.assertEqual(access["provided_source_refs"], [])
+
+    def test_new_score_metadata_records_metric_version_without_changing_score_names(self):
+        scores = scoring.evaluator(output={"task_id": "A1", "metrics": {"evidence_access_contract_rent": 1}})
+        self.assertEqual(scores[0].name, "evidence_access_contract_rent")
+        self.assertEqual(scores[0].metadata["metrics_version"], scoring.METRICS_VERSION)
+        self.assertEqual(scores[0].value, 1)
+
+    def test_historical_output_shapes_need_no_conversion_or_assumed_commit_result(self):
+        audit = {"tool_calls": [{"name": "get_evidence", "result": {"status": "ok", "items": [
+            {"info_unit_id": "U029", "source_ref_index": 0}]}}], "model_calls": []}
+        old = {"stop_reason": "finish_investigation", "summary_status": "completed", "findings": [{"statement": "Old result"}],
+            "proposals": [{"kind": "hypothesis", "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}]}
+        before = deepcopy((audit, old))
+        current = {key: value for key, value in old.items() if key not in {"findings", "proposals"}}
+        old_metrics, _ = scoring.automatic_metrics(audit, old, 1, {"evidence_groups": []})
+        new_metrics, _ = scoring.automatic_metrics(audit, current, 1, {"evidence_groups": []})
+        self.assertEqual(old_metrics, new_metrics)
+        self.assertNotIn("workspace_commit_applied", old_metrics)
+        self.assertNotIn("obtained_info_unit_count", old_metrics)  # Missing summary history is unknown.
+        self.assertEqual((audit, old), before)
+
+    def test_validated_finish_does_not_claim_a_failed_commit_was_applied(self):
+        result = {"stop_reason": "finish_investigation", "summary_status": "completed",
+                  "workspace_commit": {"status": "failed", "changes": []}}
+        metrics, _ = scoring.automatic_metrics({"tool_calls": [], "model_calls": []}, result, 1, {"evidence_groups": []})
+        self.assertEqual(metrics["runtime_finish_validated"], 1)
+        self.assertEqual(metrics["workspace_commit_applied"], 0)
+        self.assertEqual(metrics["workspace_change_count"], 0)
+
+    def test_protocol_task_commits_and_preserves_workspace_without_proposal_source_pointers(self):
+        client = NS(get_current_trace_id=lambda: "new-protocol-trace", update_current_span=Mock())
+        config = llm_client.LLMConfig("openai", "https://offline.invalid/v1", "offline-mock", "unused")
+        with TemporaryDirectory() as directory, patch.object(runner.observability, "_get_backend", return_value=None), \
+                patch.object(llm_client, "load_config", return_value=config), \
+                patch.object(llm_client, "call_tools", new=AsyncMock(side_effect=runner._mock_reply)) as model:
+            output = asyncio.run(runner.make_task(client, offline=True, artifact_dir=directory)(item=data.dataset_items()[0]))
+            self.assertEqual(output["result"]["workspace_commit"]["status"], "applied", output)
+            workspace = json.loads((Path(directory) / "A1/issue_workspaces.json").read_text(encoding="utf-8"))
+            state = workspace["workspaces"][data.execution_context_config()["current_issues"]["A1"]]["reasoning"]
+            self.assertEqual(len(state["hypotheses"]), 1)
+            self.assertEqual(state["gaps"][0]["hypothesis_ids"], [state["hypotheses"][0]["id"]])
+            self.assertEqual(state["links"][0]["hypothesis_id"], state["hypotheses"][0]["id"])
+            self.assertEqual(len(state["investigation_runs"]), 1)
+            self.assertTrue(list((Path(directory) / "A1/runs").glob("*.output.json")))
+            for call in model.call_args_list:
+                view = json.loads(call.args[1][1]["content"])
+                self.assertNotIn("case_info_directory", view)
+                self.assertNotIn("core_issue", view)
+            for proposal in output["result"]["proposals"]:
+                self.assertNotIn("evidence_refs", proposal)
+
+    def test_native_dry_run_rejects_finish_with_failed_workspace_commit(self):
+        with patch("app.reasoning_proposals.persist_issue_workspaces", side_effect=OSError("disk full")):
+            with self.assertRaisesRegex(ValueError, "protocol check failed"):
+                runner.dry_run(task_id="A1")
+
+    def test_isolation_allows_only_own_workspace_and_still_protects_cached_text(self):
+        for change in (lambda root: (root / "unrelated.json").write_text("{}"),
+                       lambda root: (root / "parsed/foreign.txt").write_text("foreign"),
+                       lambda root: next(root.glob("parsed/*.txt")).write_text("changed")):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "Only isolated"):
+                with data.isolated_case() as (_, root):
+                    change(root)
 
     def test_native_association_and_nested_agent_nodes_are_verified(self):
         client = FakeRemote()

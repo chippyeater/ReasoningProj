@@ -1,6 +1,8 @@
 """Deterministic execution/ACCESS metrics. No semantic pass/fail or LLM judge."""
 from langfuse import Evaluation
 
+METRICS_VERSION = "investigation-access-v2"
+
 
 def automatic_metrics(audit, result, elapsed_seconds, criteria, error=None):
     if not audit:
@@ -34,6 +36,18 @@ def automatic_metrics(audit, result, elapsed_seconds, criteria, error=None):
     for group in criteria["evidence_groups"]:
         matches = [uid in units for uid in group["unit_ids"]]
         metrics["evidence_access_" + group["id"]] = int(all(matches) if group["mode"] == "all" else any(matches))
+    # Keep historical source-access metrics unchanged. Summary access is separate.
+    obtained = None
+    if isinstance(knowledge.get("info_units"), dict):
+        obtained = set(knowledge["info_units"]) | units
+        metrics["obtained_info_unit_count"] = len(obtained)
+        for group in criteria["evidence_groups"]:
+            matches = [uid in obtained for uid in group["unit_ids"]]
+            metrics["info_unit_access_" + group["id"]] = int(all(matches) if group["mode"] == "all" else any(matches))
+    commit = result.get("workspace_commit")
+    if isinstance(commit, dict):
+        metrics["workspace_commit_applied"] = int(commit.get("status") == "applied")
+        metrics["workspace_change_count"] = len(commit.get("changes", []))
     usage = [(g.get("raw_response") or {}).get("usage") for g in generations]
     complete = all(isinstance(u, dict) and all(isinstance(u.get(k), int) and not isinstance(u[k], bool) and u[k] >= 0
                    for k in ("prompt_tokens", "completion_tokens", "total_tokens")) for u in usage)
@@ -46,6 +60,7 @@ def automatic_metrics(audit, result, elapsed_seconds, criteria, error=None):
     access = {"read_source_refs": [{"info_unit_id": uid, "source_ref_index": index} for uid, index in sorted(explicit)],
               "provided_source_refs": [{"info_unit_id": uid, "source_ref_index": index} for uid, index in sorted(provided)],
               "summary_info_unit_ids": sorted(knowledge.get("info_units", {})),
+              **({"obtained_info_unit_ids": sorted(obtained)} if obtained is not None else {}),
               "meaning": "Access/provision only. Not correct understanding, use, independent support or task completion."}
     return metrics, access
 
@@ -53,5 +68,5 @@ def automatic_metrics(audit, result, elapsed_seconds, criteria, error=None):
 def evaluator(*, output, **kwargs):
     return [Evaluation(name=name, value=value, data_type="NUMERIC",
         comment="Deterministic runtime/access metric; NOT a semantic task-quality judgment.",
-        metadata={"task_id": output["task_id"], "scope": "execution_and_access_only"})
+        metadata={"task_id": output["task_id"], "scope": "execution_and_access_only", "metrics_version": METRICS_VERSION})
         for name, value in output["metrics"].items()]

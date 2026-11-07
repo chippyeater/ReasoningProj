@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from app import investigation_agent as agent, llm_client, observability
 from .data import ROOT, TaskInput, build_case, dataset_items, digest, execution_context_config, isolated_case, load_definition, load_snapshot, work_context
-from .scoring import automatic_metrics, evaluator
+from .scoring import METRICS_VERSION, automatic_metrics, evaluator
 from . import remote
 
 REPO = ROOT.parents[1]
@@ -47,6 +47,7 @@ def run_metadata(model, task_id=None):
             "execution_context_version": context_config["version"],
             "execution_context_sha256": digest(context_config),
             "tool_contract_sha256": digest(agent.tool_definitions()), "langfuse_sdk_version": version("langfuse"),
+            "automatic_metrics_version": METRICS_VERSION,
             "max_model_calls_per_item": agent.MAX_MODEL_CALLS, "max_model_calls_three_items": 3 * agent.MAX_MODEL_CALLS,
             "selected_task_ids": selected_task_ids(task_id),
             "max_model_calls_this_run": len(selected_task_ids(task_id)) * agent.MAX_MODEL_CALLS,
@@ -90,6 +91,8 @@ def make_task(client, *, allow_paid=False, offline=False, artifact_dir=None):
                 destination.mkdir(parents=True, exist_ok=False)
                 if (case_dir / "runs").exists():
                     shutil.copytree(case_dir / "runs", destination / "runs")
+                if (case_dir / "issue_workspaces.json").exists():
+                    shutil.copy2(case_dir / "issue_workspaces.json", destination / "issue_workspaces.json")
             metrics, access = automatic_metrics(audit, result, time.perf_counter() - started, expected["expected_output"], error)
             return {"task_id": parsed.task_id, "mode": "dry-run" if offline else "live", "result": result,
                     "runtime_error": error, "metrics": metrics, "access": access,
@@ -102,8 +105,21 @@ def _mock_reply(config, messages, definitions, schema=None, **kwargs):
     """Offline protocol exercise, explicitly NOT a simulated semantic benchmark."""
     from app.llm_client import ToolReply
     state = json.loads(messages[1]["content"])
-    if not state["materials"]["source_refs"]["items"]:
+    if not state["materials"]["info_units"]["items"]:
+        name, args = "search_info_units", {"query": "月租", "types": None, "limit": 1}
+    elif not state["materials"]["source_refs"]["items"]:
         name, args = "get_evidence", {"info_unit_id": "U004", "offset": 0, "limit": 12}
+    elif not state["proposals"]:
+        name, args = "propose_hypothesis", {"content": "Offline protocol hypothesis; not a semantic loss judgment.",
+            "rationale": "Protocol sample based on an obtained InfoUnit, without Proposal source pointers.", "info_unit_ids": ["U004"]}
+    elif len(state["proposals"]) == 1:
+        name, args = "propose_evidence_gap", {"content": "Offline protocol question; actual rent receipts remain to be investigated.",
+            "rationale": "Protocol-only dependency on the returned Hypothesis proposal_id.", "basis_info_unit_ids": ["U004"],
+            "hypothesis_targets": {"hypothesis_ids": [], "hypothesis_proposal_ids": [state["proposals"][0]["proposal_id"]]}}
+    elif len(state["proposals"]) == 2:
+        name, args = "propose_evidence_link", {"hypothesis_id": None,
+            "hypothesis_proposal_ids": [state["proposals"][0]["proposal_id"]], "info_unit_id": "U004", "meaning": "related",
+            "rationale": "Protocol-only link; source access does not establish the proposition."}
     else:
         name = "finish_investigation"
         args = {"answer": "Offline protocol sample; source access is not semantic investigation completion.",
@@ -156,14 +172,16 @@ def dry_run(*, task_id=None):
             stack.enter_context(patch.object(llm_client, "load_config", return_value=config))
             stack.enter_context(patch.object(llm_client, "call_tools", new=AsyncMock(side_effect=_mock_reply)))
             stack.enter_context(patch.object(llm_client, "_post_completion", new=AsyncMock(side_effect=AssertionError("Paid transport forbidden in dry-run"))))
+            metadata = run_metadata(config.model, task_id)
             result = dataset.run_experiment(name="offline-protocol-check", task=make_task(client, offline=True),
-                evaluators=[evaluator], max_concurrency=1, metadata=run_metadata(config.model, task_id))
+                evaluators=[evaluator], max_concurrency=1, metadata=metadata)
             client.flush()
         spans = exporter.get_finished_spans()
         summaries = [{"trace_id": format(s.context.trace_id, "032x"), "name": s.name,
                       "parent_span_id": format(s.parent.span_id, "016x") if s.parent else None} for s in spans]
         if [r.output["task_id"] for r in result.item_results] != selected_task_ids(task_id) or any(
-                not r.evaluations or not r.output["metrics"]["runtime_finish_validated"] for r in result.item_results):
+                not r.evaluations or not r.output["metrics"]["runtime_finish_validated"]
+                or not r.output["metrics"].get("workspace_commit_applied") for r in result.item_results):
             raise ValueError("Offline native experiment or Agent protocol check failed")
         for item in result.item_results:
             own = [s for s in summaries if s["trace_id"] == item.trace_id]
@@ -173,6 +191,7 @@ def dry_run(*, task_id=None):
                 if not any(s["name"] == name and s["parent_span_id"] for s in own):
                     raise ValueError(f"Existing Agent node is not in the experiment Trace: {name}")
         return {"mode": "dry-run", "remote_synchronized": False, "paid_model_calls": 0, "sdk_mock_http_calls": len(calls),
+                "metadata": metadata,
                 "items": [{"task_id": r.output["task_id"], "metrics": r.output["metrics"], "initial_case_data_sha256": r.output["initial_case_data_sha256"]} for r in result.item_results],
                 "span_count": len(spans), "trace_ids": [r.trace_id for r in result.item_results], "semantic_quality_scored": False,
                 "maximum_live_model_calls": len(selected_task_ids(task_id)) * agent.MAX_MODEL_CALLS}

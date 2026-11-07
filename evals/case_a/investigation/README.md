@@ -12,11 +12,11 @@
 | A2 提前退租与押金 | 合同条款、拒退理由、提前搬离、条件式协商及后续交涉 | 条款存在不等于已认定法律效力；可协商部分退还不等于无条件承诺或最终退款协议 |
 | A3 过程还原 | 聊天、双方笔录、日期来源、替租入住/另签租约、押金交涉 | 聊天日期不能自动等同事件日期；新租约签署日和最终退款结果未提供，不能补写 |
 
-`snapshot.json` 固定已有材料的 SHA256，不复制案件原文。数据来自当前 Case A 的 5 份 cached TXT、17 个 Gold InfoUnit、7 条 Gold Relation 与既有争点文件。每次执行先校验文件哈希，并构造时间戳固定、无 StageRun/人工推理/工作区历史的 `CaseData`。三个任务使用相同 core_issue、空选择、空推理初态，各自获得新的临时目录；只允许写入本次 Agent 审计。无原始上传文件解析、提取或 Relation 模型调用。
+`snapshot.json` 固定已有材料的 SHA256，不复制案件原文。数据来自当前 Case A 的 5 份 cached TXT、17 个 Gold InfoUnit、7 条 Gold Relation 与既有争点文件。每次执行先校验文件哈希，并构造时间戳固定、无 StageRun/人工推理/工作区历史的 `CaseData`。三个任务使用相同 core_issue、空选择、空推理初态，各自获得新的临时目录；只允许写入本次 Agent 审计及本案件的推理工作区、锁文件，缓存 TXT 和案件数据仍不得修改。live 的任务审计目录同时保留提交后的 issue_workspaces.json，供检查实际变更。无原始上传文件解析、提取或 Relation 模型调用。
 
 历史 A1 Trace 是此前另一份实际提取快照，InfoUnit ID 与固定 Gold 不同。它是失败案例来源，不是该固定快照上的新实验或可直接合并的访问覆盖基线。
 
-当前执行使用独立的 `execution_context.json`（`case-a-task-issues-v2`）作为可追踪运行配置：A1 的 `current_issue/issue_key` 选择已有争点“出租人是否存在实际经济损失”；A2/A3 保持押金工作区。`goal` 保留原始任务，`core_issue` 保留案件整体背景；生产 API 的 current_issue 仍来自用户选中的合法工作区，不按 Goal 猜测替换。原 Dataset、初态、Gold、快照和历史 Trace 不改写。Experiment 元数据记录 execution_context_version/SHA-256；比较新旧运行时须同时比较该上下文配置，不能将其冒充完全相同输入的 Prompt 单变量实验。
+当前执行使用独立的 `execution_context.json`（`case-a-task-issues-v2`）作为可追踪运行配置：A1 的 `current_issue/issue_key` 选择已有争点“出租人是否存在实际经济损失”；A2/A3 保持押金工作区。`goal` 保留原始任务，冻结 Dataset 中的 `core_issue` 保留案件主要争议焦点记录，不转发到当前 LLM 上下文；当前运行不构建 case_info_directory。生产 API 的 current_issue 仍来自用户选中的合法工作区，不按 Goal 猜测替换。原 Dataset、初态、Gold、快照和历史 Trace 不改写。Experiment 元数据记录 execution_context_version/SHA-256；比较新旧运行时须同时比较该上下文配置，不能将其冒充完全相同输入的 Prompt 单变量实验。
 
 ## 当前命题语义验收
 
@@ -28,7 +28,7 @@ Hypothesis 按能否被证据支持或反驳评价，不按是否生成两个竞
 
 - 单命题：只需核查实际收款是否减少，允许一个可验证命题与一个 Gap；不为凑数生成反命题。
 - 多命题：检验计租衔接与租金差额这两个不同命题，允许共享收款核查 Gap；若选择竞争解释也按同样规则判断。
-- 补证：已有单命题与 Gap，提交包含来源的收款新材料；复用原 ID，分别建议 Gap 与 Hypothesis 状态，保持人工审核。再以反驳证据检查 refuted，不能因无支持就证伪。
+- 补证：已有单命题与 Gap，提交包含来源的收款新材料；复用原 ID，分别建议 Gap 与 Hypothesis 状态，正常 Finish 后整体提交，用户事后编辑或撤销。再以反驳证据检查 refuted，不能因无支持就证伪。
 - 重复：固定 d72e603 的首次 H1 后上下文，只执行下一步，检查是否复用已有命题而继续处理新问题；如需比较 v11/v12，固定材料和目标，少量重复，不把一次采样当作稳定改进。
 
 ## 已初始化的远端对象
@@ -47,7 +47,7 @@ Hypothesis 按能否被证据支持或反驳评价，不按是否生成两个竞
 | gap_handling | 54d069a7-212b-4253-8f50-4b10a6ee3c21 | 重要缺口遗漏或当作事实 / 已识别但处理不足 / 合理调查或记录 |
 | completion_calibration | 63d36db7-0119-4873-8d45-d16ff100c270 | 明显提前/错误完成 / 基本合理但局部不一致 / 与实际完成程度一致 |
 
-在 Trace/Observation 详情点击 **Annotate**，选择以上配置、给出整数 0/1/2，并在 Comment 写明 Finding、来源指针或模型和工具记录的依据。新实验执行后，也可从 Experiment compare view 打开对应任务和原生 Trace 评分。UI 的评论功能可用，但后端配置不会强制人工必须填写评论；这是标注规范。Runner 不自动预填人工分，也不设置未经验证的总分通过线。经明确授权的 Codex 审阅可使用原生 ANNOTATION 预标注，必须记录 `reviewer=Codex`、`human_verified=false`，供真人复核；不能冒充已完成真人标注。当前不额外建立 Annotation Queue。
+在 Trace/Observation 详情点击 **Annotate**，选择以上配置、给出整数 0/1/2，并在 Comment 写明 answer、Proposal、关联 InfoUnit 及必要原文或工具记录的依据；历史 Finding 仍可作为历史结果查看，不要求新运行生成它。新实验执行后，也可从 Experiment compare view 打开对应任务和原生 Trace 评分。UI 的评论功能可用，但后端配置不会强制人工必须填写评论；这是标注规范。Runner 不自动预填人工分，也不设置未经验证的总分通过线。经明确授权的 Codex 审阅可使用原生 ANNOTATION 预标注，必须记录 `reviewer=Codex`、`human_verified=false`，供真人复核；不能冒充已完成真人标注。当前不额外建立 Annotation Queue。
 
 ## 命令
 
@@ -72,11 +72,11 @@ backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py live --allow-
 backend/.venv/Scripts/python.exe scripts/run_investigation_eval.py live --task A1 --allow-paid-models
 ```
 
-`--task A1|A2|A3` 仅用于 dry-run/live。省略时仍运行三个任务；指定时先核对完整远端 Dataset，再仅在本地筛选原生 Item，不修改 Dataset。运行元数据记录选择范围及本次调用上界，单任务最多 20 次模型调用。Runner 不自动重跑任务；远端核验失败时，可从审计目录的 `execution.json` 找到本次 Experiment/Trace ID，继续只读核查，避免为同步问题重新调用模型。
+`--task A1|A2|A3` 仅用于 dry-run/live。省略时仍运行三个任务；指定时先核对完整远端 Dataset，再仅在本地筛选原生 Item，不修改 Dataset。运行元数据记录选择范围及本次调用上界，单任务最多 14 次模型调用。Runner 不自动重跑任务；远端核验失败时，可从审计目录的 `execution.json` 找到本次 Experiment/Trace ID，继续只读核查，避免为同步问题重新调用模型。
 
 `init` 使用确定性 Dataset Item ID；已存在且一致的对象不重建。定义、快照、配置或远端 Item 漂移时明确失败，不静默覆盖。远端 unavailable、权限不足、写入拒绝或读回核验失败均返回非零退出码，不冒充同步成功。`live` 缺少授权标志会在加载模型或执行调查前失败；还要求干净且已提交的工作区和开启 Langfuse 内容记录。
 
-当前离线协议脚本直接读取来源并完成交付（每项2次 Mock 模型调用），无需先登记计划。运行元数据包含唯一 Prompt 的名称、版本、实际 SHA、Commit、发布状态及八个工具的契约哈希。它验证来源访问、统一循环、交付协议和可观测性，不代表真实语义质量通过。
+当前离线协议脚本每项使用6次 Mock 模型调用：检索 InfoUnit、按需读取原文、创建 Hypothesis、引用其 proposal_id 创建 Gap 和 EvidenceLink，最后 Finish 并核对整轮原子写入。Proposal 不携带 evidence_refs 或 source_ref_index；正式 ID 关联与隔离工作区写入由真实生产代码完成。运行元数据包含唯一 Prompt 的名称、版本、实际 SHA、Commit、发布状态、当前十个工具的契约哈希及自动指标版本。它验证协议和可观测性，不代表真实语义质量通过。
 
 `dry-run` 使用内存 Span Exporter 和只接受 Mock API 的 httpx transport。它实际运行 SDK v5 Experiment Runner、三个隔离任务、完整 Agent 工具循环、原生 Evaluator 和 Trace 嵌套；模型回复为明确标注的协议样例。报告中的完成状态只说明协议通过，不是真实调查质量或真实 Experiment 上传成功。
 
@@ -88,7 +88,7 @@ live 的审计保存在被 Git 忽略的 `evals/case_a/results/investigation/<ru
 
 Experiments 查询使用服务器支持的 `limit=100` 与 cursor 分页，并请求 `core,dataset` 字段组以读取 Dataset ID；返回的 Item/Trace/Dataset 关联集合必须与本次选择完全一致，额外任务也会导致核验失败。Scores 读取显式请求 `details,subject`，供核对评论、配置、审阅来源及关联对象。核验故障可仅修复读取逻辑后使用本次 `execution.json` 中的 ID 继续查询，不重写原始运行记录或重新执行付费调查。
 
-当前 Agent 每项最多 **28 次模型调用**，三项最多 **84 次**；每次最多 `LLM_MAX_COMPLETION_TOKENS`（当前默认 20,000），理论 completion 上界 1,680,000，含 reasoning tokens。模型客户端没有自动重试；提前结束通常显著少于此上界。输入量、Azure 实际单价及总费用不由此上界保证。
+当前 Agent 每项最多 **14 次模型调用**，三项最多 **42 次**；每次最多 `LLM_MAX_COMPLETION_TOKENS`（当前默认 20,000），理论 completion 上界 840,000，含 reasoning tokens。模型客户端没有自动重试；提前结束通常显著少于此上界。输入量、Azure 实际单价及总费用不由此上界保证。
 
 ## 自动 Scores 的解释
 
@@ -97,6 +97,16 @@ Experiments 查询使用服务器支持的 `limit=100` 与 cursor 分页，并�
 每个 `evidence_access_<group>` 只判断组内 InfoUnit 是否至少有一条来源被上下文提供或成功读取，按 Gold 的 all/any 组合。它不保证该节点所有来源均已提供、不保证关键措辞已读到，更不代表理解、引用支持或任务完成。实际 SourceRef 指针和只读摘要范围同时保存在任务 output，人工据此复核。必要/可选组只是参考标准；访问分没有语义通过阈值，所有 opportunities 不构成必读清单。
 
 `score-history` 仅为原 Trace 添加上述执行/资源指标。由于历史快照不同，省略固定 Gold 访问组指标；不自动给四个人工语义维度打分。此次已写入并读回核验 19 个历史执行 Scores：3 次模型调用、1 次成功 finish、2 个显式读取 InfoUnit / 6 个 SourceRef、29,413 total tokens（其中 completion 2,751，reasoning 1,728）。`runtime_finish_validated=1` 仅说明当时 Runtime 接受结束，不能抵消 A1 的历史语义失败。
+
+## 协议变更与前后比较（InfoUnit 引用架构）
+
+本次不修改 Dataset、A1 Gold、材料快照、执行议题配置或四个人工评分维度。A1 仍评价实际损失是否成立、量化条件和证据边界，不要求 Finding、原文指针或固定 Proposal 数量。冻结 TaskInput 的 core_issue 是评测输入记录，不是当前模型的消息字段；因此无需迁移远端 Dataset 或重建 Item。
+
+自动指标版本为 `investigation-access-v2`，记录在 Experiment 元数据及新自动 Score 的元数据中。保留旧指标名称和算法：`evidence_access_*`、`provided_info_unit_count` 仍只表示原文来源访问/提供，不能改作摘要访问，也不能作为必须逐条 get_evidence 的门槛。新增 `info_unit_access_*` 和 `obtained_info_unit_count` 衡量摘要或原文取得；新增 `workspace_commit_applied` 和 `workspace_change_count` 区分成功 Finish 与实际写入，变更数量不代表质量。历史缺少工作区结果或摘要记忆时省略相应新指标，不能补零推断失败。
+
+比较时保持 Goal、Dataset/criteria、材料快照、初态和实际 current_issue 一致；同时核对模型配置、Prompt、代码 Commit、工具契约和预算。历史缺少执行上下文标记时查看原始审计中的实际议题，不能仅凭同一 Dataset 名称认定同条件。多项机制和 Prompt 一起改变时只能评价整套版本，不能将差异归因于单一 Schema 字段。
+
+历史 experiment、Trace、Scores 和本地审计保留原样；旧 JSON 使用原有字典读取与共同语义评分，不经当前 Proposal 模型重新验证，无需旧 Schema 转换层。离线重算只生成新的本地核查报告，不覆盖或回填远端历史分数。人工评分仍按原四维 0–2 判断 answer/Proposal 与 InfoUnit 的证据关系，读取了原文不等于证据充分，自动提交成功也不等于判断正确。协议检查不能证明真实模型表现提升。
 
 ## 验证与官方接口依据
 
