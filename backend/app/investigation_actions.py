@@ -133,9 +133,30 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
 def propose_evidence_gap_update(case, seen, context, proposals, *, gap_id, addressing_info_unit_ids,
                                 status, rationale):
     """Update an existing Evidence Gap's status, addressing materials, or both. Use status = resolved when the factual question has been sufficiently answered; otherwise use status = open and explain the remaining uncertainty. Provide addressing_info_unit_ids to associate newly obtained responding materials with the Gap. Submit an update when the status changes or new responding InfoUnits are associated."""
-    return _propose(case, seen, context, proposals, "evidence_gap_update", gap_id=gap_id,
-                    addressing_info_unit_ids=addressing_info_unit_ids, status=status,
-                    rationale=rationale)
+    response = _propose(case, seen, context, proposals, "evidence_gap_update", gap_id=gap_id,
+                        addressing_info_unit_ids=addressing_info_unit_ids, status=status, rationale=rationale)
+    formal, effective = _hypothesis_states(case, context, proposals)
+    from app.issue_workspaces import get_issue_workspaces
+    state = get_issue_workspaces(case).workspaces[context["current_issue"]].reasoning
+    gap = next(g for g in state.gaps if g.id == gap_id)
+    response["next_step"] = {"related_hypotheses": [
+        {"hypothesis_id": hid, "content": formal[hid]["content"], "judgment": formal[hid]["judgment"],
+         "formal_judgment": formal[hid]["judgment"], "effective_judgment": effective[hid]["judgment"],
+         "pending_changes": [p.model_dump(mode="json") for p in proposals
+                             if p.kind == "hypothesis_status" and hid in p.hypothesis_ids]}
+        for hid in gap.hypothesis_ids],
+        "instruction": "请检查本次回应 Gap 的证据是否对关联 Hypothesis 的判断产生影响。根据证据实际证明力，判断是否需要更新；判断改变时调用 propose_hypothesis_status，不变时保留原状态，不创建无意义 Proposal。Gap resolved 不自动改变 Hypothesis judgment。"}
+    return response
+
+
+def _hypothesis_states(case, context, proposals):
+    from app.issue_workspaces import get_issue_workspaces
+    from app.investigation_state import effective_reasoning
+    workspace = get_issue_workspaces(case).workspaces.get((context or {}).get("current_issue"))
+    reasoning = workspace.reasoning.model_dump(mode="json") if workspace else {"hypotheses": [], "gaps": [], "links": []}
+    effective = effective_reasoning(reasoning, [p.model_dump(mode="json") for p in proposals])
+    return ({h["id"]: h for h in reasoning["hypotheses"]},
+            {h["id"]: h for h in effective["hypotheses"]})
 
 
 def finish_investigation(case, seen, context, goal, proposals, *, answer,

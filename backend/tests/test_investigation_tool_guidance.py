@@ -45,7 +45,7 @@ class TestInvestigationToolGuidance(unittest.TestCase):
 
     def test_user_prompt_is_registered_and_uses_the_new_context_contract(self):
         prompt = load_prompt(REPO / "backend/prompts/investigation_common_prompt.md", agent.PROMPT_NAME)
-        self.assertEqual(prompt.version, "v20")
+        self.assertEqual(prompt.version, "v21")
         for field in ("case_info_directory", "core_issue", "evidence_refs"):
             self.assertNotIn(field, prompt.content)
         self.assertIn("以 InfoUnit 为基本证据单元", prompt.content)

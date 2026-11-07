@@ -45,6 +45,24 @@ def previous_tool_result(name, call_id, raw, response, args):
             "recovery": tool_feedback(name, args, response, raw)}
 
 
+def effective_reasoning(reasoning, proposals):
+    """Overlay accepted pending changes for reasoning only; never edit formal data."""
+    result = deepcopy(reasoning)
+    hypotheses = {h["id"]: h for h in result.get("hypotheses", [])}
+    gaps = {g["id"]: g for g in result.get("gaps", [])}
+    for proposal in proposals:
+        if proposal["kind"] == "hypothesis_status":
+            for hid in proposal["hypothesis_ids"]:
+                if hid in hypotheses:
+                    hypotheses[hid]["judgment"] = proposal["judgment"]
+        elif proposal["kind"] == "evidence_gap_update" and proposal["gap_id"] in gaps:
+            gap = gaps[proposal["gap_id"]]
+            gap["status"] = proposal["status"]
+            gap["addressing_info_unit_ids"] = list(dict.fromkeys([
+                *gap.get("addressing_info_unit_ids", []), *proposal["addressing_info_unit_ids"]]))
+    return result
+
+
 def validation_issues(exc, prefix=(), fix="Correct the indicated field using the tool schema"):
     """Keep independent diagnostics in the existing error envelope."""
     if isinstance(exc, ValidationError):
@@ -173,6 +191,7 @@ def model_context(initial, knowledge):
         "proposals": [{key: deepcopy(value) for key, value in proposal.items()
                        if value is not None and value != []}
                       for proposal in knowledge.proposals],
+        "effective_reasoning": effective_reasoning(reasoning, knowledge.proposals),
         "previous_tool_result": deepcopy(knowledge.previous_tool_result)}
     # Trim material projections, never the authoritative KnowledgeState.
     sections = list(result["materials"].values())
