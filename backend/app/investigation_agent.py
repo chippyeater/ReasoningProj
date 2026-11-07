@@ -66,36 +66,40 @@ def tool_definitions() -> list[dict]:
     limit = {"type": ["integer", "null"], "minimum": 1, "maximum": tools.MAX_LIMIT}
     definitions = [
         _function("search_info_units", (
-            "按一个具体信息需求搜索当前案件的标题和内容；多关键词为 OR 匹配。"
-            "返回最多120字符的摘要及陈述归属，默认5条、最多8条。"
-            "排除当前可见节点，省略材料可重取；has_more 表示仍有未返回的匹配项。"
+            "Search current-case titles and content for one specific information need; keywords use OR matching. "
+            "Use known directory titles to inspect relevant existing material before declaring it missing. "
+            "Optional types filter results; limit defaults to 5, maximum 8. Returns summaries of up to 120 characters with attribution. "
+            "Excludes InfoUnits visible in the current material view; omitted items can be retrieved again. "
+            "has_more means matching items remain, not that all must be read."
         ), {
             "query": {"type": "string", "minLength": 1, "maxLength": tools.MAX_QUERY_CHARS},
             "types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in InfoUnitType]}},
             "limit": limit,
         }),
         _function("get_relations", (
-            "按已知 InfoUnit ID 获取当前案件的一跳关系及相邻节点摘要，保留关系方向。"
+            "Read persisted one-hop relations for 1-5 current-case info_unit_ids when connections matter to the Goal. "
+            "Optional relation_types filter results; limit defaults to 5, maximum 8. "
+            "Returns directed relations and adjacent InfoUnit summaries without recursive expansion; has_more marks omitted matches."
         ), {
             "info_unit_ids": ids,
             "relation_types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in RelationType]}},
             "limit": limit,
         }),
         _function("get_evidence", (
-            "按一个 info_unit_id 定向读取缓存原文，用于核查摘要中的措辞、时间、金额、主体和来源限定，不要求每个节点都读取。"
-            "offset 是原始 SourceRef 列表位置，默认0；limit 默认及最多12，原文总计最多8000字符，引用不截断。"
-            "has_more 为真时用返回的 next_offset 继续读取同一节点；total_count 是该节点引用总数。"
-            "source_ref_index 保留原索引，可用于 Proposal 引用。"
+            "Read cached source quotes for one info_unit_id to check wording, dates, amounts, actors or source qualifications; "
+            "not every InfoUnit needs a source read. offset is the original SourceRef list position, default 0; limit defaults to 12, maximum 12. "
+            "Returns full quotes verified against cached TXT, at most 8000 characters total, with stable source_ref_index values usable in Proposals. "
+            "total_count counts the node's references; when has_more is true, continue with next_offset for the same node."
         ), {
             "info_unit_id": {"type": "string", "minLength": 1},
             "offset": {"type": "integer", "minimum": 0},
             "limit": {"type": "integer", "minimum": 1, "maximum": tools.MAX_EVIDENCE_REFS},
         }),
         _function("search_evidence_gaps", (
-            "按需发现当前 Issue 已有的 Evidence Gap，包括初始 reasoning 投影省略的对象。"
-            "query 关键词匹配问题及关联命题（OR）；info_unit_ids 匹配形成依据、回应材料及命题的证据关联。"
-            "两者为空时有界浏览；默认及最多3个 Gap，offset 默认0，has_more 时可增加 offset 继续发现其他对象。"
-            "返回真实 ID、完整问题及有界的关联 Hypothesis/状态；引用列表不授予材料或来源权限。"
+            "Discover existing Gaps in the current Issue, including those omitted from the initial reasoning view, before creating or updating a Gap. "
+            "query uses OR keywords on questions and linked Hypotheses; info_unit_ids match basis, addressing material and Hypothesis evidence links. "
+            "Leave both empty for bounded browsing. limit defaults to 3, maximum 3; offset defaults to 0 and can advance when has_more is true. "
+            "Returns actual IDs, full questions and bounded linked reasoning/status. Reference lists do not grant material or source access."
         ), {
             "query": {"type": ["string", "null"], "maxLength": tools.MAX_QUERY_CHARS},
             "info_unit_ids": {"type": ["array", "null"], "items": {"type": "string"}, "maxItems": tools.MAX_NODE_IDS},

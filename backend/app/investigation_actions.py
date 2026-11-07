@@ -94,7 +94,12 @@ def _propose(case, seen, context, proposals, kind, **values):
     candidate, _ = stage_proposals(case, issue, [*proposals, proposal], current, "validation")
     if f"validation:{proposal.proposal_id}" not in candidate.workspaces[issue].reasoning.accepted_proposals:
         return {"status": "ok", "pending": False, "no_change": True,
-                "message": "The requested state already holds. No Proposal was staged; continue or Finish."}
+                "message": ("The current/staged Gap status is unchanged and all supplied addressing InfoUnits are already associated. "
+                    "Rewording rationale or resubmitting SourceRefs alone does not update a Gap. No Proposal was staged. "
+                    "Inspect any unread Goal-relevant existing material, or Finish if no actual new change is needed. "
+                    "Do not resubmit the same operation with different wording."
+                    if kind == "evidence_gap_update" else
+                    "The requested state already holds. No Proposal was staged; continue or Finish.")}
     proposals.append(proposal)
     return {"status": "ok", "proposal_id": proposal.proposal_id, "pending": True,
             "evidence_status": "traceable_source" if proposal.evidence_refs else "not_directly_evidenced",
@@ -131,7 +136,7 @@ def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, 
 
 def propose_evidence_gap_update(case, seen, context, proposals, *, gap_id, addressing_info_unit_ids,
                                 status, rationale, evidence_refs):
-    """Update an existing gap_id with obtained addressing_info_unit_ids and SourceRef citations. Suggest open or resolved and explain remaining uncertainty. Citations must belong to addressing_info_unit_ids, not the old Gap basis. Commit appends responding material and preserves the Gap's ID, question, basis and Hypothesis associations. Correct a rejected update instead of creating a duplicate Gap."""
+    """Update an existing gap_id only when its status changes or at least one obtained InfoUnit in addressing_info_unit_ids is not already associated with it. Keeping open is valid when adding new responding material. Rewording rationale or reusing SourceRefs alone is not an update; after no_change=true, inspect unread relevant material or Finish, without rewording and resubmitting the same operation. Use open or resolved according to the evidence and explain remaining uncertainty. Citations must belong to addressing_info_unit_ids, not the old Gap basis. Normal Finish appends responding material and applies status while preserving the Gap's ID, question, basis and Hypothesis associations. Correct a rejected update instead of creating a duplicate Gap."""
     return _propose(case, seen, context, proposals, "evidence_gap_update", gap_id=gap_id,
                     addressing_info_unit_ids=addressing_info_unit_ids, status=status,
                     rationale=rationale, evidence_refs=evidence_refs)
