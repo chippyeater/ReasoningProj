@@ -1,6 +1,7 @@
 """Finding-free Finish and server-recorded source provenance, without a real LLM."""
 import json
 import unittest
+from types import SimpleNamespace
 
 import test_investigation_agent as f
 from app import investigation_agent as agent
@@ -12,6 +13,64 @@ class TestInvestigationFinish(unittest.TestCase):
     tearDown = f.TestInvestigationAgent.tearDown
     run_script = f.TestInvestigationAgent.run_script
     audits = f.TestInvestigationAgent.audits
+
+    def test_goal_completion_preserves_followups_without_changing_selected_status(self):
+        followups = ["后续可核对其他期间的付款，不影响本轮指定期间核查。"]
+        for status, questions in (("completed", followups), ("completed", []),
+                                  ("evidence_insufficient", ["缺少指定期间收款凭证，无法完成本轮核查。"])):
+            with self.subTest(status=status, questions=questions):
+                result, _ = self.run_script("核对指定期间收款", [
+                    f.tool("get_evidence", {"info_unit_id": "U029"}),
+                    f.finish("核对指定期间收款", status=status, questions=questions)])
+                self.assertEqual(result["summary_status"], "completed")
+                self.assertEqual(result["completion_status"], status)
+                self.assertEqual(result["open_questions"], questions)
+                self.assertEqual(result["tool_budget_used"]["finish"], 1)
+
+    def test_insufficient_evidence_without_questions_is_rejected_with_executable_recovery(self):
+        bad = {"answer": "尚不能完成指定期间核查。", "answer_basis": "case_material",
+               "open_questions": [], "completion_status": "evidence_insufficient"}
+        questions = ["缺少指定期间的收款凭证，无法确认实收金额。"]
+        result, calls = self.run_script("核对", [f.tool("get_evidence", {"info_unit_id": "U029"}),
+            f.tool("finish_investigation", bad, "missing-limitation"),
+            f.finish("核对", status="evidence_insufficient", questions=questions)])
+        recovery = json.loads(calls[-1]["messages"][1]["content"])["recovery"]
+        error = recovery["validation_details"]["errors"][0]
+        self.assertEqual(recovery["code"], "missing_evidence_limitation")
+        self.assertEqual(error["argument_loc"], ["open_questions"])
+        step = recovery["next_action"]["steps"][0]
+        self.assertEqual(step["tool"], "finish_investigation")
+        self.assertEqual(step["loc"], ["open_questions"])
+        self.assertEqual(step["instruction"], error["fix"])
+        self.assertIn("directly prevents completing this Goal", step["instruction"])
+        self.assertEqual(result["completion_status"], "evidence_insufficient")
+        self.assertEqual(result["open_questions"], questions)
+        self.assertEqual(result["tool_budget_used"]["finish"], 2)
+
+    def test_remaining_finish_semantic_errors_identify_fields_and_fixes(self):
+        from app import investigation_actions as actions
+        from app.reasoning_models import PROPOSAL_ADAPTER
+        from test_reasoning_proposals import suggestion
+        material = {"has_material": True, "has_read_result": True, "read_failed": False}
+        empty = {**material, "has_material": False}
+        unread = {**empty, "has_read_result": False}
+        proposal = PROPOSAL_ADAPTER.validate_python(suggestion("hypothesis"))
+        cases = [({"answer_basis": "invalid"}, material, [], "invalid_tool_arguments", "answer_basis"),
+                 ({"answer_basis": "general"}, material, [proposal], "invalid_answer_basis", "answer_basis"),
+                 ({}, unread, [], "initial_information_required", "answer_basis"),
+                 ({}, empty, [], "evidence_not_obtained", "completion_status"),
+                 ({"completion_status": "budget_exhausted"}, material, [], "budget_available", "completion_status")]
+        for overrides, acquisition, proposals, code, field in cases:
+            with self.subTest(code=code), self.assertRaises(AppError) as caught:
+                actions.finish_investigation(self.case, {"units": set(), "relations": set(), "evidence": set()},
+                    None, "核对", proposals, **{"answer": "本轮核查。", "answer_basis": "case_material",
+                    "open_questions": [], "completion_status": "completed", **overrides},
+                    knowledge=SimpleNamespace(acquisition=lambda: acquisition))
+            self.assertEqual(caught.exception.code, code)
+            error = caught.exception.details["errors"][0]
+            self.assertEqual(error["loc"], [field])
+            self.assertEqual(error["code"], code)
+            self.assertTrue(error["fix"])
 
     def test_finish_schema_and_result_model_have_no_finding(self):
         schema = next(d["function"]["parameters"] for d in agent.tool_definitions()

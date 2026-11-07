@@ -140,26 +140,34 @@ def propose_evidence_gap_update(case, seen, context, proposals, *, gap_id, addre
 def finish_investigation(case, seen, context, goal, proposals, *, answer,
                          open_questions, completion_status, answer_basis, knowledge,
                          budget_exhausted=False, read_budget_exhausted=False):
-    """Deliver a concise answer to the Goal, preserving staged Proposals for whole-run validation and atomic commit even when the non-Finish tool budget is exhausted. No writes occur on abnormal termination or concurrent reasoning/evidence changes. answer_basis distinguishes general knowledge/capabilities, case metadata, and case material. Case judgments require obtained material; failed/empty reads can justify an explicit evidence limitation. The system preserves obtained source pointers for inspection. Report unresolved conditions in open_questions and use evidence_insufficient when they prevent answering the Goal. No fixed retrieval depth or Proposal count."""
+    """Deliver a concise answer to this run's Goal, preserving staged Proposals for whole-run validation and atomic commit even when the non-Finish tool budget is exhausted. completed means the Goal is sufficiently answered; open_questions may retain follow-up directions, risks or unverified matters that do not prevent its completion. evidence_insufficient means missing critical evidence prevents completing the Goal and requires explicit unresolved conditions. budget_exhausted means the shared tool budget is spent and that limit prevents completing the Goal. unsupported means the Goal exceeds current system capabilities. Choose the status from actual results; do not hide unresolved questions to pass validation. No writes occur on abnormal termination or concurrent reasoning/evidence changes. answer_basis distinguishes general knowledge/capabilities, case metadata, and case material. Case judgments require obtained material. The system preserves obtained source pointers for inspection. No fixed retrieval depth or Proposal count."""
     from app.investigation_agent import _validate_summary
+    def invalid(code, field, message, fix):
+        raise AppError(code, message, details={"category": "result_semantics", "errors": [{
+            "loc": [field], "code": code, "message": message, "fix": fix}]})
+
     acquisition = knowledge.acquisition()
     if answer_basis not in {"general", "case_metadata", "case_material"}:
-        raise AppError("invalid_tool_arguments", "Unknown answer_basis")
+        invalid("invalid_tool_arguments", "answer_basis", "Unknown answer_basis",
+                "Choose general, case_metadata or case_material to match the answer's actual basis.")
     if any(proposal_material_ids(p) or p.evidence_refs for p in proposals):
         if answer_basis != "case_material":
-            raise AppError("invalid_answer_basis", "Material-backed artifacts require case_material answer_basis")
+            invalid("invalid_answer_basis", "answer_basis", "Material-backed artifacts require case_material answer_basis",
+                    "Use case_material for material-backed Proposals; retain their validated evidence references.")
     if answer_basis == "case_material":
         investigated = acquisition["has_material"] or acquisition["has_read_result"] or acquisition["read_failed"]
         if case.info_units and not investigated and not read_budget_exhausted:
-            raise AppError("initial_information_required", "Read relevant case material before a case judgment; directory titles are discovery metadata")
+            invalid("initial_information_required", "answer_basis", "Read relevant case material before a case judgment; directory titles are discovery metadata",
+                    "Actually read relevant material before a case judgment; use general or case_metadata only for answers based on those sources.")
         if completion_status == "completed" and not acquisition["has_material"]:
-            raise AppError("evidence_not_obtained", "Empty/error reads do not establish case facts; explain the unresolved condition")
+            invalid("evidence_not_obtained", "completion_status", "Empty/error reads do not establish case facts; explain the unresolved condition",
+                    "Obtain material needed to complete the Goal, or use evidence_insufficient and describe the missing critical evidence in open_questions.")
     if completion_status == "evidence_insufficient" and not open_questions:
-        raise AppError("missing_evidence_limitation", "Describe the unresolved condition in open_questions")
-    if completion_status == "completed" and open_questions:
-        raise AppError("unresolved_goal", "Unresolved Goal conditions require evidence_insufficient")
+        invalid("missing_evidence_limitation", "open_questions", "Describe the unresolved condition in open_questions",
+                "Add the missing critical evidence or unresolved condition that directly prevents completing this Goal to open_questions; do not hide it or change status just to pass validation.")
     if completion_status == "budget_exhausted" and not budget_exhausted:
-        raise AppError("budget_available", "Use an accurate completion_status; execution budget remains available")
+        invalid("budget_available", "completion_status", "Use an accurate completion_status; execution budget remains available",
+                "Budget remains: choose completed if the Goal is answered, evidence_insufficient if critical evidence is missing, or unsupported if the Goal exceeds system capabilities.")
     result = artifacts(case, seen, context, goal, proposals, open_questions, completion_status)
     return result, _validate_summary(answer, proposals)
 

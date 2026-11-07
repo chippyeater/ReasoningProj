@@ -105,6 +105,49 @@ class TestInvestigationCommit(unittest.TestCase):
                 self.assertEqual(gap.status, "open")
                 self.assertEqual(gap.basis_info_unit_ids, ["U026"])
 
+    def test_three_status_gap_proposals_commit_with_completed_and_followup_questions(self):
+        # Reproduce the A2 Trace's transport shape, not its semantic evidence quality.
+        first, second = self.hypothesis("指定期间租金已支付"), self.hypothesis("指定期间租金未支付")
+        gap_id = self.edit(gap={"content": "指定期间收款是否连续？", "hypothesis_ids": [first, second],
+            "basis_info_unit_ids": ["U026"]}).json()["object_id"]
+        saved = self.raw()
+        proposals = [{**fixture.suggestion("hypothesis_status", first), "judgment": "verified"},
+            {"kind": "evidence_gap_update", "gap_id": gap_id, "addressing_info_unit_ids": ["U029"],
+             "status": "resolved", "rationale": "离线协议样例，模拟已有效提交的回应。",
+             "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]},
+            {**fixture.suggestion("hypothesis_status", second), "judgment": "refuted"}]
+        followups = ["后续可调查其他期间的收支，不影响本轮指定期间的完成判断。"]
+        script = [agent_fixture.tool("get_evidence", {"info_unit_id": "U029"}),
+            *(fixture.proposal_call(p, [], f"proposal-{i}") for i, p in enumerate(proposals))]
+        def respond(call, turn):
+            if turn <= len(script):
+                return script[turn - 1]
+            self.assertEqual(self.raw(), saved)
+            return agent_fixture.finish("更新指定期间的命题判断和原缺口", status="completed", questions=followups,
+                answer="已根据本轮取得的材料提交判断与缺口更新，另保留后续调查方向。")
+        from app import reasoning_proposals
+        with patch.object(reasoning_proposals, "persist_issue_workspaces", wraps=reasoning_proposals.persist_issue_workspaces) as save:
+            result, _ = agent_fixture.TestInvestigationAgent.run_script(self,
+                "更新指定期间的命题判断和原缺口", respond, issue_key=self.issue)
+        self.assertEqual(result["completion_status"], "completed")
+        self.assertEqual(result["open_questions"], followups)
+        self.assertEqual(result["workspace_commit"]["status"], "applied", result)
+        self.assertEqual(result["tool_budget_used"]["finish"], 1)
+        self.assertEqual(len(result["proposals"]), 3)
+        self.assertEqual(len(result["workspace_commit"]["changes"]), 3)
+        self.assertEqual(save.call_count, 1)
+        state = self.state()
+        self.assertEqual([h.judgment for h in state.hypotheses], ["verified", "refuted"])
+        self.assertEqual([h.content for h in state.hypotheses], ["指定期间租金已支付", "指定期间租金未支付"])
+        self.assertEqual(state.gaps[0].id, gap_id)
+        self.assertEqual(state.gaps[0].status, "resolved")
+        self.assertEqual(state.gaps[0].basis_info_unit_ids, ["U026"])
+        self.assertEqual(state.gaps[0].addressing_info_unit_ids, ["U029"])
+        self.assertEqual(state.links, [])
+        audit = json.loads((case_dir(self.case.case_id) / f"runs/{result['run_id']}.output.json").read_text(encoding="utf-8"))
+        self.assertTrue(all(tool["result"]["status"] == "ok" for tool in audit["tool_calls"]))
+        self.assertNotIn("unresolved_goal", json.dumps(audit))
+
     def test_noop_status_does_not_stage_write_or_increment_revision(self):
         hid = self.hypothesis()
         saved = self.raw()

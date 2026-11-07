@@ -68,7 +68,7 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
         self.assertEqual([c["no_progress"] for c in self.audits()[0]["tool_calls"]], [1, 1, 2, 3, 3])
         step = self.recovery(calls[2])["next_action"]["steps"][0]
         self.assertEqual(step["code"], "missing_evidence_limitation")
-        self.assertEqual(step["loc"], [])
+        self.assertEqual(step["loc"], ["open_questions"])
         self.assertIn("open_questions", step["instruction"])
         self.assertEqual([d["function"]["name"] for d in calls[-1]["definitions"]], ["finish_investigation"])
         self.assertEqual(result["summary_status"], "completed")
