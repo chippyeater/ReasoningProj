@@ -19,7 +19,7 @@ from app.prompt_loader import load_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
 from app.reasoning_models import (InvestigationSourceRef, ReasoningProposal, MaterialProposal,
                                   EvidenceGapProposal, EvidenceGapUpdateProposal, proposal_material_ids)
-from app.investigation_state import KnowledgeState, model_context
+from app.investigation_state import KnowledgeState, model_context, tool_feedback
 
 MAX_NON_FINISH_TOOL_CALLS = 8  # All read/Proposal attempts, including failures.
 MAX_FINISH_CALLS = 3
@@ -406,8 +406,12 @@ def _tool_recovery(response, name, args=None, case=None):
             argument_loc = argument_loc[1:]
         if argument_loc[:1] == ["relevant_info_unit_ids"]:
             argument_loc[0] = "info_unit_ids"
-        if name == "propose_evidence_link" and argument_loc[:1] in (["info_unit_ids"], ["hypothesis_ids"]):
-            argument_loc = ["info_unit_id" if argument_loc[0] == "info_unit_ids" else "hypothesis_id"]
+        if name in {"propose_evidence_link", "propose_hypothesis_status"} and argument_loc[:1] == ["hypothesis_ids"]:
+            argument_loc = ["hypothesis_id"]
+        if name == "propose_evidence_link" and argument_loc[:1] == ["info_unit_ids"]:
+            argument_loc = ["info_unit_id"]
+        if name == "propose_evidence_gap_update" and argument_loc[:1] == ["gap_id"]:
+            argument_loc = ["gap_id"]
         if name == "propose_evidence_gap" and argument_loc[:1] in (["hypothesis_ids"], ["hypothesis_proposal_ids"]):
             argument_loc = ["hypothesis_targets", *argument_loc]
         item.setdefault("argument_loc", argument_loc)
@@ -504,22 +508,33 @@ def _tool_recovery(response, name, args=None, case=None):
     error["recoverable"] = True
 
 
-def _finish_only_recovery(recovery):
+def _closure_message(code):
+    return {
+        "tool_budget_exhausted": "The shared investigation tool budget is exhausted. Further reads and Proposals are closed; finish_investigation remains available.",
+        "no_progress_limit": "The consecutive no-progress limit was reached. Further reads and Proposals are closed; finish_investigation remains available.",
+        "finish_required": "A validated Finish is required after the non-tool reply. Further reads and Proposals are closed; finish_investigation remains available.",
+    }[code]
+
+
+def _finish_only_recovery(recovery, code=None):
     """Constrain executable recovery actions without losing validation diagnostics."""
     recovery["constraints"] = {"allowed_tools": ["finish_investigation"],
         "instruction": "Investigation tools are closed. Only finish_investigation is available; correct its listed errors using obtained material, without further reads or Proposals."}
+    if code:
+        recovery["constraints"].update(code=code, message=_closure_message(code))
 
     def constrain(step):
-        if step.get("tool") in {None, "finish_investigation"}:
+        if step.get("tool") == "finish_investigation":
             return step
         step = deepcopy(step)
-        step["unavailable_tool"] = step["tool"]
+        step["unavailable_tool"] = step.get("tool") or recovery.get("tool")
         if "arguments" in step:
             step["unavailable_arguments"] = step.pop("arguments")
         step["tool"] = "finish_investigation"
-        step["instruction"] = (f"Correct {step.get('loc', [])} ({step.get('code', 'tool_error')}) in finish_investigation "
-            "using only already obtained material. "
-            "Do not call the unavailable tool or invent evidence. Describe unresolved conditions in open_questions, then resubmit Finish.")
+        step["instruction"] = (f"The prior investigation error at {step.get('loc', [])} "
+            f"({step.get('code', 'tool_error')}) cannot be retried after tool closure. "
+            "Call finish_investigation using only already obtained material. "
+            "Do not call the unavailable tool or invent evidence. Describe unresolved conditions in open_questions, then submit Finish.")
         return step
 
     action = recovery.setdefault("next_action", {"steps": []})
@@ -633,6 +648,9 @@ async def run_investigation(case: CaseData, goal: str,
     def investigation_closed():
         return finish_required or non_finish_exhausted() or no_progress >= MAX_NO_PROGRESS
 
+    def closure_code():
+        return "finish_required" if finish_required else "tool_budget_exhausted" if non_finish_exhausted() else "no_progress_limit"
+
     def snapshot(answer=None, summary_status="pending"):
         result = actions.artifacts(bound_case, seen, work_context, goal, proposals, open_questions, completion).model_dump(mode="json")
         if answer_basis not in {"general", "case_metadata"} and completion != "unsupported":
@@ -698,13 +716,11 @@ async def run_investigation(case: CaseData, goal: str,
                              targeted.get(d["function"]["name"], True) and
                              (d["function"]["name"] not in actions.PROPOSAL_TOOLS or len(proposals) < 6))]
             if investigation_closed() and recovery is None:
-                response = tools._failure(AppError(
-                    "finish_required" if finish_required else "tool_budget_exhausted" if non_finish_exhausted() else "no_progress_limit",
-                    "Investigation tools are unavailable; submit the answer with current material through finish_investigation"))
+                response = tools._failure(AppError(closure_code(), _closure_message(closure_code())))
                 _tool_recovery(response, "finish_investigation")
-                recovery = response["error"]
+                recovery = tool_feedback("finish_investigation", {}, response)
             if investigation_closed():
-                _finish_only_recovery(recovery)
+                _finish_only_recovery(recovery, closure_code())
             state = model_context(initial_input, knowledge, recovery)
             visible_units = frozenset(row["id"] for row in state["materials"]["info_units"]["items"])
             request_messages = [{"role": "system", "content": prompt.content},
@@ -728,7 +744,7 @@ async def run_investigation(case: CaseData, goal: str,
                 if recovery is None:
                     response = tools._failure(AppError("finish_required", "Deliver the answer through finish_investigation, with accurate answer_basis and unresolved conditions."))
                     _tool_recovery(response, "finish_investigation")
-                    recovery = response["error"]
+                    recovery = tool_feedback("finish_investigation", {}, response)
                 persist()
                 continue
             if not isinstance(calls, list) or len(calls) != 1:
@@ -757,8 +773,7 @@ async def run_investigation(case: CaseData, goal: str,
                     if name == "search_info_units":
                         tool_audit["excluded_info_unit_ids"] = sorted(visible_units)
                     if not permitted:
-                        raise AppError("finish_required" if finish_required else "tool_budget_exhausted",
-                                       "Investigation tools are closed; only finish_investigation may be called")
+                        raise AppError(closure_code(), _closure_message(closure_code()))
                     prior = fingerprints.get(fingerprint)
                     if prior and prior["successful"] and name in READ_TOOLS:
                         response = {**deepcopy(prior["result"]), "cached": True}
@@ -806,18 +821,9 @@ async def run_investigation(case: CaseData, goal: str,
                         fingerprints[fingerprint] = {"successful": False, "state": signature}
                 _tool_recovery(response, name, args, bound_case)
                 failed = response["status"] in {"invalid_request", "error"}
-                recovery = deepcopy(response["error"]) if failed else None
-                if recovery:
-                    recovery["tool"] = name
-                    argument_text = json.dumps(args, ensure_ascii=False) if args else raw
-                    recovery["arguments"] = deepcopy(args) if args and len(argument_text) <= 4000 else {
-                        "excerpt": argument_text[:2000], "context_truncated": len(argument_text) > 2000}
-                    details = recovery.get("validation_details", {})
-                    errors = details.get("errors", [])
-                    if len(errors) > 8:
-                        details["errors"] = errors[:8]
-                        details["omitted_error_count"] = len(errors) - 8
-                        recovery["next_action"]["steps"] = recovery["next_action"]["steps"][:8]
+                # The prior feedback was delivered with this request. Replace it
+                # with this call's actionable result; ordinary success clears it.
+                recovery = tool_feedback(name, args, response, raw)
                 if response.get("has_more"):
                     limitations.append(f"{name}: truncated result; additional material may remain.")
                 if name == "search_evidence_gaps" and not failed and response["items"]:

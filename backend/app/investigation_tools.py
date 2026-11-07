@@ -55,7 +55,8 @@ def _result(items: list[dict], *, has_more: bool = False) -> dict:
 
 def _failure(exc: AppError, *, status: str = "invalid_request") -> dict:
     return {"status": status, "items": [], "has_more": False,
-            "error": {"code": exc.code, "message": str(exc)}}
+            "error": {"code": exc.code, "message": str(exc),
+                      **({"validation_details": exc.details} if exc.details else {})}}
 
 
 def _check_limit(limit: int) -> None:
@@ -196,7 +197,9 @@ def search_evidence_gaps(case: CaseData, query: str | None = None, info_unit_ids
             raise AppError("invalid_limit", "At most three Gaps may be read at once")
         offset = 0 if offset is None else offset
         if type(offset) is not int or offset < 0:
-            raise AppError("invalid_tool_arguments", "offset must be a nonnegative integer")
+            raise AppError("invalid_tool_arguments", "offset must be a nonnegative integer", details={
+                "category": "structure", "errors": [{"loc": ["offset"], "code": "invalid_offset",
+                    "message": "offset must be a nonnegative integer", "fix": "Set offset to an integer greater than or equal to zero."}]})
         if query is not None and (not isinstance(query, str) or len(query) > MAX_QUERY_CHARS):
             raise AppError("invalid_query", f"query must contain at most {MAX_QUERY_CHARS} characters")
         terms = list(dict.fromkeys(re.findall(r"\w+", _normalized(query or ""))))

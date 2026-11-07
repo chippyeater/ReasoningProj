@@ -345,7 +345,8 @@ class TestInvestigationAgent(unittest.TestCase):
         self.assertEqual(state["materials"]["source_refs"]["items"], [])
         self.assertEqual(state["notices"], [])
         state = json.loads(calls[1]["messages"][1]["content"])
-        self.assertEqual(state["notices"][0]["error"]["code"], "source_quote_mismatch")
+        self.assertEqual(state["recovery"]["code"], "source_quote_mismatch")
+        self.assertEqual(state["notices"], [])
         self.assertEqual(state["materials"]["source_refs"]["items"], [])
         self.assertEqual(result["evidence_refs"], [])
 

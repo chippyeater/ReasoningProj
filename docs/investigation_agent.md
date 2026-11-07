@@ -38,6 +38,33 @@ Gap 创建工具和 Proposal 使用 `basis_info_unit_ids` 记录已有的形成�
 
 ## 每轮上下文
 
+### Harness 工具反馈审计
+
+继续复用唯一的 `recovery` 字段作为最新一次待处理反馈，不新增平行反馈状态。主循环先经 `_tool_recovery` 生成字段和恢复动作，再用 `tool_feedback` 选择需要交给模型的信息；`model_context` 将其实际写入下一次请求的 JSON User Message。成功检索内容仍由 KnowledgeState 提供，不复制整份工具响应或完整调用历史。
+
+| 返回路径 | 下一轮模型输入中的落点 |
+| --- | --- |
+| `search_info_units` 参数、过滤器、检索异常 | `recovery.tool/status/code/message/arguments` 及 `validation_details.errors`、`next_action` |
+| `get_relations` 节点、关系过滤器、读取异常 | 同上；实际工具参数名保留在 `argument_loc` |
+| `get_evidence` 单节点、分页、缓存、来源核验异常 | 同上；保留真实缓存/来源错误码及该次读取参数，不授予失败来源权限 |
+| `search_evidence_gaps` 查询、关联、分页异常 | 同上；非法 offset 保留原错误码，同时明确定位 `argument_loc=[offset]` |
+| `propose_hypothesis` 字段、材料引用、重复命题及暂存失败 | 同上；重复对象的来源、ID 和内容保留在错误及恢复步骤中 |
+| `propose_evidence_link` 枚举、材料、父命题及暂存失败 | 同上；内部数组字段映射回 `info_unit_id/hypothesis_id` |
+| `propose_evidence_gap` 字段、材料、同轮父命题依赖及暂存失败 | 同上；依赖错误映射回 `hypothesis_targets` 中的具体字段 |
+| `propose_hypothesis_status` 判断参数、目标、材料及暂存失败 | 同上；命题目标映射回实际的 `hypothesis_id` 参数 |
+| `propose_evidence_gap_update` 目标、回应材料及暂存失败 | 同上；目标映射回标量 `gap_id`，不暴露内部校验数组下标 |
+| 上述 Proposal 返回 `ok/no_change` | `recovery.status=ok`、`no_change=true`、`pending=false`、完整常规 message 和调用参数；不伪装成异常，不生成新 Proposal |
+| 等价调用 `duplicate_query` | 同一 recovery 中保留重复原因、调用参数及使用已有结果/修正调用的动作；成功读取缓存仍按正常材料处理 |
+| `finish_investigation` 参数、总结或完成条件校验失败 | 同一 recovery 中保留失败条件、实际字段、修复步骤；不增加 Finish 重试次数 |
+| `finish_required/tool_budget_exhausted/no_progress_limit` | `recovery.constraints.code/message/allowed_tools` 明确关闭原因及仍可 Finish；有原始失败或 no_change 时与之并存，不覆盖主错误码和原因 |
+| 正常 `empty/truncated/has_more` | `notices` 保留查询范围、参数和 has_more；原文分页另含 total_count/next_offset，不标记为系统错误。失败重读不消费旧分页/截断提示 |
+
+生命周期以模型请求为边界：本轮请求已带上上次反馈，工具执行后以新反馈替换；普通成功清理已展示的错误或 no_change。上下文重建与持久化不会自行清理尚未展示的反馈。读取错误不再重复长期留在 notices；完整错误仍保存在原始工具审计中。
+
+反馈投影最多8000字符、最多8条主要错误；长字符串保留首尾并标记省略字符数，长参数改为摘要，错误和裁剪列表记录省略数量。优先保留代码、字段、原因、fix/next_action 和关闭约束，先裁剪材料而不静默删掉最新反馈。原始参数、完整错误列表和工具结果在审计中保留，不把上下文摘要写回审计结果。工具预算、成功/失败判定、no_progress 计算及原子提交规则不变；十个 Tool Description 和 v19 Prompt 正文不变。
+
+终止路径保持不重试：模型/Provider 失败、原生多工具调用或重复 call ID 等协议异常、配置/Prompt/必需上下文失败、审计存储失败，以及 Finish/模型调用上限耗尽，都按既有失败或部分结果路径停止，不为反馈机制额外调用模型。审计存储本身不可用时显式报错，不能声称完整审计已落盘。正常 Finish 后的提交冲突、证据失效或存储失败直接写入返回结果的 workspace_commit/error 并保留提案；最终审计刷新失败时仍以原子运行记录为准，不重新进入 LLM 循环。
+
 首轮材料只来自请求明确选中的 InfoUnit，以及用户聚焦的 InfoUnit；聚焦 Hypothesis/Gap 不会自动取得其关联材料。仅发送有界摘要，以及两端都在这组选中材料内的既有 Relation。画布可见节点和新 Extraction 批次不会自动加入材料或来源，画布显示、布局、层级、视口和可见性独立保存。
 
 LLM 上下文不再构建或发送 case_info_directory 与 core_issue。正式 Gap 的材料关联 ID 本身不授予材料取得权限；成功搜索的摘要、明确选中/聚焦的材料或实际原文读取才授予相应 InfoUnit 权限。没有默认来源片段或首轮隐式读取。
@@ -52,7 +79,7 @@ LLM 上下文不再构建或发送 case_info_directory 与 core_issue。正式 G
 - `materials.info_units/relations/source_refs`：本轮实际取得的去重工具投影，各自带 `items/context_truncated/omitted_ids`。成功搜索摘要进入后续轮次；来源指针仅在 source_refs 中提供一次，不再在每个 InfoUnit 上重复列索引；搜索命中不授予来源引用权限，裁剪不会丢失完整工作记忆。
 - `reasoning`：当前 Issue 中相关的正式假设、缺口和证据关联，保留用户判断、弃用/解决状态，不发送修订号、时间戳和显示布局。
 - `proposals`：本轮已成功提交的提案，保留实际 ID、内容、依据、有效状态与依赖；仅在模型投影中省略 null 和空数组。完整提案与提交记录仍保存在审计和 API 结果中。
-- `notices` 与 `recovery`：必要的空结果、截断范围、来源限制和当前错误。
+- `notices`：空结果、截断范围与分页提示；`recovery`：最新错误、无变化或恢复指导，以及必要的工具关闭约束。
 
 KnowledgeState 按 InfoUnit ID、Relation ID、SourceRef 的节点/索引合并材料，完整状态不随上下文裁剪而删除。每轮从该状态重建视图；正文、关系和来源分别最多约6500/3500/12000字符，总上下文最多24000字符。来源优先展示最近读取页，分页提示保留 total_count/next_offset，成功读取下一页后移除已消费的旧游标；先前来源仍作为实际读取记录保留，不自动解释为任一 Proposal 的直接支持。其余材料仍按明确读取、Goal 文本相关程度和近期材料保留；超限明确列出省略 ID，模型可重新读取，缓存结果也重新进入视图。不发送完整工具历史、活动索引、计划状态、预算计数或运行审计。
 

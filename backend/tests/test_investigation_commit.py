@@ -155,8 +155,9 @@ class TestInvestigationCommit(unittest.TestCase):
         self.assertEqual(result["workspace_commit"]["status"], "no_change")
         self.assertEqual(self.state().hypotheses[0].revision, 1)
         self.assertEqual(self.raw(), saved)
-        next_input = json.loads(calls[2]["messages"][1]["content"])
-        self.assertIsNone(next_input["recovery"])
+        next_input = json.loads(calls[-1]["messages"][1]["content"])
+        self.assertTrue(next_input["recovery"]["no_change"])
+        self.assertEqual(next_input["recovery"]["status"], "ok")
 
     def test_noop_does_not_invalidate_real_sibling_change(self):
         hid = self.hypothesis()

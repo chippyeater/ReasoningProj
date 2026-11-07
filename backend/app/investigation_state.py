@@ -9,7 +9,99 @@ from pydantic import ValidationError
 from app.errors import AppError
 
 MAX_CONTEXT_CHARS = 24000  # Deterministic character proxy, independent of provider tokenizer.
+MAX_FEEDBACK_CHARS = 8000
 READ_TOOLS = frozenset({"search_info_units", "get_relations", "get_evidence", "search_evidence_gaps"})
+
+
+def tool_feedback(name, args, response, raw=""):
+    """One-turn actionable feedback; successful material stays in KnowledgeState."""
+    failed = response["status"] in {"invalid_request", "error"}
+    fields = ("code", "message", "no_change", "pending", "argument_loc", "validation_details",
+              "recovery_hint", "next_action", "fix")
+    if not failed and not any(response.get(key) for key in fields if key != "pending"):
+        return None
+    feedback = {key: deepcopy(response[key]) for key in fields if key in response}
+    if failed:
+        feedback.update(deepcopy(response.get("error") or {}))
+    feedback.update(tool=name, status=response["status"], arguments=deepcopy(args) if args else {"raw": raw})
+    return feedback
+
+
+def _argument_view(arguments):
+    text = json.dumps(arguments, ensure_ascii=False)
+    return deepcopy(arguments) if len(text) <= 1000 else {
+        "excerpt": text[:600], "context_truncated": True, "omitted_chars": len(text) - 600}
+
+
+def feedback_view(feedback):
+    """Bound the latest feedback before trimming material; leave audits lossless."""
+    if feedback is None:
+        return None
+    original = deepcopy(feedback)
+    details = original.get("validation_details", {})
+    errors = details.get("errors", [])
+    total = len(errors) + details.get("omitted_error_count", 0)
+    # Preserve error fields and actions, rather than spending space on a large
+    # argument dump or repeated independent errors. Head + tail retains both
+    # the cause and a trailing repair instruction in unusually long messages.
+    def compact(value, chars, path, omitted):
+        if isinstance(value, str) and len(value) > chars:
+            omitted.append(path)
+            half = chars // 2
+            return value[:half] + f" ... [{len(value) - 2 * half} chars omitted] ... " + value[-half:]
+        if isinstance(value, dict):
+            return {key: compact(item, chars, f"{path}.{key}", omitted) for key, item in value.items()}
+        if isinstance(value, list):
+            if len(value) > 8:
+                omitted.append(path)
+            return [compact(item, chars, f"{path}.{index}", omitted) for index, item in enumerate(value[:8])]
+        return value
+
+    for count in range(min(len(errors), 8), -1, -1):
+        if errors and count == 0:
+            break
+        result = deepcopy(original)
+        if errors:
+            result["validation_details"]["errors"] = errors[:count]
+            if total > count:
+                result["validation_details"]["omitted_error_count"] = total - count
+            if "steps" in result.get("next_action", {}):
+                result["next_action"]["steps"] = result["next_action"]["steps"][:count]
+        arguments = result.get("arguments")
+        if arguments is not None:
+            result["arguments"] = _argument_view(arguments)
+        for chars in (1000, 400, 160):
+            omitted = []
+            candidate = compact(result, chars, "recovery", omitted)
+            if omitted or total > count or candidate.get("arguments", {}).get("context_truncated"):
+                candidate["context_truncated"] = True
+                candidate["truncated_fields"] = omitted[:8]
+                if len(omitted) > 8:
+                    candidate["omitted_truncated_field_count"] = len(omitted) - 8
+            if len(json.dumps(candidate, ensure_ascii=False)) <= MAX_FEEDBACK_CHARS:
+                return candidate
+    # Server feedback has a fixed shallow shape. Drop unrelated exception
+    # diagnostics before considering an unrenderable required-context failure.
+    minimal = {key: value for key, value in original.items() if key in {
+        "tool", "status", "code", "message", "no_change", "pending", "argument_loc", "fix",
+        "recovery_hint", "constraints"}}
+    minimal["context_truncated"] = True
+    minimal["arguments"] = _argument_view(original.get("arguments", {}))
+    action = original.get("next_action", {})
+    minimal["next_action"] = {"retry_tool": action.get("retry_tool"), "steps": [
+        {key: value for key, value in step.items() if key in {"tool", "code", "loc", "instruction"}}
+        for step in action.get("steps", [])[:1]]}
+    if errors:
+        minimal["validation_details"] = {"errors": [{key: value for key, value in errors[0].items()
+            if key in {"code", "loc", "argument_loc", "message", "fix"}}], "omitted_error_count": total - 1}
+    omitted = []
+    result = compact(minimal, 160, "recovery", omitted)
+    result["truncated_fields"] = omitted[:8]
+    if len(omitted) > 8:
+        result["omitted_truncated_field_count"] = len(omitted) - 8
+    if len(json.dumps(result, ensure_ascii=False)) > MAX_FEEDBACK_CHARS:
+        raise AppError("investigation_context_limit", "Required actionable tool feedback exceeds the context budget")
+    return result
 
 
 def validation_issues(exc, prefix=(), fix="Correct the indicated field using the tool schema"):
@@ -82,11 +174,13 @@ class KnowledgeState:
         # including a truncated query after a later unrelated successful query.
         if name in READ_TOOLS:
             key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
-            self.notices = [n for n in self.notices if n.get("key") != key and not (
-                name == "get_evidence" and response["status"] not in {"invalid_request", "error"}
-                and n["tool"] == name and n["arguments"].get("info_unit_id") == args["info_unit_id"]
-                and n.get("next_offset") == args.get("offset", 0))]
-            if response.get("has_more") or response["status"] in {"empty", "error"}:
+            if response["status"] not in {"invalid_request", "error"}:
+                self.notices = [n for n in self.notices if n.get("key") != key and not (
+                    name == "get_evidence" and n["tool"] == name
+                    and n["arguments"].get("info_unit_id") == args["info_unit_id"]
+                    and n.get("next_offset") == args.get("offset", 0))]
+            if response["status"] not in {"invalid_request", "error"} and (
+                    response.get("has_more") or response["status"] in {"empty", "truncated"}):
                 self.notices.append({"key": key, "tool": name, "arguments": deepcopy(args),
                     "status": response["status"], "has_more": response.get("has_more", False),
                     **({k: response[k] for k in ("total_count", "next_offset") if k in response} if name == "get_evidence" else {}),
@@ -159,8 +253,9 @@ def model_context(initial, knowledge, recovery=None):
         "proposals": [{key: deepcopy(value) for key, value in proposal.items()
                        if value is not None and value != []}
                       for proposal in knowledge.proposals],
-        "notices": [{k:v for k,v in n.items() if k != "key"} for n in knowledge.notices[-6:]],
-        "recovery": deepcopy(recovery)}
+        "notices": [{k:(_argument_view(v) if k == "arguments" else deepcopy(v))
+                     for k,v in n.items() if k != "key"} for n in knowledge.notices[-6:]],
+        "recovery": feedback_view(recovery)}
     if len(knowledge.notices) > 6:
         result["notices"].append({"context_truncated": True, "omitted_count": len(knowledge.notices) - 6})
     # Trim material projections, never the authoritative KnowledgeState.
