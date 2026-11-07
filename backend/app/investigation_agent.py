@@ -19,7 +19,7 @@ from app.prompt_loader import load_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
 from app.reasoning_models import (InvestigationSourceRef, ReasoningProposal, MaterialProposal,
                                   EvidenceGapProposal, EvidenceGapUpdateProposal, proposal_material_ids)
-from app.investigation_state import KnowledgeState, model_context, tool_feedback
+from app.investigation_state import KnowledgeState, model_context, tool_feedback, previous_tool_result
 
 MAX_NON_FINISH_TOOL_CALLS = 8  # All read/Proposal attempts, including failures.
 MAX_FINISH_CALLS = 3
@@ -633,7 +633,7 @@ async def run_investigation(case: CaseData, goal: str,
     fingerprints, call_ids = {}, set()
     used = {"read": 0, "proposal": 0, "finish": 0}
     attempts = executed = no_progress = 0
-    stop_reason, recovery, answer_basis = None, None, None
+    stop_reason, answer_basis = None, None
     finish_required = False
     completion = "evidence_insufficient"
     workspace_commit = {"status": "pending", "changes": []}
@@ -715,17 +715,21 @@ async def run_investigation(case: CaseData, goal: str,
                          or (not investigation_closed() and
                              targeted.get(d["function"]["name"], True) and
                              (d["function"]["name"] not in actions.PROPOSAL_TOOLS or len(proposals) < 6))]
-            if investigation_closed() and recovery is None:
-                response = tools._failure(AppError(closure_code(), _closure_message(closure_code())))
-                _tool_recovery(response, "finish_investigation")
-                recovery = tool_feedback("finish_investigation", {}, response)
-            if investigation_closed():
-                _finish_only_recovery(recovery, closure_code())
-            state = model_context(initial_input, knowledge, recovery)
+            if investigation_closed() and knowledge.previous_tool_result is not None:
+                previous = knowledge.previous_tool_result
+                if previous["recovery"] is None:
+                    closure = tools._failure(AppError(closure_code(), _closure_message(closure_code())))
+                    _tool_recovery(closure, "finish_investigation")
+                    previous["recovery"] = tool_feedback("finish_investigation", {}, closure)
+                _finish_only_recovery(previous["recovery"], closure_code())
+            state = model_context(initial_input, knowledge)
             visible_units = frozenset(row["id"] for row in state["materials"]["info_units"]["items"])
-            request_messages = [{"role": "system", "content": prompt.content},
+            system_content = prompt.content
+            if investigation_closed():
+                system_content += "\n" + _closure_message(closure_code())
+            request_messages = [{"role": "system", "content": system_content},
                                 {"role": "user", "content": json.dumps(state, ensure_ascii=False)}]
-            choice = "required" if investigation_closed() or recovery and recovery.get("code") == "finish_required" else "auto"
+            choice = "required" if investigation_closed() else "auto"
             call_metadata = {**metadata, "information_acquisition": knowledge.acquisition(),
                              "available_tools": [d["function"]["name"] for d in available]}
             payload = llm_client.tool_request_payload(config, request_messages, available, tool_choice=choice)
@@ -741,10 +745,6 @@ async def run_investigation(case: CaseData, goal: str,
             calls = reply.message.get("tool_calls")
             if not calls:
                 finish_required = True
-                if recovery is None:
-                    response = tools._failure(AppError("finish_required", "Deliver the answer through finish_investigation, with accurate answer_basis and unresolved conditions."))
-                    _tool_recovery(response, "finish_investigation")
-                    recovery = tool_feedback("finish_investigation", {}, response)
                 persist()
                 continue
             if not isinstance(calls, list) or len(calls) != 1:
@@ -821,11 +821,7 @@ async def run_investigation(case: CaseData, goal: str,
                         fingerprints[fingerprint] = {"successful": False, "state": signature}
                 _tool_recovery(response, name, args, bound_case)
                 failed = response["status"] in {"invalid_request", "error"}
-                # The prior feedback was delivered with this request. Replace it
-                # with this call's actionable result; ordinary success clears it.
-                recovery = tool_feedback(name, args, response, raw)
-                if response.get("has_more"):
-                    limitations.append(f"{name}: truncated result; additional material may remain.")
+                knowledge.previous_tool_result = previous_tool_result(name, call["id"], raw, response, args)
                 if name == "search_evidence_gaps" and not failed and response["items"]:
                     # Only discovered targets enter the existing validation and
                     # receipt context. Keep full revisions/associations here;
@@ -834,7 +830,7 @@ async def run_investigation(case: CaseData, goal: str,
                     _include_gap_targets(work_context, formal, gap_ids)
                 merged_keys = knowledge.merge(name, args, response, executed=tool_audit["executed"])
                 read_progress = name in READ_TOOLS and not failed and bool(
-                    merged_keys & (_context_keys(model_context(initial_input, knowledge, recovery)) - _context_keys(state)))
+                    merged_keys & (_context_keys(model_context(initial_input, knowledge)) - _context_keys(state)))
                 progressed = read_progress if name in READ_TOOLS else not failed and not response.get("cached") and not response.get("no_change")
                 if category in {"read", "proposal"}:
                     no_progress = 0 if progressed else no_progress + 1

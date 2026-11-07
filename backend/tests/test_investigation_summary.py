@@ -58,7 +58,7 @@ class TestSummaryHandoff(unittest.TestCase):
             fixture.finish('核对', answer='陈述仍需核实。', status='completed')], selected=["U029"])
         self.assertEqual(len(calls), 3)
         self.assertEqual(result["answer"], "陈述仍需核实。")
-        error = json.loads(calls[2]["messages"][1]["content"])["recovery"]
+        error = json.loads(calls[2]["messages"][1]["content"])["previous_tool_result"]["recovery"]
         self.assertEqual(error["validation_details"]["errors"][0]["code"], "summary_too_long")
         self.assertEqual(self.audits()[0]["tool_calls"][1]["result"]["status"], "invalid_request")
 

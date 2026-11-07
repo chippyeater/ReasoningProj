@@ -27,7 +27,8 @@ class TestProposalInfoUnitEvidence(unittest.TestCase):
                             "basis_info_unit_ids": ["U026"]}).json()["object_id"]
         def respond(call, turn):
             view = json.loads(call["messages"][1]["content"])
-            self.assertEqual(set(view), {"goal", "current_issue", "materials", "reasoning", "proposals", "notices", "recovery"})
+            self.assertEqual(set(view), {"goal", "current_issue", "materials", "reasoning", "proposals",
+                "previous_tool_result"})
             self.assertNotIn("core_issue", view)
             self.assertNotIn("case_info_directory", view)
             if turn == 1:

@@ -61,8 +61,8 @@ class TestInvestigationAgent(unittest.TestCase):
         async def respond(config, messages, definitions, schema=None, *, tool_choice="auto"):
             calls.append({"messages": deepcopy(messages), "tool_choice": tool_choice, "definitions": definitions, "schema": schema})
             if not callable(replies) and len(calls) > len(replies):
-                last_result = json.loads(messages[-1]["content"]) if messages[-1]["role"] == "tool" else {}
-                self.fail("Unexpected model continuation: " + json.dumps(last_result.get("error"), ensure_ascii=False))
+                last_result = json.loads(messages[-1]["content"]).get("previous_tool_result") or {}
+                self.fail("Unexpected model continuation: " + json.dumps(last_result, ensure_ascii=False))
             reply = replies(calls[-1], len(calls)) if callable(replies) else replies[len(calls) - 1]
             if isinstance(reply, Exception):
                 raise reply
@@ -124,7 +124,7 @@ class TestInvestigationAgent(unittest.TestCase):
         result, calls = self.run_script("核对损失", [finish("核对损失", call_id="premature"),
             tool("get_evidence", {"info_unit_id": "U029"}, "read"),
             finish('核对损失', status='completed')])
-        self.assertEqual(json.loads(calls[1]["messages"][1]["content"])["recovery"]["code"], "initial_information_required")
+        self.assertEqual(json.loads(calls[1]["messages"][1]["content"])["previous_tool_result"]["recovery"]["code"], "initial_information_required")
         self.assertEqual(result["completion_status"], "completed")
 
     def test_work_memory_retains_earlier_material_without_duplicate_messages(self):
@@ -144,7 +144,7 @@ class TestInvestigationAgent(unittest.TestCase):
         result, calls = self.run_script("查找凭证", [tool("search_info_units", {"query": "押金", "limit": 1}),
             tool("search_info_units", {"query": "不存在的凭证"}, "empty"), finish("查找凭证")])
         state = json.loads(calls[-1]["messages"][1]["content"])
-        self.assertEqual([n["status"] for n in state["notices"]], ["truncated", "empty"])
+        self.assertEqual([n["status"] for n in state["previous_tool_result"]["notices"]], ["empty"])
         self.assertTrue(state["materials"]["info_units"]["items"])
         self.assertEqual(result["completion_status"], "evidence_insufficient")
 
@@ -158,7 +158,7 @@ class TestInvestigationAgent(unittest.TestCase):
             proposal_call(invalid, [], "invalid"),
             tool("get_evidence", {"info_unit_id": "U026"}, "source"),
             proposal_call(valid, [], "valid"), finish("核对", status="completed")], issue_key=self.case.issue_set[1])
-        recovery = json.loads(calls[2]["messages"][1]["content"])["recovery"]
+        recovery = json.loads(calls[2]["messages"][1]["content"])["previous_tool_result"]["recovery"]
         self.assertEqual(recovery["code"], "invalid_investigation_reference")
         self.assertEqual(recovery["tool"], "propose_hypothesis")
         self.assertEqual(recovery["arguments"]["info_unit_ids"], ["foreign-unit"])
@@ -175,14 +175,14 @@ class TestInvestigationAgent(unittest.TestCase):
         with patch.object(tools, "get_evidence", side_effect=OSError("unavailable")):
             result, calls = self.run_script("核对来源", [tool("get_evidence", {"info_unit_id": "U029"}),
                 finish("核对来源", questions=["来源文件读取失败，尚不能核对陈述。"] )])
-        self.assertEqual(json.loads(calls[-1]["messages"][1]["content"])["recovery"]["code"], "investigation_tool_failed")
+        self.assertEqual(json.loads(calls[-1]["messages"][1]["content"])["previous_tool_result"]["recovery"]["code"], "investigation_tool_failed")
         self.assertEqual(result["completion_status"], "evidence_insufficient")
         self.assertEqual(result["evidence_refs"], [])
 
     def test_unknown_id_failure_cannot_substitute_for_actual_read(self):
         _, calls = self.run_script("核对", [tool("get_evidence", {"info_unit_id": "foreign"}),
             finish("核对", call_id="too-soon"), tool("search_info_units", {"query": "月租"}, "read"), finish("核对")])
-        self.assertEqual(json.loads(calls[2]["messages"][1]["content"])["recovery"]["code"], "initial_information_required")
+        self.assertEqual(json.loads(calls[2]["messages"][1]["content"])["previous_tool_result"]["recovery"]["code"], "initial_information_required")
 
     def test_empty_read_can_finish_with_an_explicit_limitation(self):
         result, _ = self.run_script("查凭证", [tool("search_info_units", {"query": "没有这种凭证"}),
@@ -286,7 +286,7 @@ class TestInvestigationAgent(unittest.TestCase):
         views = [json.loads(c["messages"][1]["content"])["materials"]["info_units"] for c in calls]
         self.assertEqual([[r["id"] for r in v["items"]] for v in views],
             [["large-0"], ["large-1"], ["large-0"], ["large-1"]])
-        self.assertTrue(all(v["context_truncated"] for v in views))
+        self.assertTrue(all("omitted_ids" not in v and "context_truncated" not in v for v in views))
         reads = self.audits()[0]["tool_calls"][:3]
         self.assertTrue(reads[-1]["result"]["cached"])
         self.assertEqual([r["no_progress"] for r in reads], [0, 0, 0])
@@ -343,10 +343,10 @@ class TestInvestigationAgent(unittest.TestCase):
             finish("核对陈述", status="evidence_insufficient", questions=["初始来源未通过核验，尚不能核对原句。"] )], selected=["U029"], case=case)
         state = json.loads(calls[0]["messages"][1]["content"])
         self.assertEqual(state["materials"]["source_refs"]["items"], [])
-        self.assertEqual(state["notices"], [])
+        self.assertNotIn("notices", state)
         state = json.loads(calls[1]["messages"][1]["content"])
-        self.assertEqual(state["recovery"]["code"], "source_quote_mismatch")
-        self.assertEqual(state["notices"], [])
+        self.assertEqual(state["previous_tool_result"]["recovery"]["code"], "source_quote_mismatch")
+        self.assertNotIn("notices", state)
         self.assertEqual(state["materials"]["source_refs"]["items"], [])
         self.assertEqual(result["evidence_refs"], [])
 
@@ -358,4 +358,4 @@ class TestInvestigationAgent(unittest.TestCase):
         _, calls = self.run_script("比较依据", [tool("get_relations", {"info_unit_ids": ["U029"], "relation_types": ["contradict"]}),
             proposal_call(proposal, [], "bad"),
             finish('比较依据', status='completed')], case=case, issue_key=case.issue_set[1])
-        self.assertEqual(json.loads(calls[2]["messages"][1]["content"])["recovery"]["code"], "invalid_investigation_reference")
+        self.assertEqual(json.loads(calls[2]["messages"][1]["content"])["previous_tool_result"]["recovery"]["code"], "invalid_investigation_reference")

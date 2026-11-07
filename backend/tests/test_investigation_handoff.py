@@ -216,12 +216,12 @@ class TestInvestigationHandoff(unittest.TestCase):
                 return self.hypothesis(contents[0].replace("：", ": ").replace("。", "！"), "same-hyp",
                     info_unit_ids=["U036", "U029"], rationale="补充理由也不构成新的假设。")
             if turn == 6:
-                step = state["recovery"]["next_action"]["steps"][0]
+                step = state["previous_tool_result"]["recovery"]["next_action"]["steps"][0]
                 self.assertEqual(step["code"], "duplicate_proposal")
                 self.assertEqual(step["existing_object"]["id"], ids[0])
                 return self.gap(gap.replace("确认", "核实", 1).replace("（", "(").replace("）", ")"),
                     list(reversed(ids)), "same-gap")
-            step = state["recovery"]["next_action"]["steps"][0]
+            step = state["previous_tool_result"]["recovery"]["next_action"]["steps"][0]
             self.assertEqual(step["code"], "duplicate_proposal")
             self.assertEqual(step["existing_object"]["id"], proposals[2]["proposal_id"])
             return f.finish("核查租金损失", questions=["尚待核实腾退和计租衔接。"],
@@ -249,7 +249,7 @@ class TestInvestigationHandoff(unittest.TestCase):
         self.assertEqual(result["proposals"], [])
         self.assertEqual(context, before)
         for call, uid in zip(calls[2:], ["formal-h", "formal-g"]):
-            existing = self.state(call)["recovery"]["next_action"]["steps"][0]["existing_object"]
+            existing = self.state(call)["previous_tool_result"]["recovery"]["next_action"]["steps"][0]["existing_object"]
             self.assertEqual(existing["id"], uid)
             self.assertEqual(existing["source"], "reasoning")
 
@@ -289,7 +289,7 @@ class TestInvestigationHandoff(unittest.TestCase):
             if turn == 1:
                 return self.gap("需要核实的独立条件", [], "empty", basis_info_unit_ids=[])
             if turn == 2:
-                self.assertEqual(state["recovery"]["next_action"]["steps"][0]["code"], "hypothesis_target_required")
+                self.assertEqual(state["previous_tool_result"]["recovery"]["next_action"]["steps"][0]["code"], "hypothesis_target_required")
                 return self.hypothesis("独立待检验解释", "parent", info_unit_ids=[])
             if turn == 3:
                 return self.gap("需要核实的独立条件", ["proposal-" + "f" * 32], "guessed", basis_info_unit_ids=[])
@@ -315,18 +315,22 @@ class TestInvestigationHandoff(unittest.TestCase):
         for call in calls[1:]:
             self.assertEqual([t["function"]["name"] for t in call["definitions"]], ["finish_investigation"])
             self.assertEqual(call["tool_choice"], "required")
-            self.assertEqual(self.state(call)["recovery"]["constraints"]["allowed_tools"], ["finish_investigation"])
-        errors = self.state(calls[-1])["recovery"]["validation_details"]["errors"]
+            previous = self.state(call)["previous_tool_result"]
+            if previous is None:  # No actual tool execution has occurred yet.
+                self.assertIn("validated Finish", call["messages"][0]["content"])
+            else:
+                self.assertEqual(previous["recovery"]["constraints"]["allowed_tools"], ["finish_investigation"])
+        errors = self.state(calls[-1])["previous_tool_result"]["recovery"]["validation_details"]["errors"]
         self.assertTrue(any(e["argument_loc"] == ["answer_basis"] for e in errors))
 
     def test_finish_required_keeps_obtained_material_without_granting_sources(self):
         result, calls = self.run_script("核对损失", [
             f.tool("search_info_units", {"query": "损失"}, "read"), f.final("资料取得，可以结束。"),
             f.finish("核对损失", questions=["没有取得该陈述的原始来源，无法核实。"], call_id="limited")])
-        step = self.state(calls[-1])["recovery"]["next_action"]["steps"][0]
+        step = self.state(calls[-1])["previous_tool_result"]["recovery"]["next_action"]["steps"][0]
         self.assertEqual(step["code"], "finish_required")
         self.assertEqual(step["tool"], "finish_investigation")
-        self.assertEqual(self.state(calls[-1])["recovery"]["constraints"]["allowed_tools"], ["finish_investigation"])
+        self.assertEqual(self.state(calls[-1])["previous_tool_result"]["recovery"]["constraints"]["allowed_tools"], ["finish_investigation"])
         self.assertFalse(result["evidence_refs"])
         self.assertEqual(result["completion_status"], "evidence_insufficient")
         self.assertEqual(result["tool_budget_used"], {"read": 1, "proposal": 0, "finish": 1})

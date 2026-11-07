@@ -34,7 +34,7 @@ class TestInvestigationFinish(unittest.TestCase):
         result, calls = self.run_script("核对", [f.tool("get_evidence", {"info_unit_id": "U029"}),
             f.tool("finish_investigation", bad, "missing-limitation"),
             f.finish("核对", status="evidence_insufficient", questions=questions)])
-        recovery = json.loads(calls[-1]["messages"][1]["content"])["recovery"]
+        recovery = json.loads(calls[-1]["messages"][1]["content"])["previous_tool_result"]["recovery"]
         error = recovery["validation_details"]["errors"][0]
         self.assertEqual(recovery["code"], "missing_evidence_limitation")
         self.assertEqual(error["argument_loc"], ["open_questions"])
@@ -120,6 +120,6 @@ class TestInvestigationFinish(unittest.TestCase):
         self.assertEqual(caught.exception.details["errors"][0]["code"], "extra_forbidden")
         result, calls = self.run_script("说明能力", [f.tool("finish_investigation", old_args, "old"),
             f.finish("说明能力", basis="general", status="completed")])
-        recovery = json.loads(calls[-1]["messages"][1]["content"])["recovery"]
+        recovery = json.loads(calls[-1]["messages"][1]["content"])["previous_tool_result"]["recovery"]
         self.assertEqual(recovery["next_action"]["steps"][0]["loc"], ["findings"])
         self.assertEqual(result["summary_status"], "completed")

@@ -17,7 +17,7 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
         return {"current_issue": self.case.issue_set[1], "reasoning": {"hypotheses": [], "gaps": [], "links": []}}
 
     def recovery(self, call):
-        return json.loads(call["messages"][1]["content"])["recovery"]
+        return json.loads(call["messages"][1]["content"])["previous_tool_result"]["recovery"]
 
     def hypothesis(self, index, ids=()):
         return f.tool("propose_hypothesis", {"content": f"待核查解释{index}", "rationale": "只是待检验解释。",
@@ -115,7 +115,7 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
             if turn == 1:
                 return self.hypothesis(0, ["U029", "U036"])
             if turn == 2:
-                recovery = state["recovery"]
+                recovery = state["previous_tool_result"]["recovery"]
                 errors = recovery["validation_details"]["errors"]
                 self.assertEqual({e["info_unit_id"] for e in errors}, {"U029", "U036"})
                 for error in errors:

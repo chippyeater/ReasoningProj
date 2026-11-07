@@ -67,9 +67,9 @@ class TestInvestigationWorkflow(unittest.TestCase):
             if turn == 5:
                 return hypothesis(0, "duplicate-hyp")
             if turn == 6:
-                self.assertEqual(state["recovery"]["code"], "duplicate_proposal")
+                self.assertEqual(state["previous_tool_result"]["recovery"]["code"], "duplicate_proposal")
                 return gap(state, "duplicate-gap")
-            self.assertEqual(state["recovery"]["code"], "duplicate_proposal")
+            self.assertEqual(state["previous_tool_result"]["recovery"]["code"], "duplicate_proposal")
             return f.finish(goal, status='evidence_insufficient', questions=['计租衔接及实际收款仍待核实。'], answer='双方说法存在分歧，实际损失尚未证实；可审阅两种解释和共同核查条件。')
         result, _ = self.run_agent(goal, first)
         self.assertEqual([p["kind"] for p in result["proposals"]], ["hypothesis", "hypothesis", "evidence_gap"])

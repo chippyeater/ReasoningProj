@@ -154,7 +154,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             if len(requests) == 1:
                 self.assertEqual(len(state["reasoning"]["hypotheses"]), 3)
                 self.assertEqual(state["reasoning"]["gaps"], [])
-                self.assertTrue(state["reasoning"]["has_more"])
+                self.assertNotIn("has_more", state["reasoning"])
                 reply = replies.tool("search_info_units", {"query": "补充合同", "limit": 1}, "find-material")
             elif len(requests) == 2:
                 self.assertEqual(state["materials"]["info_units"]["items"][0]["id"], self.uid)
@@ -167,7 +167,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                 self.assertEqual(len(visible), min(5, len(self.hids)))
                 self.assertTrue(visible <= set(self.hids))
                 self.assertEqual(gap["hypothesis_ids"], [hid for hid in self.hids if hid in visible])
-                self.assertEqual(gap["references_truncated"], len(self.hids) > 5)
+                self.assertNotIn("references_truncated", gap)
                 self.assertNotIn("revision", json.dumps(state["reasoning"]))
                 if len(requests) == 3:
                     self.assertEqual(state["materials"]["source_refs"]["items"], [])
@@ -233,7 +233,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.supplement()
         result, requests = self.investigate()
         self.assertEqual(len(requests[0]["reasoning"]["hypotheses"]), 3)
-        self.assertTrue(requests[0]["reasoning"]["gaps"][0]["references_truncated"])
+        self.assertNotIn("references_truncated", requests[0]["reasoning"]["gaps"][0])
         self.assertEqual(result["workspace_commit"]["status"], "applied")
         self.assertEqual(self.state().gaps[0].hypothesis_ids, self.hids)
         self.assertTrue(all(h.judgment == "unverified" for h in self.state().hypotheses))
@@ -283,7 +283,8 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual(response.status_code, 200, response.text)
         result = response.json()
         self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update"])
-        self.assertIsNone(requests[3]["recovery"])  # Unchanged judgment is a successful no-op.
+        self.assertTrue(requests[3]["previous_tool_result"]["recovery"]["no_change"])
+        self.assertEqual(requests[3]["previous_tool_result"]["effect_status"], "no_change")
         self.assertEqual(result["workspace_commit"]["status"], "applied")
         after = self.state()
         self.assertEqual([h.id for h in after.hypotheses], self.hids[:1])
@@ -302,7 +303,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             with self.subTest(values=values):
                 result, requests = self.investigate(**values)
                 self.assertEqual(result["proposals"], [])
-                self.assertIsNotNone(requests[3]["recovery"])
+                self.assertIsNotNone(requests[3]["previous_tool_result"]["recovery"])
                 self.assertEqual(self.state().gaps[0], self.original_gap)
 
     def test_unobtained_responding_material_is_read_in_same_run_without_new_gap(self):
@@ -315,7 +316,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             if turn <= 2:
                 return replies.tool("get_evidence", {"info_unit_id": self.old_id, "limit": turn}, f"read-{turn}")
             if turn == 4:
-                errors = state["recovery"]["validation_details"]["errors"]
+                errors = state["previous_tool_result"]["recovery"]["validation_details"]["errors"]
                 self.assertTrue(any(e["code"] == "reference_not_obtained" for e in errors))
                 return replies.tool("get_evidence", {"info_unit_id": self.uid}, "responding-material")
             if turn in (3, 5):

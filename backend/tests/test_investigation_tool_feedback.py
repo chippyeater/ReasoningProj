@@ -44,7 +44,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         with patch.object(reasoning_proposals, "persist_issue_workspaces", wraps=reasoning_proposals.persist_issue_workspaces) as save:
             result, calls = self.run_script("核查收款", replies, selected=["U029"], issue_key=self.issue,
                 work_context=investigation_context(self.case, self.issue, selected_reasoning_ids=[gid]))
-        feedback = self.view(calls[2])["recovery"]
+        feedback = self.view(calls[2])["previous_tool_result"]["recovery"]
         audited = self.audits()[0]["tool_calls"][1]["result"]
         self.assertEqual(feedback["tool"], "propose_evidence_gap_update")
         self.assertEqual(feedback["status"], "ok")
@@ -59,7 +59,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         self.assertEqual(len(result["proposals"]), 2 if continue_work else 1)
         self.assertEqual(save.call_count, 1)
         if continue_work:
-            self.assertIsNone(self.view(calls[3])["recovery"])
+            self.assertIsNone(self.view(calls[3])["previous_tool_result"]["recovery"])
 
     def test_gap_update_no_change_message_reaches_finish_request(self):
         self.no_change_run(continue_work=False)
@@ -75,7 +75,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
             with self.subTest(tool=name):
                 result, calls = self.run_script("检查工具调用", [f.tool(name, args, "invalid"),
                     f.finish("检查工具调用", status="completed", basis="general")], issue_key=self.issue)
-                feedback = self.view(calls[1])["recovery"]
+                feedback = self.view(calls[1])["previous_tool_result"]["recovery"]
                 self.assertEqual(feedback["tool"], name)
                 self.assertEqual(feedback["status"], "invalid_request")
                 error = feedback["validation_details"]["errors"][0]
@@ -106,7 +106,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
                 result, calls = self.run_script("核对参数", [f.tool(name, args),
                     f.finish("核对参数", status="completed", basis="general")], selected=["U029"],
                     issue_key=self.issue, work_context=context)
-                feedback = self.view(calls[1])["recovery"]
+                feedback = self.view(calls[1])["previous_tool_result"]["recovery"]
                 self.assertEqual(feedback["status"], "invalid_request")
                 self.assertTrue(any(e["argument_loc"] == loc for e in feedback["validation_details"]["errors"]))
                 self.assertTrue(all(e["message"] and e["fix"] for e in feedback["validation_details"]["errors"]))
@@ -119,7 +119,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         with patch.object(reasoning_proposals, "stage_proposals", side_effect=failure):
             result, calls = self.run_script("核对暂存", [self.hypothesis_call(1),
                 f.finish("核对暂存", status="completed", basis="general")], issue_key=self.issue)
-        feedback = self.view(calls[1])["recovery"]
+        feedback = self.view(calls[1])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["code"], "staging_rejected")
         self.assertIn("Correct this pending edit", feedback["next_action"]["steps"][0]["instruction"])
         self.assertEqual(result["proposals"], [])
@@ -128,7 +128,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         raw = '{"info_unit_id":'
         _, calls = self.run_script("检查 JSON", [f.tool("get_evidence", raw),
             f.finish("检查 JSON", status="completed", basis="general")])
-        feedback = self.view(calls[1])["recovery"]
+        feedback = self.view(calls[1])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["arguments"]["raw"], raw)
         error = feedback["validation_details"]["errors"][0]
         self.assertEqual(error["code"], "invalid_json")
@@ -138,13 +138,13 @@ class TestInvestigationToolFeedback(unittest.TestCase):
     def test_read_parameter_error_clears_after_a_successful_read_without_stale_error_notices(self):
         _, calls = self.run_script("核查", [f.tool("get_evidence", {"info_unit_id": "U029", "offset": -1}, "bad"),
             f.tool("get_evidence", {"info_unit_id": "U029"}, "good"), f.finish("核查", status="completed")])
-        feedback = self.view(calls[1])["recovery"]
+        feedback = self.view(calls[1])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["code"], "invalid_offset")
         self.assertEqual(feedback["arguments"]["offset"], -1)
         self.assertEqual(feedback["validation_details"]["errors"][0]["argument_loc"], ["offset"])
         self.assertTrue(feedback["validation_details"]["errors"][0]["fix"])
-        self.assertIsNone(self.view(calls[2])["recovery"])
-        self.assertEqual(self.view(calls[2])["notices"], [])
+        self.assertIsNone(self.view(calls[2])["previous_tool_result"]["recovery"])
+        self.assertEqual(self.view(calls[2])["previous_tool_result"]["notices"], [])
 
     def test_successful_tool_guidance_is_delivered_without_becoming_an_error(self):
         original = tools.search_info_units
@@ -158,12 +158,12 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         with patch.object(tools, "search_info_units", side_effect=search):
             _, calls = self.run_script("读取反馈", [f.tool("search_info_units", {"query": "月租"}, "hint"),
                 f.tool("get_evidence", {"info_unit_id": "U004"}, "source"), f.finish("读取反馈", status="completed")])
-        feedback = self.view(calls[1])["recovery"]
+        feedback = self.view(calls[1])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["status"], "ok")
         self.assertEqual(feedback["message"], "Optional source context is available for this result.")
         self.assertEqual(feedback["next_action"]["steps"][0]["tool"], "get_evidence")
         self.assertIn("returned InfoUnit", feedback["fix"])
-        self.assertIsNone(self.view(calls[2])["recovery"])
+        self.assertIsNone(self.view(calls[2])["previous_tool_result"]["recovery"])
 
     def test_duplicate_query_and_duplicate_proposal_keep_their_distinct_diagnostics(self):
         first = self.hypothesis_call(1)
@@ -174,11 +174,11 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         _, calls = self.run_script("比较重复调用", [first, second,
             third,
             f.finish("比较重复调用", status="completed", basis="general")], issue_key=self.issue)
-        duplicate = self.view(calls[2])["recovery"]
+        duplicate = self.view(calls[2])["previous_tool_result"]["recovery"]
         self.assertEqual(duplicate["code"], "duplicate_query")
         self.assertIn("Equivalent call", duplicate["message"])
         self.assertIn("Reuse existing", duplicate["next_action"]["steps"][0]["instruction"])
-        semantic = self.view(calls[3])["recovery"]
+        semantic = self.view(calls[3])["previous_tool_result"]["recovery"]
         self.assertEqual(semantic["code"], "duplicate_proposal")
         obj = semantic["next_action"]["steps"][0]["existing_object"]
         self.assertEqual(obj["id"], self.view(calls[1])["proposals"][0]["proposal_id"])
@@ -191,7 +191,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
             with self.subTest(tool=name), patch.object(tools, name, side_effect=OSError("cache unavailable")):
                 _, calls = self.run_script("报告工具问题", [f.tool(name, values),
                     f.finish("报告工具问题", status="completed", basis="general")], issue_key=self.issue)
-                feedback = self.view(calls[1])["recovery"]
+                feedback = self.view(calls[1])["previous_tool_result"]["recovery"]
                 self.assertEqual(feedback["status"], "error")
                 self.assertEqual(feedback["code"], "investigation_tool_failed")
                 self.assertIn("Tool failed", feedback["message"])
@@ -201,7 +201,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         _, calls = self.run_script("检查分页", [f.tool("search_evidence_gaps", {
             "query": None, "info_unit_ids": None, "limit": 3, "offset": -1}),
             f.finish("检查分页", status="completed", basis="general")], issue_key=self.issue)
-        feedback = self.view(calls[1])["recovery"]
+        feedback = self.view(calls[1])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["code"], "invalid_tool_arguments")
         self.assertEqual(feedback["validation_details"]["errors"][0]["argument_loc"], ["offset"])
         self.assertIn("greater than or equal to zero", feedback["next_action"]["steps"][0]["instruction"])
@@ -211,7 +211,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         next(u for u in case.info_units if u.id == "U029").source_refs[0].quote += "错误转写"
         result, calls = self.run_script("核查来源", [f.tool("get_evidence", {"info_unit_id": "U029"}),
             f.finish("核查来源")], case=case, selected=["U029"])
-        feedback = self.view(calls[1])["recovery"]
+        feedback = self.view(calls[1])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["code"], "source_quote_mismatch")
         self.assertIn("cached TXT", feedback["message"])
         self.assertEqual(feedback["arguments"]["info_unit_id"], "U029")
@@ -224,7 +224,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
                     f.tool("get_evidence", {"info_unit_id": "U029", "limit": 13}, "last-invalid"),
                     f.finish("核查", status="budget_exhausted")]
         result, calls = self.run_script("核查", replies, issue_key=self.issue)
-        feedback = self.view(calls[-1])["recovery"]
+        feedback = self.view(calls[-1])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["code"], "invalid_limit")
         self.assertEqual(feedback["validation_details"]["errors"][0]["argument_loc"], ["limit"])
         self.assertEqual(feedback["constraints"]["code"], "tool_budget_exhausted")
@@ -249,7 +249,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
             f.finish("核查", status="budget_exhausted")]
         result, calls = self.run_script("核查", replies, issue_key=self.issue,
             work_context=investigation_context(self.case, self.issue, selected_reasoning_ids=[gid]))
-        feedback = self.view(calls[-1])["recovery"]
+        feedback = self.view(calls[-1])["previous_tool_result"]["recovery"]
         self.assertTrue(feedback["no_change"])
         self.assertEqual(feedback["status"], "ok")
         self.assertIn("Rewording rationale alone", feedback["message"])
@@ -265,7 +265,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
                     f.finish("核查", status="budget_exhausted")]
         with patch.object(tools, "get_evidence", side_effect=OSError("read failed")):
             _, calls = self.run_script("核查", replies, issue_key=self.issue)
-        feedback = self.view(calls[-1])["recovery"]
+        feedback = self.view(calls[-1])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["code"], "investigation_tool_failed")
         step = feedback["next_action"]["steps"][0]
         self.assertEqual(step["tool"], "finish_investigation")
@@ -276,7 +276,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         replies = [f.tool("search_info_units", {"query": f"不存在材料{i}"}, f"empty-{i}") for i in range(2)]
         replies += [f.tool("get_evidence", {"info_unit_id": "foreign"}, "invalid"), f.finish("核查")]
         _, calls = self.run_script("核查", replies)
-        feedback = self.view(calls[-1])["recovery"]
+        feedback = self.view(calls[-1])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["code"], "unknown_info_unit")
         self.assertEqual(feedback["constraints"]["code"], "no_progress_limit")
         self.assertEqual(feedback["validation_details"]["errors"][0]["info_unit_id"], "foreign")
@@ -286,7 +286,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
     def test_non_tool_reply_adds_finish_required_without_erasing_the_previous_error(self):
         _, calls = self.run_script("核查", [f.tool("get_evidence", {"info_unit_id": "foreign"}),
             f.final("普通文本不能完成调查。"), f.finish("核查", status="completed", basis="general")])
-        feedback = self.view(calls[2])["recovery"]
+        feedback = self.view(calls[2])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["code"], "unknown_info_unit")
         self.assertEqual(feedback["constraints"]["code"], "finish_required")
         self.assertEqual(calls[2]["tool_choice"], "required")
@@ -296,45 +296,32 @@ class TestInvestigationToolFeedback(unittest.TestCase):
             f.tool("finish_investigation", {"answer": "证据不足。", "answer_basis": "case_material",
                 "open_questions": [], "completion_status": "evidence_insufficient"}, "bad-finish"),
             f.finish("核查")])
-        feedback = self.view(calls[2])["recovery"]
+        feedback = self.view(calls[2])["previous_tool_result"]["recovery"]
         self.assertEqual(feedback["code"], "missing_evidence_limitation")
         self.assertEqual(feedback["validation_details"]["errors"][0]["argument_loc"], ["open_questions"])
         self.assertIn("missing critical evidence", feedback["validation_details"]["errors"][0]["fix"])
         self.assertEqual(result["tool_budget_used"]["finish"], 2)
 
-    def test_long_errors_preserve_repair_head_tail_and_explicit_omission_counts(self):
-        errors = [{"loc": ["rationale"], "code": "value_error", "message": "CAUSE: " + "x" * 9000 + " :END_CAUSE",
-                   "fix": "REPAIR: " + "y" * 9000 + " :USE_OBTAINED_IDS"} for _ in range(40)]
-        failure = AppError("invalid_reasoning_proposal", "Detailed proposal validation failed", details={"errors": errors})
-        with patch.object(actions, "_propose", side_effect=failure):
-            _, calls = self.run_script("检查长错误", [self.hypothesis_call(1, rationale="z" * 10000),
-                f.finish("检查长错误", status="completed", basis="general")], issue_key=self.issue)
-        view = self.view(calls[1])
-        feedback = view["recovery"]
-        self.assertLessEqual(len(json.dumps(feedback, ensure_ascii=False)), state.MAX_FEEDBACK_CHARS)
-        self.assertLessEqual(len(json.dumps(view, ensure_ascii=False)), state.MAX_CONTEXT_CHARS)
-        self.assertTrue(feedback["context_truncated"])
-        self.assertTrue(feedback["arguments"]["context_truncated"])
-        details = feedback["validation_details"]
-        self.assertEqual(len(details["errors"]) + details["omitted_error_count"], 40)
-        first = details["errors"][0]
-        self.assertEqual(first["argument_loc"], ["rationale"])
-        self.assertIn("CAUSE:", first["message"])
-        self.assertIn("END_CAUSE", first["message"])
-        self.assertIn("REPAIR:", first["fix"])
-        self.assertIn("USE_OBTAINED_IDS", first["fix"])
-        self.assertIn("USE_OBTAINED_IDS", feedback["next_action"]["steps"][0]["instruction"])
-        self.assertEqual(len(self.audits()[0]["tool_calls"][0]["result"]["error"]["validation_details"]["errors"]), 40)
+    def test_oversized_execution_is_rejected_explicitly_without_summarizing_originals(self):
+        errors = [{"loc": ["rationale"], "code": "value_error", "message": "x" * 9000,
+                   "fix": "Use obtained IDs"} for _ in range(4)]
+        failure = AppError("invalid_reasoning_proposal", "Detailed failure", details={"errors": errors})
+        with patch.object(actions, "_propose", side_effect=failure), self.assertRaises(AppError) as caught:
+            self.run_script("检查长错误", [self.hypothesis_call(1)], issue_key=self.issue)
+        self.assertEqual(caught.exception.code, "investigation_context_limit")
+        original = self.audits()[0]["tool_calls"][0]["result"]["error"]["validation_details"]["errors"]
+        self.assertEqual(len(original), 4)
+        self.assertEqual(original[0]["message"], "x" * 9000)
 
     def test_empty_and_truncated_reads_remain_informational_not_error_feedback(self):
         _, calls = self.run_script("查找材料", [f.tool("search_info_units", {"query": "押金", "limit": 1}, "partial"),
             f.tool("search_info_units", {"query": "不存在的独立凭证"}, "empty"), f.finish("查找材料")])
         view = self.view(calls[-1])
-        self.assertIsNone(view["recovery"])
-        self.assertEqual([n["status"] for n in view["notices"]], ["truncated", "empty"])
-        self.assertTrue(view["notices"][0]["has_more"])
+        self.assertIsNone(view["previous_tool_result"]["recovery"])
+        self.assertEqual([n["status"] for n in view["previous_tool_result"]["notices"]], ["empty"])
+        self.assertFalse(view["previous_tool_result"]["result"].get("has_more"))
 
-    def test_failed_repeat_read_does_not_erase_an_existing_has_more_notice(self):
+    def test_failed_repeat_read_replaces_prior_has_more_notice(self):
         original = tools.search_info_units
         counter = []
         def search(case, **args):
@@ -345,9 +332,9 @@ class TestInvestigationToolFeedback(unittest.TestCase):
             _, calls = self.run_script("继续核查", [f.tool("search_info_units", {"query": "押金", "limit": 1}, "partial"),
                 f.tool("search_info_units", {"query": "押金", "limit": 1}, "failed"), f.finish("继续核查")])
         view = self.view(calls[2])
-        self.assertEqual(view["recovery"]["code"], "read_unavailable")
-        self.assertEqual(view["notices"][0]["status"], "truncated")
-        self.assertTrue(view["notices"][0]["has_more"])
+        self.assertEqual(view["previous_tool_result"]["recovery"]["code"], "read_unavailable")
+        self.assertEqual(view["previous_tool_result"]["notices"], [])
+        self.assertFalse(view["previous_tool_result"]["result"].get("has_more"))
 
     def test_context_trimming_removes_material_before_the_latest_repair_instruction(self):
         original = tools.get_evidence
@@ -365,9 +352,10 @@ class TestInvestigationToolFeedback(unittest.TestCase):
                 f.tool("get_evidence", {"info_unit_id": "U029", "limit": 13}, "invalid"),
                 f.finish("检查反馈裁剪", status="completed", basis="general")])
         view = self.view(calls[2])
-        self.assertEqual(view["recovery"]["code"], "invalid_limit")
-        self.assertTrue(view["recovery"]["next_action"]["steps"][0]["instruction"])
-        self.assertTrue(view["materials"]["source_refs"]["context_truncated"])
+        self.assertEqual(view["previous_tool_result"]["recovery"]["code"], "invalid_limit")
+        self.assertTrue(view["previous_tool_result"]["recovery"]["next_action"]["steps"][0]["instruction"])
+        self.assertNotIn("context_truncated", view["materials"]["source_refs"])
+        self.assertNotIn("omitted_ids", view["materials"]["source_refs"])
         self.assertLessEqual(len(json.dumps(view, ensure_ascii=False)), 9000)
         self.assertEqual(len(self.audits()[0]["knowledge_state"]["source_refs"]), 1)
 

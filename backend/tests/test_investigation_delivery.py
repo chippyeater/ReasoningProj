@@ -145,7 +145,7 @@ class TestInvestigationDelivery(unittest.TestCase):
                     f.tool("search_info_units", {"query": "损失"}, "read"),
                     f.tool(name, args, "obtained"), f.finish("核对假设依据", status="completed")],
                     work_context=context, issue_key=self.case.issue_set[1])
-                recovery = json.loads(calls[1]["messages"][1]["content"])["recovery"]
+                recovery = json.loads(calls[1]["messages"][1]["content"])["previous_tool_result"]["recovery"]
                 self.assertEqual(recovery["code"], "invalid_investigation_reference")
                 self.assertEqual(len(result["proposals"]), 1)
                 self.assertNotIn("evidence_refs", result["proposals"][0])

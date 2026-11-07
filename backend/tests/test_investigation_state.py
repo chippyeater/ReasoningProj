@@ -45,7 +45,7 @@ class TestInvestigationMemory(unittest.TestCase):
                 {"id": uid, "title": "unrelated", "type": "state", "content": "x"*400}], "has_more": False, "error": None})
         view = state.model_context(initial, memory)
         self.assertLessEqual(len(json.dumps(view, ensure_ascii=False)), state.MAX_CONTEXT_CHARS)
-        omitted = view["materials"]["info_units"]["omitted_ids"]
+        omitted = sorted(memory.info_units.keys() - {r["id"] for r in view["materials"]["info_units"]["items"]})
         self.assertTrue(omitted)
         uid = omitted[0]; row = deepcopy(memory.info_units[uid])
         memory.merge("search_info_units", {"query": uid}, {"status": "ok", "items": [row], "has_more": False, "error": None})
@@ -63,7 +63,8 @@ class TestInvestigationMemory(unittest.TestCase):
         with patch.object(state, "MAX_CONTEXT_CHARS", 3600):
             view = state.model_context(initial, memory)
         visible = {u["id"] for u in view["materials"]["info_units"]["items"]}
-        omitted = set(view["materials"]["info_units"]["omitted_ids"])
+        omitted = set(memory.info_units) - visible
+        self.assertNotIn("omitted_ids", view["materials"]["info_units"])
         self.assertFalse(visible & omitted)
         self.assertTrue(omitted)
         self.assertEqual(visible | omitted, {u.id for u in self.case.info_units})
@@ -93,8 +94,8 @@ class TestInvestigationMemory(unittest.TestCase):
             "source_ref": {"quote": "租金损失的计算须核对月租条件"}}
         memory.focus_ids = {"U004"}
         view = state.model_context(initial, memory)["materials"]
-        self.assertTrue(view["relations"]["context_truncated"])
-        self.assertTrue(view["source_refs"]["context_truncated"])
+        self.assertLess(len(view["relations"]["items"]), len(memory.relations))
+        self.assertLess(len(view["source_refs"]["items"]), len(memory.source_refs))
         self.assertEqual(view["relations"]["items"][0]["id"], "relevant")
         self.assertEqual(view["source_refs"]["items"][0]["info_unit_id"], "U004")
 

@@ -35,10 +35,10 @@ class TestInvestigationEvidence(unittest.TestCase):
         def respond(call, turn):
             view = json.loads(call["messages"][1]["content"])
             if turn <= 3:
-                offset = 0 if turn == 1 else next(n["next_offset"] for n in view["notices"] if n["tool"] == "get_evidence")
+                offset = 0 if turn == 1 else view["previous_tool_result"]["result"]["next_offset"]
                 self.assertEqual(offset, (turn - 1) * 12)
                 return f.tool("get_evidence", {"info_unit_id": "U029", "offset": offset, "limit": 12}, f"page-{offset}")
-            self.assertFalse(any(n["tool"] == "get_evidence" and n["has_more"] for n in view["notices"]))
+            self.assertFalse(view["previous_tool_result"]["result"].get("has_more"))
             if turn == 4:
                 self.assertEqual(view["materials"]["source_refs"]["items"][0]["source_ref_index"], 24)
                 return f.tool("propose_hypothesis", {"content": "实际收款可能连续", "rationale": "仅为待核实命题",
@@ -95,6 +95,6 @@ class TestInvestigationEvidence(unittest.TestCase):
         merge(1, "乙" * 8000, False)
         view = state.model_context(initial, memory)
         self.assertEqual(view["materials"]["source_refs"]["items"][0]["source_ref_index"], 1)
-        self.assertEqual(view["materials"]["source_refs"]["omitted_ids"], ["U029:0"])
+        self.assertNotIn("omitted_ids", view["materials"]["source_refs"])
         self.assertEqual(len(memory.source_refs), 2)
-        self.assertFalse(view["notices"])
+        self.assertNotIn("notices", view)

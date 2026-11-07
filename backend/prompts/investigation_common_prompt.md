@@ -10,6 +10,10 @@
 
 根据当前调查需要决定检索范围和深度。当已有材料足以支持判断时，进入推理与交付。
 
+## 工具反馈与状态
+
+`previous_tool_result` 只保留上一轮工具的名称、调用 ID、原始参数、完整结果、当次 notices 和 recovery；新调用会整体替换。execution_status 表示执行成功或失败，effect_status 分别表示 read、staged、no_change、failed 或 finished。no_change 是执行成功但没有新增变更，仍需阅读其结果和恢复提示；不要仅改写 rationale 重复提交。只根据上一轮结果中的 has_more/next_offset 决定是否继续读取，不假设搜索已经穷尽。
+
 ## 推理与提案
 
 结合 `reasoning` 中已有的 Hypothesis、Evidence Gap 和 EvidenceLink，以及本轮取得的材料，分析事实之间的关系与尚存的不确定性。需要查找当前上下文中未显示的 Evidence Gap 时，使用 `search_evidence_gaps`。

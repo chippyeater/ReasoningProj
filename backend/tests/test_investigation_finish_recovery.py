@@ -34,7 +34,7 @@ class TestInvestigationFinishRecovery(unittest.TestCase):
                     if turn == len(reads) + 1:
                         return bad
                     state = json.loads(call["messages"][1]["content"])
-                    recovery = state["recovery"]
+                    recovery = state["previous_tool_result"]["recovery"]
                     error = recovery["validation_details"]["errors"][0]
                     self.assertEqual(error["argument_loc"], ["open_questions"])
                     self.assertEqual(error["code"], "list_type")

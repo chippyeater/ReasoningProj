@@ -107,7 +107,7 @@ class TestReasoningProposals(TestReasoningWorkspace):
         response, requests = self.investigate([proposal], selected=visible)
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["proposals"], [])
-        recovery = json.loads(requests[2]["messages"][1]["content"])["recovery"]
+        recovery = json.loads(requests[2]["messages"][1]["content"])["previous_tool_result"]["recovery"]
         existing = recovery["next_action"]["steps"][0]["existing_object"]
         self.assertEqual(existing["id"], hidden)
         self.assertEqual(existing["source"], "reasoning")
