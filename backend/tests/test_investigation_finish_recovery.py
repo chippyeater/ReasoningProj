@@ -53,22 +53,21 @@ class TestInvestigationFinishRecovery(unittest.TestCase):
         from app import investigation_agent as agent, investigation_tools as tools
         case, _ = self.closing_reads("no_progress")
         # Reference repair remains necessary for Proposal errors after tools close.
-        response = tools._failure(AppError("invalid_investigation_reference", "Invalid source"))
+        response = tools._failure(AppError("invalid_investigation_reference", "Unobtained material"))
         response["error"]["validation_details"] = {"errors": [{
-                "loc": ["proposals", 0, "evidence_refs", 0], "code": "reference_out_of_range",
-                "info_unit_id": "U029", "source_ref_index": 99}]}
+                "loc": ["proposals", 0, "info_unit_ids", 0], "code": "reference_not_obtained",
+                "info_unit_id": "U029"}]}
         agent._tool_recovery(response, "propose_hypothesis", case=case)
         recovery = response["error"]
         agent._finish_only_recovery(recovery)
-        error = next(e for e in recovery["validation_details"]["errors"] if e["code"] == "reference_out_of_range")
+        error = next(e for e in recovery["validation_details"]["errors"] if e["code"] == "reference_not_obtained")
         self.assertEqual(error["info_unit_id"], "U029")
         self.assertEqual(error["info_unit_title"], next(u.title for u in case.info_units if u.id == "U029"))
-        self.assertEqual(error["source_ref_index"], 99)
-        self.assertIn("get_evidence", error["original_fix"])
+        self.assertIn("search_info_units", error["original_fix"])
         self.assertIn("open_questions", error["fix"])
         for step in recovery["next_action"]["steps"]:
             self.assertEqual(step["tool"], "finish_investigation")
-            self.assertEqual(step["unavailable_tool"], "get_evidence")
+            self.assertEqual(step["unavailable_tool"], "search_info_units")
             self.assertNotIn("arguments", step)
 
     def test_closed_phase_still_limits_failed_finish_submissions_to_three(self):

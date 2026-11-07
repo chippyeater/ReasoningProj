@@ -18,7 +18,7 @@ class TestEvidenceLinkProposals(unittest.TestCase):
 
     def dependent(self, target=0, meaning="support", uid="U029"):
         return {**fixture.suggestion("evidence_link"), "meaning": meaning, "hypothesis_proposal_indices": [target],
-                "info_unit_ids": [uid], "evidence_refs": [{"info_unit_id": uid, "source_ref_index": 0}]}
+                "info_unit_ids": [uid]}
 
     def state(self):
         return get_issue_workspaces(self.case).workspaces[self.issue].reasoning

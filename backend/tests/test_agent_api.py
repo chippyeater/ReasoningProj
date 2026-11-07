@@ -48,7 +48,8 @@ class TestAgentAPI(unittest.TestCase):
         definitions = {d["function"]["name"]: d["function"] for d in requests[0]["tools"]}
         self.assertEqual(set(definitions), {"search_info_units", "get_relations", "get_evidence",
                                            "propose_hypothesis", "propose_evidence_gap", "finish_investigation"})
-        self.assertNotIn("U029", {row["id"] for row in initial["case_info_directory"]["items"]})
+        self.assertNotIn("case_info_directory", initial)
+        self.assertNotIn("core_issue", initial)
         self.assertNotIn("obtained_source_ref_indices", memory["info_units"]["items"][0])
         self.assertNotIn("update_investigation_steps", definitions)
         self.assertNotIn("question_state", response.json())

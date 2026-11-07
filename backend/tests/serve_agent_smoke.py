@@ -29,12 +29,10 @@ async def model(config, messages, definitions, schema=None, **kwargs):
         refs = [ref for ref in state["materials"]["source_refs"]["items"] if ref["info_unit_id"] == uid]
         if not refs:
             return replies.tool("get_evidence", {"info_unit_id": uid}, "contract-source")
-        ref = refs[0]
         if not proposals:
             return replies.tool("propose_evidence_gap_update", {
                 "gap_id": state["reasoning"]["gaps"][0]["id"], "addressing_info_unit_ids": [uid], "status": "open",
-                "rationale": "合同只约定起租，实际履行和收款尚待核实，故仅部分回应原缺口。",
-                "evidence_refs": [{"info_unit_id": uid, "source_ref_index": ref["source_ref_index"]}]})
+                "rationale": "合同只约定起租，实际履行和收款尚待核实，故仅部分回应原缺口。"})
         return replies.finish(goal, status='evidence_insufficient', questions=['实际履行情况仍未核实。'], answer='补充合同回应了约定部分，仍需实际履行记录；可审阅对原缺口的更新建议。')
     refs = state["materials"]["source_refs"]["items"]
     ids = {r["info_unit_id"] for r in refs}
@@ -45,7 +43,8 @@ async def model(config, messages, definitions, schema=None, **kwargs):
     if "能力" in goal:
         return replies.finish(goal, status="completed", basis="general", answer="可检索案件材料、核对来源，并提出待确认建议。")
     if "数量" in goal:
-        return replies.finish(goal, status="completed", basis="case_metadata", answer=f"当前案件有{state['case_info_directory']['total_count']}个信息节点。")
+        return replies.finish(goal, status="evidence_insufficient", basis="case_metadata",
+            answer="当前上下文不包含全案节点总数。", questions=["缺少可靠的全案节点统计。"])
     arrival = any(w in goal for w in ("入住", "搬进去"))
     analysis = "实际空置损失" in goal or "同轮" in goal
     uid = "U026" if arrival else "U029"
@@ -81,7 +80,7 @@ async def model(config, messages, definitions, schema=None, **kwargs):
             candidates = [first, second, *[
                 {**suggestion("evidence_link"), "meaning": meaning, "hypothesis_proposal_indices": [parent]}
                 for parent, meaning in ((0, "oppose"), (1, "support"), (0, "related"))]]
-            candidates[-1].update(info_unit_ids=["U036"], evidence_refs=[{"info_unit_id": "U036", "source_ref_index": 0}])
+            candidates[-1].update(info_unit_ids=["U036"])
     if len(proposals) < len(candidates):
         return proposal_call(candidates[len(proposals)], [p["proposal_id"] for p in proposals], f"proposal-{len(proposals)}")
     if "总结失败" in goal:

@@ -7,7 +7,7 @@ from app.errors import AppError
 from app.issue_workspaces import get_issue_workspaces, persist_issue_workspaces, workspace_transaction
 from app.reasoning_models import GapEdit, HypothesisEdit, LinkEdit, ReasoningEdit, ReasoningState, proposal_material_ids, PROPOSAL_ADAPTER
 from app.reasoning_service import edit_reasoning
-from app.reasoning_models import ReasoningChange, ReasoningRun
+from app.reasoning_models import ReasoningChange, ReasoningRun, read_stored_proposal
 from app.schemas import Point
 
 
@@ -129,7 +129,7 @@ def stage_proposals(case, issue, proposals, current, run_id):
 
 
 @workspace_transaction
-def commit_investigation(case, issue, run_id, proposals, receipt, *, validate=None):
+def commit_investigation(case, issue, run_id, proposals, receipt, *, validate=None, obtained_sources=()):
     # Reload under the same lock used by source snapshot and workspace writers.
     case = load_case_snapshot(case.case_id) or case
     current = get_issue_workspaces(case)
@@ -145,22 +145,25 @@ def commit_investigation(case, issue, run_id, proposals, receipt, *, validate=No
         raise AppError("stale_reasoning_proposal", "Evidence changed during investigation; no changes were committed", 409)
     units, files = {u.id: u for u in case.info_units}, {f.file_id: f for f in case.files}
     documents = {}
-    for proposal in proposals:
-        for pointer in proposal.evidence_refs:
-            ref = units[pointer.info_unit_id].source_refs[pointer.source_ref_index]
+    # Source integrity belongs to the referenced InfoUnits, not Proposal pointers.
+    for uid in dict.fromkeys(uid for p in proposals for uid in proposal_material_ids(p)):
+        if uid not in units:
+            raise AppError("stale_reasoning_proposal", "Referenced InfoUnit no longer exists", 409)
+        for ref in units[uid].source_refs:
+            file = files.get(ref.file_id)
+            if file is None or ref.source_kind != file.source_kind:
+                raise AppError("stale_reasoning_proposal", "Source metadata no longer matches the case", 409)
             if ref.file_id not in documents:
-                documents[ref.file_id] = read_parsed_document(case.case_id, files[ref.file_id]).text
-            if documents[ref.file_id][ref.start:ref.end] != ref.quote:
+                documents[ref.file_id] = read_parsed_document(case.case_id, file).text
+            if ref.end > len(documents[ref.file_id]) or documents[ref.file_id][ref.start:ref.end] != ref.quote:
                 raise AppError("stale_reasoning_proposal", "Source quote no longer matches cached TXT", 409)
     if validate:
         validate(case)
     staged, changes = stage_proposals(case, issue, proposals, current, run_id)
     if not changes:
         return {"status": "no_change", "changes": []}
-    refs = sorted({(ref.info_unit_id, ref.source_ref_index) for p in proposals for ref in p.evidence_refs})
-    record = ReasoningRun(changes=changes, proposals=proposals, evidence=[{
-        "info_unit_id": uid, "source_ref_index": index, "source_ref": units[uid].source_refs[index]
-    } for uid, index in refs])
+    # Obtained source snapshots describe this run's reads, never per-Proposal support.
+    record = ReasoningRun(changes=changes, proposals=proposals, evidence=list(obtained_sources))
     staged.workspaces[issue].reasoning.investigation_runs[run_id] = record
     # The journal and all object edits share one atomic file replacement.
     persist_issue_workspaces(case, staged)
@@ -178,10 +181,11 @@ def retry_investigation(case, issue, run_id):
                 or result["summary_status"] != "completed"
                 or "baseline" not in receipt):
             raise ValueError("Only a normally finished current-contract run can be retried")
-        proposals = [PROPOSAL_ADAPTER.validate_python(p) for p in result["proposals"]]
+        proposals = [PROPOSAL_ADAPTER.validate_python(read_stored_proposal(p)) for p in result["proposals"]]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise AppError("invalid_investigation_retry", "No normally finished proposal batch can be recovered", 409) from exc
-    record = commit_investigation(case, issue, run_id, proposals, receipt)
+    record = commit_investigation(case, issue, run_id, proposals, receipt,
+        obtained_sources=audit.get("knowledge_state", {}).get("source_refs", {}).values())
     # Keep the original output immutable; the atomic workspace journal records recovery.
     return {"workspaces": get_issue_workspaces(case), "workspace_commit": record}
 

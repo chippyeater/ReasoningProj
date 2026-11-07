@@ -45,16 +45,16 @@ class TestInvestigationWorkflow(unittest.TestCase):
         gap_text = "核对腾退至新租约实际计租期间的收款是否连续。"
         def hypothesis(index, call_id=None):
             return f.tool("propose_hypothesis", {"content": hypotheses[index],
-                "info_unit_ids": ["U029", "U036"], "rationale": "双方陈述冲突，成立条件有待核对。" + ("请复核。" if call_id else ""), "evidence_refs": []}, call_id or f"hyp-{index}")
+                "info_unit_ids": ["U029", "U036"], "rationale": "双方陈述冲突，成立条件有待核对。" + ("请复核。" if call_id else "")}, call_id or f"hyp-{index}")
         def gap(state, call_id="shared-gap"):
             return f.tool("propose_evidence_gap", {"content": gap_text,
-                "basis_info_unit_ids": ["U029", "U036"], "rationale": "核对计租和收款记录，可共同区分两种解释。" + ("请复核。" if call_id != "shared-gap" else ""), "evidence_refs": [],
+                "basis_info_unit_ids": ["U029", "U036"], "rationale": "核对计租和收款记录，可共同区分两种解释。" + ("请复核。" if call_id != "shared-gap" else ""),
                 "hypothesis_targets": {"hypothesis_ids": [], "hypothesis_proposal_ids": [p["proposal_id"]
                     for p in state["proposals"] if p["kind"] == "hypothesis"]}}, call_id)
         def first(state, turn):
             if turn == 1:
                 self.assertTrue(all(section["items"] == [] for section in state["materials"].values()))
-                self.assertEqual(state["case_info_directory"]["total_count"], 17)
+                self.assertNotIn("case_info_directory", state)
                 return f.tool("search_info_units", {"query": "损失", "limit": 8}, "search")
             if turn == 2:
                 self.assertTrue({"U029", "U036"} <= {u["id"] for u in state["materials"]["info_units"]["items"]})
@@ -115,11 +115,11 @@ class TestInvestigationWorkflow(unittest.TestCase):
             if turn == 3:
                 self.assertTrue(any(r["source_ref_index"] == ref_index and r["source_ref"]["file_id"] == fid for r in state["materials"]["source_refs"]["items"]))
                 return f.tool("propose_evidence_gap_update", {"gap_id": gid, "addressing_info_unit_ids": ["U029"],
-                    "status": "resolved", "rationale": "补充记录回应了原缺口的计租和收款衔接问题。", "evidence_refs": pointers}, "gap-update")
+                    "status": "resolved", "rationale": "补充记录回应了原缺口的计租和收款衔接问题。"}, "gap-update")
             if turn in (4, 5):
                 return f.tool("propose_hypothesis_status", {"hypothesis_id": hids[turn - 4],
                     "judgment": "refuted" if turn == 4 else "verified", "info_unit_ids": ["U029"],
-                    "rationale": "新来源记载收款连续，建议由用户核对并确认判断。", "evidence_refs": pointers}, f"status-{turn}")
+                    "rationale": "新来源记载收款连续，建议由用户核对并确认判断。"}, f"status-{turn}")
             return f.finish('检查新证据', status='completed', statement='补充文件记载计租和收款连续。', answer='新文件回应了原核查条件；原缺口和假设判断的更新建议均待你确认。')
         response, _ = self.run_agent("检查新证据", second)
         self.assertEqual([p["kind"] for p in response["proposals"]], ["evidence_gap_update", "hypothesis_status", "hypothesis_status"])

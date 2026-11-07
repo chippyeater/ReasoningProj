@@ -88,7 +88,8 @@ class TestInvestigationAgent(unittest.TestCase):
         self.assertNotIn("question_state", result)
         self.assertNotIn("phase", result)
         first = json.loads(calls[0]["messages"][1]["content"])
-        self.assertEqual(len(first["case_info_directory"]["items"]), 17)
+        self.assertNotIn("case_info_directory", first)
+        self.assertNotIn("core_issue", first)
         self.assertEqual(first["materials"]["info_units"]["items"], [])
         for call in calls:
             self.assertEqual(len(call["messages"]), 2)
@@ -151,8 +152,8 @@ class TestInvestigationAgent(unittest.TestCase):
         from test_reasoning_proposals import suggestion, proposal_call
         invalid = suggestion("hypothesis")
         invalid["info_unit_ids"] = ["U026"]
-        invalid["evidence_refs"] = [{"info_unit_id": "U026", "source_ref_index": 99}]
-        valid = {**invalid, "evidence_refs": [{"info_unit_id": "U026", "source_ref_index": 0}]}
+        invalid["info_unit_ids"] = ["foreign-unit"]
+        valid = {**invalid, "info_unit_ids": ["U026"]}
         _, calls = self.run_script("核对", [tool("search_info_units", {"query": "入住"}),
             proposal_call(invalid, [], "invalid"),
             tool("get_evidence", {"info_unit_id": "U026"}, "source"),
@@ -160,7 +161,7 @@ class TestInvestigationAgent(unittest.TestCase):
         recovery = json.loads(calls[2]["messages"][1]["content"])["recovery"]
         self.assertEqual(recovery["code"], "invalid_investigation_reference")
         self.assertEqual(recovery["tool"], "propose_hypothesis")
-        self.assertEqual(recovery["arguments"]["evidence_refs"][0]["source_ref_index"], 99)
+        self.assertEqual(recovery["arguments"]["info_unit_ids"], ["foreign-unit"])
 
     def test_malformed_arguments_and_removed_parameters_never_dispatch(self):
         result, calls = self.run_script("核对", [tool("search_info_units", {"query": "入住", "step_id": "S1"}),
@@ -352,7 +353,7 @@ class TestInvestigationAgent(unittest.TestCase):
         from test_reasoning_proposals import suggestion, proposal_call
         case = self.case.model_copy(deep=True)
         next(r for r in case.relations if r.id == "R010").evidence_unit_ids.append("U010")
-        proposal = {**suggestion("hypothesis"), "info_unit_ids": ["U010"], "evidence_refs": []}
+        proposal = {**suggestion("hypothesis"), "info_unit_ids": ["U010"]}
         _, calls = self.run_script("比较依据", [tool("get_relations", {"info_unit_ids": ["U029"], "relation_types": ["contradict"]}),
             proposal_call(proposal, [], "bad"),
             finish('比较依据', status='completed')], case=case, issue_key=case.issue_set[1])

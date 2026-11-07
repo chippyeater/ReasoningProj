@@ -17,9 +17,9 @@ from app.errors import AppError
 from app.observability import RunTrace
 from app.prompt_loader import load_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
-from app.reasoning_models import (ProposalEvidenceRef, ReasoningProposal, MaterialProposal,
+from app.reasoning_models import (InvestigationSourceRef, ReasoningProposal, MaterialProposal,
                                   EvidenceGapProposal, EvidenceGapUpdateProposal, proposal_material_ids)
-from app.investigation_state import KnowledgeState, case_info_directory, model_context
+from app.investigation_state import KnowledgeState, model_context
 
 MAX_NON_FINISH_TOOL_CALLS = 8  # All read/Proposal attempts, including failures.
 MAX_FINISH_CALLS = 3
@@ -40,7 +40,7 @@ class InvestigationOutput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-Pointers = Annotated[list[ProposalEvidenceRef], Field(max_length=64)]
+Pointers = Annotated[list[InvestigationSourceRef], Field(max_length=64)]
 
 
 class InvestigationResult(InvestigationOutput):
@@ -65,42 +65,22 @@ def tool_definitions() -> list[dict]:
     ids = {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": tools.MAX_NODE_IDS}
     limit = {"type": ["integer", "null"], "minimum": 1, "maximum": tools.MAX_LIMIT}
     definitions = [
-        _function("search_info_units", (
-            "Search current-case titles and content for one specific information need; keywords use OR matching. "
-            "Use known directory titles to inspect relevant existing material before declaring it missing. "
-            "Optional types filter results; limit defaults to 5, maximum 8. Returns summaries of up to 120 characters with attribution. "
-            "Excludes InfoUnits visible in the current material view; omitted items can be retrieved again. "
-            "has_more means matching items remain, not that all must be read."
-        ), {
+        _function("search_info_units", 'Search InfoUnits in the current case by keywords in their titles and content. Use queries based on the Goal, relevant Hypotheses, Evidence Gaps, or facts requiring investigation. Keywords use OR matching. The optional types parameter filters InfoUnit types; limit defaults to 5 (maximum 8). Returns content summaries of up to 120 characters with attribution. Results exclude InfoUnits already visible in the current material context, and has_more indicates additional matches.', {
             "query": {"type": "string", "minLength": 1, "maxLength": tools.MAX_QUERY_CHARS},
             "types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in InfoUnitType]}},
             "limit": limit,
         }),
-        _function("get_relations", (
-            "Read persisted one-hop relations for 1-5 current-case info_unit_ids when connections matter to the Goal. "
-            "Optional relation_types filter results; limit defaults to 5, maximum 8. "
-            "Returns directed relations and adjacent InfoUnit summaries without recursive expansion; has_more marks omitted matches."
-        ), {
+        _function("get_relations", 'Retrieve one-hop relations involving known InfoUnits in the current case. Provide 1–5 info_unit_ids and optionally filter by relation_types. Returns directed relations and summaries of adjacent InfoUnits. limit defaults to 5 (maximum 8), and has_more indicates additional matching relations.', {
             "info_unit_ids": ids,
             "relation_types": {"type": ["array", "null"], "items": {"type": "string", "enum": [t.value for t in RelationType]}},
             "limit": limit,
         }),
-        _function("get_evidence", (
-            "Read cached source quotes for one info_unit_id to check wording, dates, amounts, actors or source qualifications; "
-            "not every InfoUnit needs a source read. offset is the original SourceRef list position, default 0; limit defaults to 12, maximum 12. "
-            "Returns full quotes verified against cached TXT, at most 8000 characters total, with stable source_ref_index values usable in Proposals. "
-            "total_count counts the node's references; when has_more is true, continue with next_offset for the same node."
-        ), {
+        _function("get_evidence", 'Read original SourceRef quotes associated with an InfoUnit to examine exact wording, dates, amounts, actors, and source context. Provide an info_unit_id, with offset specifying the starting position and limit specifying the number of references. Returns verified source quotes with their original indices, up to 12 references and 8,000 characters per call. Use next_offset to retrieve subsequent references when has_more is true.', {
             "info_unit_id": {"type": "string", "minLength": 1},
             "offset": {"type": "integer", "minimum": 0},
             "limit": {"type": "integer", "minimum": 1, "maximum": tools.MAX_EVIDENCE_REFS},
         }),
-        _function("search_evidence_gaps", (
-            "Discover existing Gaps in the current Issue, including those omitted from the initial reasoning view, before creating or updating a Gap. "
-            "query uses OR keywords on questions and linked Hypotheses; info_unit_ids match basis, addressing material and Hypothesis evidence links. "
-            "Leave both empty for bounded browsing. limit defaults to 3, maximum 3; offset defaults to 0 and can advance when has_more is true. "
-            "Returns actual IDs, full questions and bounded linked reasoning/status. Reference lists do not grant material or source access."
-        ), {
+        _function("search_evidence_gaps", 'Find existing Evidence Gaps in the current Issue. Search by query keywords matching Gap questions and associated Hypotheses, or by info_unit_ids linked to Gap basis material, addressing material, or Hypothesis evidence links. Both filters may be empty for browsing. Returns Gap IDs, questions, statuses, and associated Hypotheses. limit defaults to 3 (maximum 3), and offset supports pagination.', {
             "query": {"type": ["string", "null"], "maxLength": tools.MAX_QUERY_CHARS},
             "info_unit_ids": {"type": ["array", "null"], "items": {"type": "string"}, "maxItems": tools.MAX_NODE_IDS},
             "limit": {"type": ["integer", "null"], "minimum": 1, "maximum": 3},
@@ -110,9 +90,8 @@ def tool_definitions() -> list[dict]:
     from app.investigation_actions import PROPOSAL_TOOLS, finish_investigation
     schema = MaterialProposal.model_json_schema()
     props = schema["properties"]
-    common = {key: props[key] for key in ("rationale", "info_unit_ids", "evidence_refs")}
-    grounded = {**common, "info_unit_ids": {**props["info_unit_ids"], "minItems": 1},
-                "evidence_refs": {**props["evidence_refs"], "minItems": 1}}
+    common = {key: props[key] for key in ("rationale", "info_unit_ids")}
+    grounded = {**common, "info_unit_ids": {**props["info_unit_ids"], "minItems": 1}}
     content = next(part for part in props["content"]["anyOf"] if part.get("type") != "null")
     text_id = {"type": "string", "minLength": 1, "pattern": r"\S"}
     # A nested union expresses the cross-field requirement within the native
@@ -129,8 +108,8 @@ def tool_definitions() -> list[dict]:
         "propose_evidence_link": {"hypothesis_id": {"anyOf": [text_id, {"type": "null"}]}, "info_unit_id": text_id,
             "hypothesis_proposal_ids": {**props["hypothesis_proposal_ids"], "maxItems": 1},
             "meaning": next(p for p in props["meaning"]["anyOf"] if p.get("type") != "null"),
-            "rationale": props["rationale"], "evidence_refs": grounded["evidence_refs"]},
-        "propose_evidence_gap": {"rationale": props["rationale"], "evidence_refs": props["evidence_refs"],
+            "rationale": props["rationale"]},
+        "propose_evidence_gap": {"rationale": props["rationale"],
             "basis_info_unit_ids": EvidenceGapProposal.model_json_schema()["properties"]["basis_info_unit_ids"],
             "content": content, "hypothesis_targets": gap_targets},
         "propose_hypothesis_status": {**grounded, "hypothesis_id": text_id,
@@ -138,11 +117,10 @@ def tool_definitions() -> list[dict]:
         "propose_evidence_gap_update": {"gap_id": text_id,
             "addressing_info_unit_ids": EvidenceGapUpdateProposal.model_json_schema()["properties"]["addressing_info_unit_ids"],
             "status": {"type": "string", "enum": ["open", "resolved"]},
-            "rationale": props["rationale"], "evidence_refs": grounded["evidence_refs"]},
+            "rationale": props["rationale"]},
     }
     for name, properties in specifications.items():
         definition = _function(name, PROPOSAL_TOOLS[name].__doc__, deepcopy(properties))
-        definition["function"]["parameters"]["$defs"] = schema["$defs"]
         definitions.append(definition)
     definition = _function("finish_investigation", finish_investigation.__doc__, {
         "answer": {"type": "string", "minLength": 1, "maxLength": MAX_SUMMARY_CHARACTERS},
@@ -275,7 +253,7 @@ def _remember(name: str, result: dict, seen: dict) -> None:
         elif name == "get_relations":
             relation = item["relation"]
             seen["relations"].add(relation["id"])
-            seen["units"].update((relation["source_id"], relation["target_id"]))
+            seen["units"].update(unit["id"] for unit in item["adjacent_info_units"])
         elif name == "get_evidence":
             seen["units"].add(item["info_unit_id"])
             seen["evidence"].add((item["info_unit_id"], item["source_ref_index"]))
@@ -290,8 +268,6 @@ def _validation_details(exc: ValidationError) -> dict:
             code = "duplicate_reference"
             loc += [next((field for field in ("hypothesis_proposal_ids", "hypothesis_proposal_indices", "basis_info_unit_ids", "info_unit_ids", "hypothesis_ids")
                           if field in error["msg"]), "references")]
-        if "Grounded proposals require" in error["msg"]:
-            code, loc = "evidence_required", [*loc, "evidence_refs"]
         errors.append({"loc": loc, "code": code, "message": error["msg"],
                        "category": "proposal_semantics" if error["type"] == "value_error" else "structure"})
     categories = {e["category"] for e in errors}
@@ -384,13 +360,6 @@ def _validate_result(raw: str, goal: str, case: CaseData, seen: dict, work_conte
         check(proposal.hypothesis_ids, hypothesis_ids & targets, ["proposals", offset, "hypothesis_ids"], hypothesis_ids, "hypothesis")
         if proposal.kind == "evidence_gap_update":
             check([proposal.gap_id], gap_ids, ["proposals", offset, "gap_id"], gap_ids, "gap")
-        check([(p.info_unit_id, p.source_ref_index) for p in proposal.evidence_refs], set(pointers), ["proposals", offset, "evidence_refs"])
-        for ref_index, ref in enumerate(proposal.evidence_refs):
-            if ref.info_unit_id not in proposal_material_ids(proposal):
-                invalid("invalid_reasoning_proposal", "reference", ["proposals", offset, "evidence_refs", ref_index],
-                    "Proposal citations must refer to its own material IDs", "proposal_evidence_outside_materials",
-                    value=(ref.info_unit_id, ref.source_ref_index),
-                    fix=f"Cite only {material_field}: {proposal_material_ids(proposal)}. Gap updates cite responding material, not the original Gap basis.")
     if issues:
         first = issues[0]
         raise AppError(first.get("error_code", "invalid_reasoning_proposal"), "Artifact validation failed; fix all listed fields",
@@ -487,7 +456,7 @@ def _tool_recovery(response, name, args=None, case=None):
             if "relation_id" in item:
                 step.update(tool="get_relations", instruction="Read relations for obtained InfoUnits; use a returned Relation ID and resubmit.")
             else:
-                step.update(tool="search_info_units", instruction="Actually search by the missing InfoUnit title or keywords to obtain its content; if original text is required call get_evidence next, then resubmit. Directory titles alone do not grant evidence.")
+                step.update(tool="search_info_units", instruction="Call search_info_units with the missing InfoUnit title or keywords to obtain its content; if original text is required call get_evidence next, then resubmit.")
                 if title:
                     step["arguments"] = {"query": title}
         elif code == "hypothesis_target_required":
@@ -504,14 +473,14 @@ def _tool_recovery(response, name, args=None, case=None):
         elif code == "investigation_tool_failed":
             step.update(instruction="Do not unconditionally repeat the failed call. Try other available material or call finish_investigation explicitly describing the unavailable source and limitation.")
         elif code == "initial_information_required":
-            step.update(tool="search_info_units", instruction="Read relevant material by title/keywords before making a case judgment; directory metadata is not obtained evidence.")
+            step.update(tool="search_info_units", instruction="Read relevant material by title/keywords before making a case judgment; Reasoning references alone do not provide material content.")
         else:
             step.update(tool=name, instruction=item.get("fix") or item["message"] + "; correct this field according to the tool schema and resubmit.")
         item["fix"] = step["instruction"]
         item["next_action"] = step
     codes = {item["code"] for item in details["errors"]}
     if "initial_information_required" in codes:
-        hint = "Read relevant case material with the read tools; directory entries do not provide evidence."
+        hint = "Read relevant case material with the read tools; Reasoning references alone do not provide material content."
     elif codes & {"invalid_hypothesis_proposal_target", "invalid_hypothesis_target"}:
         hint = "仅使用本轮成功返回的 Hypothesis proposal_id，或上下文中的正式 Hypothesis ID；不能使用其他运行或其他建议类型。"
     elif "duplicate_reference" in codes:
@@ -628,8 +597,7 @@ async def run_investigation(case: CaseData, goal: str,
             raise AppError("unknown_issue", "Investigation context belongs to another Issue")
         work_context["current_issue"] = issue_key
     selected = [] if not selected_info_unit_ids else tools._selected_units(bound_case, selected_info_unit_ids)
-    initial_input = {"goal": goal, "core_issue": bound_case.core_issue,
-        "case_info_directory": case_info_directory(bound_case),
+    initial_input = {"goal": goal,
         "selected_info_units": [tools._summary(unit) for unit in selected]}
     if work_context is not None:
         initial_input["work_context"] = deepcopy(work_context)
@@ -883,7 +851,8 @@ async def run_investigation(case: CaseData, goal: str,
                         def validate_commit(current_case):
                             actions.artifacts(current_case, seen, work_context, goal, proposals, open_questions, completion)
                         workspace_commit = commit_investigation(case, issue_key, run_id, proposals,
-                            audit["proposal_receipt"], validate=validate_commit)
+                            audit["proposal_receipt"], validate=validate_commit,
+                            obtained_sources=knowledge.source_refs.values())
                     except Exception as exc:
                         workspace_commit = {"status": "conflict" if isinstance(exc, AppError) and exc.status_code == 409 else "failed",
                             "changes": [], "error": {"code": getattr(exc, "code", "workspace_commit_failed"), "message": str(exc)}}

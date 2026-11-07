@@ -393,7 +393,7 @@ export type ReasoningState = { hypotheses: Hypothesis[]; gaps: EvidenceGap[]; li
   investigation_runs?: Record<string, ReasoningRun> };
 type ProposalFields = {
   content: string | null; hypothesis_ids: string[]; meaning: LinkMeaning | null;
-  judgment: Judgment | null; rationale: string; evidence_refs: AgentEvidenceRef[];
+  judgment: Judgment | null; rationale: string; evidence_refs?: AgentEvidenceRef[]; // Historical runs only.
   proposal_id?: string | null; hypothesis_proposal_ids?: string[]; hypothesis_proposal_indices?: number[] };
 export type ReasoningProposal = ProposalFields & (
   { kind: "evidence_gap"; basis_info_unit_ids: string[] } |

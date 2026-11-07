@@ -46,7 +46,7 @@ export function ReasoningSuggestions({ result, state, caseData, busy, error, onR
             {"judgment" in obj ? <p>{change.before && "judgment" in change.before ? `${judgments[change.before.judgment]} → ` : ""}{judgments[obj.judgment]}</p> : null}
             {"addressing_info_unit_ids" in obj ? <p>{obj.status === "open" ? "仍待补证" : "缺口已回应"} · 回应材料：{obj.addressing_info_unit_ids.map(id => caseData.info_units.find(u => u.id === id)?.title ?? "相关材料").join("、") || "暂无"}</p> : null}
             <details><summary>查看变更依据</summary>{basis.map((item, i) => <div key={i}><p>{text(item.rationale)}</p>
-              {!item.evidence_refs.length ? <p>未附原文引用</p> : item.evidence_refs.map((ref, j) => {
+              {item.evidence_refs?.map((ref, j) => {
                 const unit = caseData.info_units.find(u => u.id === ref.info_unit_id);
                 const snapshot = run.evidence.find(e => e.info_unit_id === ref.info_unit_id && e.source_ref_index === ref.source_ref_index);
                 return <div key={j}><button type="button" onClick={() => onLocate(ref.info_unit_id)}>{unit?.title ?? "相关材料"}</button><blockquote>{snapshot?.source_ref.quote ?? "来源当前不可用"}</blockquote></div>;

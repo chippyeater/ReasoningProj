@@ -13,8 +13,7 @@ class TestInvestigationMemory(unittest.TestCase):
     tearDown = f.TestInvestigationAgent.tearDown
 
     def initial(self):
-        return {"goal": "比较租金损失的不同解释", "core_issue": self.case.core_issue,
-                "case_info_directory": state.case_info_directory(self.case), "selected_info_units": [],
+        return {"goal": "比较租金损失的不同解释", "selected_info_units": [],
                 "work_context": {"current_issue": self.case.issue_set[1], "reasoning": {
                     "hypotheses": [{"id": "h1", "content": "原有解释", "judgment": "unverified",
                         "work_status": "deprecated", "revision": 7, "updated_at": "audit-only"}],
@@ -55,7 +54,7 @@ class TestInvestigationMemory(unittest.TestCase):
         self.assertEqual(len(memory.info_units), 70)
         self.assertFalse(memory.source_refs)
 
-    def test_directory_retains_material_omitted_from_the_visible_projection(self):
+    def test_omitted_material_remains_in_memory_without_a_directory(self):
         initial = self.initial(); memory = state.KnowledgeState(initial)
         for unit in self.case.info_units:
             memory.info_units[unit.id] = {"id": unit.id, "title": unit.title,
@@ -64,25 +63,22 @@ class TestInvestigationMemory(unittest.TestCase):
         with patch.object(state, "MAX_CONTEXT_CHARS", 3600):
             view = state.model_context(initial, memory)
         visible = {u["id"] for u in view["materials"]["info_units"]["items"]}
-        directory = {u["id"] for u in view["case_info_directory"]["items"]}
-        self.assertFalse(visible & directory)
-        self.assertTrue(directory)
-        self.assertEqual(visible | directory, {u.id for u in self.case.info_units})
+        omitted = set(view["materials"]["info_units"]["omitted_ids"])
+        self.assertFalse(visible & omitted)
+        self.assertTrue(omitted)
+        self.assertEqual(visible | omitted, {u.id for u in self.case.info_units})
+        self.assertNotIn("case_info_directory", view)
+        self.assertNotIn("core_issue", view)
         self.assertEqual(memory.dump(), before)
 
-    def test_directory_is_deterministic_bounded_and_grants_no_material(self):
-        case = self.case.model_copy(deep=True)
-        seed = case.info_units[0]
-        case.info_units = [seed.model_copy(update={"id": f"large-{n:03}", "title": "long title "*30}) for n in range(200)]
-        directory = state.case_info_directory(case)
-        self.assertLessEqual(len(directory["items"]), 80)
-        self.assertEqual(directory["total_count"], 200)
-        self.assertEqual(directory["omitted_count"], 200-len(directory["items"]))
-        self.assertTrue(directory["context_truncated"])
-        case.info_units.reverse()
-        self.assertEqual(directory, state.case_info_directory(case))
-        self.assertNotIn("content", directory["items"][0])
-        memory = state.KnowledgeState(self.initial())
+    def test_only_obtained_material_is_projected_even_with_old_input_metadata(self):
+        initial = {**self.initial(), "core_issue": self.case.core_issue,
+                   "case_info_directory": {"items": [{"id": "unread", "title": "未读材料"}]}}
+        memory = state.KnowledgeState(initial)
+        view = state.model_context(initial, memory)
+        self.assertNotIn("case_info_directory", view)
+        self.assertNotIn("core_issue", view)
+        self.assertNotIn("unread", json.dumps(view))
         self.assertFalse(memory.acquisition()["has_material"])
 
     def test_relevant_relations_and_sources_survive_capacity_limits(self):

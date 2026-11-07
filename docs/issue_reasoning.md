@@ -26,19 +26,19 @@
 
 `PATCH /api/cases/{case_id}/issue-reasoning` 每次接受一个人工操作：`hypothesis`、`gap`、`link` 或 `unlink_id`，绑定 `issue`，可附新节点 `position`。后端分配 ID、修订号和来源，校验所有引用、当前 Issue 归属及重复关联，并通过现有原子 JSON 写入统一保存。Gap 创建时回应列表为空，非空回应只能追加到已有 Gap；编辑时传入 `addressing_info_unit_ids` 与原值按首次出现顺序合并去重，空列表也不会清空旧关联。省略 `basis_info_unit_ids` 或 `status` 时保留原值；显式传入依据列表可替换形成依据，显式传入状态才改变解决状态。追加回应不会改变 Hypothesis 的 judgment。两类引用都校验当前 Case ID 范围，都阻止删除被引用的 InfoUnit，引用类型分别为 `evidence_gap_basis` / `evidence_gap_addressing`。
 
-`POST /api/cases/{case_id}/investigation-changes/reverse` 接收 `issue/run_id/restore`，默认撤销，restore=true 恢复；重复执行幂等。`POST /api/cases/{case_id}/investigation-changes/retry` 可重试正常 Finish 后失败的整轮写入，不调用模型、不更新运行起点、不改写原审计；预算耗尽及异常中止的运行不可重试提交。旧逐项采纳接口已移除。变更涉及的对象须与运行前/后快照一致，且不能破坏后续依赖；否则整轮拒绝并返回409，保护用户后续编辑。撤销保留运行记录和对象映射，不会让重复执行重新创建已删除对象。
+`POST /api/cases/{case_id}/investigation-changes/reverse` 接收 `issue/run_id/restore`，默认撤销，restore=true 恢复；重复执行幂等。`POST /api/cases/{case_id}/investigation-changes/retry` 可重试正常 Finish 后失败的整轮写入，不调用模型、不更新运行起点、不改写原审计；未正常 Finish 的运行不可重试提交，预算耗尽本身不阻止正常 Finish 后的提交或重试。旧逐项采纳接口已移除。变更涉及的对象须与运行前/后快照一致，且不能破坏后续依赖；否则整轮拒绝并返回409，保护用户后续编辑。撤销保留运行记录和对象映射，不会让重复执行重新创建已删除对象。
 
 ## Agent 边界
 
-保留所有现有 Proposal 工具。每次校验参数、当前案件/议题对象、实际读取的来源与本轮依赖，并在独立副本复用正式编辑逻辑验证可应用性；失败返回具体字段和修复说明，成功只暂存。新 Hypothesis 的返回 proposal_id 可供本轮 Gap/Link 引用，正常 Finish 时统一分配正式 ID。状态提案不改 content，判断材料不自动创建 EvidenceLink。已有 Link 按 Hypothesis/InfoUnit 对定位，更新语义时保留 ID。
+保留所有现有 Proposal 工具。每次校验参数、当前案件/议题对象、实际取得的 InfoUnit 与本轮依赖，并在独立副本复用正式编辑逻辑验证可应用性；失败返回具体字段和修复说明，成功只暂存。新 Hypothesis 的返回 proposal_id 可供本轮 Gap/Link 引用，正常 Finish 时统一分配正式 ID。状态提案不改 content，判断材料不自动创建 EvidenceLink。已有 Link 按 Hypothesis/InfoUnit 对定位，更新语义时保留 ID。
 
 正常 Finish 后，对照运行开始时的完整服务端推理快照及材料哈希，重新验证来源的 Unicode TXT 切片，再在副本应用全部提案；最后一次原子替换保存正式对象、画布、映射和 `investigation_runs`。同轮编辑不再互相检验中间 revision。人工编辑、画布更新、案件快照写入及整轮提交/撤销共享工作区锁；并发推理或相关材料变化返回冲突，不自动覆盖。
 
-`investigation_runs` 保存实际变化对象的 before/after、产生变化的提案键、原提案及当时引用的 SourceRef。它复用现有推理对象模型，不修改 CaseData/Gold 版本，也不复制案件材料为另一份业务数据。旧 `accepted_proposals` 字段保留稳定映射；操作来源沿用现有 agent_accepted 标记，界面显示“Agent 写入”。完整服务端快照与运行记录不进入模型上下文。
+`investigation_runs` 保存实际变化对象的 before/after、产生变化的提案键、原提案及本轮实际读取的 SourceRef；读取记录不自动代表任一提案的直接支持。它复用现有推理对象模型，不修改 CaseData/Gold 版本，也不复制案件材料为另一份业务数据。旧 `accepted_proposals` 字段保留稳定映射；操作来源沿用现有 agent_accepted 标记，界面显示“Agent 写入”。完整服务端快照与运行记录不进入模型上下文。
 
 无实际变化的 Hypothesis/Gap/Link 操作成功返回 no_change，不追加提案、写工作区或递增 revision。Gap 更新只追加去重 `addressing_info_unit_ids`，保留原 ID、content、形成依据和完整 Hypothesis 关联；部分回应可保持 open。引用必须指向本次回应材料，错误应修正原更新，不另建同问题 Gap。Hypothesis 的证据判断独立于 Gap 状态。
 
-异常、预算耗尽、并发冲突和提交失败整轮不写入；合法提案、工具错误、运行起点和提交状态保存在本地审计供检查。工作区原子运行记录是实际落盘的凭据，即使提交后的审计输出刷新失败也可查验。系统不自动重试付费调用，不提供历史 Proposal 的隐式采纳。
+异常终止、并发冲突和提交失败整轮不写入；预算耗尽仅限制继续调查，正常 Finish 仍可提交；合法提案、工具错误、运行起点和提交状态保存在本地审计供检查。工作区原子运行记录是实际落盘的凭据，即使提交后的审计输出刷新失败也可查验。系统不自动重试付费调用，不提供历史 Proposal 的隐式采纳。
 
 上下文仍为有界投影：按需发现被省略的 Gap，引用 ID 不授予材料读取权限。Agent 自动写入仅限当前 Investigation 的内部推理对象，原始文件、InfoUnits、Relations 和外部操作不在范围内。来源可定位不等于语义充分支持，更不代表单方陈述已被证实。
 

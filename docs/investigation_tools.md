@@ -42,7 +42,7 @@ if sources["has_more"]:
 - 证据只按该节点的 SourceRef 原始存储顺序分页；`offset` 是从0开始的列表位置，`source_ref_index` 始终为原索引，不按页重编号，也不按新批次重排。保留 `file_id/source_kind/quote/start/end`；其中 start/end 是缓存 TXT 中 Unicode 字符的左闭右开区间 `[start,end)`，不使用字节或 UTF-16 偏移。
 - 仅使用已有 `read_parsed_document` 读取实际返回引用所在的缓存 TXT，每个相关文件每次最多读取一次，逐条验证精确切片；不读取原始文件，不重解析，不读取无关缓存，不把整文件放入返回结果。即使 quote 已存在于 SourceRef，缓存缺失或切片不符仍明确报错。
 - 引用条数或总长度预算耗尽时，仅返回当前页能完整容纳的前缀，标记 `truncated`；`total_count` 为引用总数，`next_offset` 是第一条未返回引用的原索引。读完或 offset 超出末尾时 `has_more=false/next_offset=null`，末尾外返回 empty。单条引用超过8000字符时报 `error/evidence_budget_exceeded`，不跳过、不伪造短引文或偏移；页内缓存或来源校验失败则整页返回错误，不混入部分成功结果。
-- 已取得的 InfoUnit 内容可用于探索性 Hypothesis 和 Evidence Gap，来源定位不等于事实证实。仅在需要核对精确措辞、时间、金额、陈述主体或上下文时读取原始 SourceRef；不要求每个节点都读原文。Evidence Link 和 Hypothesis Status 仍须有合法且已取得的来源引用。首轮不再隐式核验或提供来源。
+- 已取得的 InfoUnit 内容可用于探索性 Hypothesis 和 Evidence Gap，来源定位不等于事实证实。仅在需要核对精确措辞、时间、金额、陈述主体或上下文时读取原始 SourceRef；不要求每个节点都读原文。五种 Proposal 均通过已取得的 InfoUnit ID 关联证据，不接收原文指针；实际原文读取记录独立保留。首轮不再隐式核验或提供来源。
 
 ## 按需发现已有 Gap
 

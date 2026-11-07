@@ -16,14 +16,13 @@ def suggestion(kind, hid=None):
             ("basis_info_unit_ids" if kind == "evidence_gap" else "info_unit_ids"): ["U029"],
             "meaning": "oppose" if kind == "evidence_link" else None,
             "judgment": "unverified" if kind == "hypothesis_status" else None,
-            "rationale": "张某陈述无损失，仍应核对入住和收租材料。",
-            "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}
+            "rationale": "张某陈述无损失，仍应核对入住和收租材料。"}
 
 
 def proposal_call(source, prior_ids, call_id):
     """Offline scenario -> native call, using only IDs returned by previous tools."""
     kind = source["kind"]
-    args = {key: source[key] for key in ("rationale", "evidence_refs")}
+    args = {"rationale": source["rationale"]}
     if kind == "evidence_gap_update":
         args.update(gap_id=source["gap_id"], addressing_info_unit_ids=source["addressing_info_unit_ids"], status=source["status"])
     elif kind == "evidence_link":

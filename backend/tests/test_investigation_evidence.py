@@ -42,13 +42,11 @@ class TestInvestigationEvidence(unittest.TestCase):
             if turn == 4:
                 self.assertEqual(view["materials"]["source_refs"]["items"][0]["source_ref_index"], 24)
                 return f.tool("propose_hypothesis", {"content": "实际收款可能连续", "rationale": "仅为待核实命题",
-                    "info_unit_ids": ["U029"], "evidence_refs": [
-                        {"info_unit_id": "U029", "source_ref_index": i} for i in (0, 12)]}, "hypothesis")
+                    "info_unit_ids": ["U029"]}, "hypothesis")
             if turn == 5:
                 return f.tool("propose_evidence_link", {"hypothesis_id": None,
                     "hypothesis_proposal_ids": [view["proposals"][0]["proposal_id"]],
-                    "info_unit_id": "U029", "meaning": "related", "rationale": "该来源为当事人陈述",
-                    "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 24}]}, "link")
+                    "info_unit_id": "U029", "meaning": "related", "rationale": "该来源为当事人陈述"}, "link")
             return f.finish("核对来源", status="completed")
         result, _ = self.run_script("核对来源", respond, case=case, issue_key=case.issue_set[1])
         self.assertEqual(result["workspace_commit"]["status"], "applied", result)
@@ -58,18 +56,19 @@ class TestInvestigationEvidence(unittest.TestCase):
         reasoning = get_issue_workspaces(case).workspaces[case.issue_set[1]].reasoning
         self.assertEqual(len(reasoning.hypotheses), 1)
         self.assertEqual(len(reasoning.links), 1)
+        self.assertEqual(len(reasoning.investigation_runs[result["run_id"]].evidence), 25)
+        self.assertTrue(all("evidence_refs" not in p for p in result["proposals"]))
 
-    def test_only_returned_page_grants_source_permissions(self):
+    def test_only_returned_pages_enter_the_run_read_record(self):
         from test_reasoning_proposals import suggestion, proposal_call
-        bad = {**suggestion("hypothesis"), "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 1}]}
+        proposal = suggestion("hypothesis")
         result, calls = self.run_script("核对", [
             f.tool("get_evidence", {"info_unit_id": "U029", "limit": 1}, "first"),
-            proposal_call(bad, [], "unread"),
+            proposal_call(proposal, [], "obtained-unit"),
             f.tool("get_evidence", {"info_unit_id": "U029", "offset": 1, "limit": 1}, "second"),
-            proposal_call(bad, [], "obtained"), f.finish("核对", status="completed")], issue_key=self.case.issue_set[1])
-        recovery = json.loads(calls[2]["messages"][1]["content"])["recovery"]
-        step = next(s for s in recovery["next_action"]["steps"] if s["tool"] == "get_evidence")
-        self.assertEqual(step["arguments"], {"info_unit_id": "U029", "offset": 1, "limit": 12})
+            f.finish("核对", status="completed")], issue_key=self.case.issue_set[1])
+        self.assertEqual([ref["source_ref_index"] for ref in json.loads(calls[2]["messages"][1]["content"])["materials"]["source_refs"]["items"]], [0])
+        self.assertEqual([ref["source_ref_index"] for ref in result["evidence_refs"]], [0, 1])
         self.assertEqual(len(result["proposals"]), 1)
         self.assertEqual(result["workspace_commit"]["status"], "applied")
 
@@ -83,7 +82,7 @@ class TestInvestigationEvidence(unittest.TestCase):
                 self.assertEqual(response["error"]["validation_details"]["errors"][0]["argument_loc"], [field])
 
     def test_full_8000_character_source_is_visible_and_later_page_can_replace_its_view(self):
-        initial = {"goal": "核对原文", "case_info_directory": state.case_info_directory(self.case)}
+        initial = {"goal": "核对原文"}
         memory = state.KnowledgeState(initial)
         def merge(index, quote, has_more):
             args = {"info_unit_id": "U029", "offset": index, "limit": 1}

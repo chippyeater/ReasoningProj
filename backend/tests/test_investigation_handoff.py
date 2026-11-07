@@ -24,11 +24,11 @@ class TestInvestigationHandoff(unittest.TestCase):
 
     def hypothesis(self, content, call_id, **kwargs):
         return f.tool("propose_hypothesis", {"content": content, "rationale": "待核实成立条件，不能以单方陈述证明。",
-            "info_unit_ids": ["U029", "U036"], "evidence_refs": [], **kwargs}, call_id)
+            "info_unit_ids": ["U029", "U036"], **kwargs}, call_id)
 
     def gap(self, content, ids, call_id, **kwargs):
         return f.tool("propose_evidence_gap", {"content": content, "rationale": "同一时间条件可共同区分两种解释。",
-            "basis_info_unit_ids": ["U029", "U036"], "evidence_refs": [],
+            "basis_info_unit_ids": ["U029", "U036"],
             "hypothesis_targets": {"hypothesis_ids": [], "hypothesis_proposal_ids": ids}, **kwargs}, call_id)
 
     def comparison_context(self):
@@ -54,7 +54,7 @@ class TestInvestigationHandoff(unittest.TestCase):
         return context, seen, refs
 
     def submit_pending(self, kind, content, proposals, context, seen, refs, **changes):
-        values = {"content": content, "rationale": "根据已取得的材料提出待核查命题。", "evidence_refs": refs}
+        values = {"content": content, "rationale": "根据已取得的材料提出待核查命题。"}
         if kind == "hypothesis":
             values["info_unit_ids"] = ["U029", "U036"]
         else:
@@ -172,13 +172,13 @@ class TestInvestigationHandoff(unittest.TestCase):
             with self.subTest(kind=kind):
                 proposals = []
                 for _ in range(2):
-                    actions._propose(self.case, seen, context, proposals, kind, rationale="单独审阅该建议。", evidence_refs=ref, **values)
+                    actions._propose(self.case, seen, context, proposals, kind, rationale="单独审阅该建议。",  **values)
                 self.assertEqual(len(proposals), 0 if kind == "hypothesis_status" else 1)
         self.assertEqual(context, before_context)
         self.assertEqual(seen, before_seen)
         self.assertEqual(self.fixture.disk_snapshot(), before_files)
 
-    def test_three_search_hits_remain_available_but_unread_sources_cannot_be_cited(self):
+    def test_search_hits_can_ground_proposals_without_mandatory_original_reads(self):
         hits = ["U006", "U008", "U010"]
         query = " ".join(next(u.title for u in self.case.info_units if u.id == uid) for uid in hits)
         def respond(call, turn):
@@ -187,30 +187,14 @@ class TestInvestigationHandoff(unittest.TestCase):
                 return f.tool("search_info_units", {"query": query, "limit": 3}, "search")
             units = {u["id"]: u for u in state["materials"]["info_units"]["items"]}
             self.assertEqual(len(units), 3)
-            self.assertTrue(all(u["content"] for u in units.values()))
+            self.assertFalse(state["materials"]["source_refs"]["items"])
             if turn == 2:
-                self.assertTrue(all("obtained_source_ref_indices" not in u for u in units.values()))
-                self.assertFalse(state["materials"]["source_refs"]["items"])
-                uid = next(iter(units))
                 return f.tool("propose_hypothesis", {"content": "押金扣除可能缺少依据", "rationale": "条款尚需核实",
-                    "info_unit_ids": [uid], "evidence_refs": [{"info_unit_id": uid, "source_ref_index": 0}]}, "unread-source")
-            if turn == 3:
-                recovery = state["recovery"]
-                error = recovery["validation_details"]["errors"][0]
-                self.assertEqual(error["code"], "reference_not_obtained")
-                self.assertIn(error["info_unit_id"], units)
-                return f.tool("get_evidence", {"info_unit_id": error["info_unit_id"]}, "source")
-            pointer = state["materials"]["source_refs"]["items"][0]
-            uid, index = pointer["info_unit_id"], pointer["source_ref_index"]
-            self.assertTrue(any(r["info_unit_id"] == uid and r["source_ref_index"] == index
-                                for r in state["materials"]["source_refs"]["items"]))
-            if turn == 4:
-                return f.tool("propose_hypothesis", {"content": "押金扣除可能缺少依据", "rationale": "条款尚需核实",
-                    "info_unit_ids": [uid], "evidence_refs": [{"info_unit_id": uid, "source_ref_index": index}]}, "corrected")
+                    "info_unit_ids": [next(iter(units))]}, "summary-proposal")
             return f.finish('核对押金条款', status='completed')
         result, _ = self.run_script("核对押金条款", respond, issue_key=self.case.issue_set[1])
         self.assertEqual(result["summary_status"], "completed")
-        self.assertEqual(result["tool_budget_used"], {"read": 2, "proposal": 2, "finish": 1})
+        self.assertEqual(result["tool_budget_used"], {"read": 1, "proposal": 1, "finish": 1})
 
     def test_competing_hypotheses_share_one_gap_and_format_only_retries_do_not_append(self):
         contents = [

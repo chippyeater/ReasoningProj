@@ -35,8 +35,7 @@ class TestGapUpdateNoChange(unittest.TestCase):
 
     def update(self, gid, **overrides):
         return {"kind": "evidence_gap_update", "gap_id": gid, "status": "open",
-            "addressing_info_unit_ids": ["U029"], "rationale": "现有陈述只部分回应，仍需核实实收。",
-            "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}], **overrides}
+            "addressing_info_unit_ids": ["U029"], "rationale": "现有陈述只部分回应，仍需核实实收。", **overrides}
 
     def feedback(self, result):
         path = case_dir(self.case.case_id) / f"runs/{result['run_id']}.output.json"
@@ -46,8 +45,7 @@ class TestGapUpdateNoChange(unittest.TestCase):
     def test_open_with_new_addressing_unit_commits_without_changing_other_semantics(self):
         gid = self.gap()
         before, saved = self.state().model_copy(deep=True), self.raw()
-        proposal = self.update(gid, addressing_info_unit_ids=["U036"],
-            evidence_refs=[{"info_unit_id": "U036", "source_ref_index": 0}])
+        proposal = self.update(gid, addressing_info_unit_ids=["U036"])
         with patch.object(reasoning_proposals, "persist_issue_workspaces", wraps=reasoning_proposals.persist_issue_workspaces) as save:
             response, _ = self.investigate([proposal], [gid], read_ids=["U036"],
                 before_finish=lambda: self.assertEqual(self.raw(), saved))
@@ -67,11 +65,10 @@ class TestGapUpdateNoChange(unittest.TestCase):
                          [(h.id, h.content, h.judgment, h.work_status) for h in before.hypotheses])
         self.assertEqual(after.links, before.links)
 
-    def test_same_status_materials_rationale_and_source_changes_remain_noops(self):
+    def test_same_status_materials_and_rationale_changes_remain_noops(self):
         gid = self.gap()
         saved = self.raw()
-        for overrides in ({}, {"rationale": "换个理由仍不构成实际变化。"},
-                          {"evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 1}]}):
+        for overrides in ({}, {"rationale": "换个理由仍不构成实际变化。"}):
             with self.subTest(overrides=overrides), patch.object(reasoning_proposals, "persist_issue_workspaces") as save:
                 response, _ = self.investigate([self.update(gid, **overrides)], [gid])
                 save.assert_not_called()
@@ -84,8 +81,8 @@ class TestGapUpdateNoChange(unittest.TestCase):
             self.assertTrue(feedback["no_change"])
             self.assertFalse(feedback["pending"])
             self.assertEqual(set(feedback), {"status", "pending", "no_change", "message"})
-            for explanation in ("status is unchanged", "already associated", "rationale", "SourceRefs",
-                                "No Proposal was staged", "unread Goal-relevant", "Finish", "Do not resubmit"):
+            for explanation in ("status is unchanged", "already associated", "rationale",
+                                "No Proposal was staged", "unread Goal-relevant", "finish_investigation", "Do not resubmit"):
                 self.assertIn(explanation, feedback["message"])
             self.assertEqual(self.raw(), saved)
 
@@ -99,8 +96,7 @@ class TestGapUpdateNoChange(unittest.TestCase):
 
     def test_repeating_new_material_in_the_same_run_does_not_stage_another_update(self):
         gid = self.gap()
-        proposal = self.update(gid, addressing_info_unit_ids=["U036"],
-            evidence_refs=[{"info_unit_id": "U036", "source_ref_index": 0}])
+        proposal = self.update(gid, addressing_info_unit_ids=["U036"])
         response, _ = self.investigate([proposal, {**proposal, "rationale": "仅改写已有理由。"}], [gid], read_ids=["U036"])
         self.assertEqual(response.status_code, 200, response.text)
         result = response.json()

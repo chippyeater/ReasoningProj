@@ -88,9 +88,8 @@ class TestIncrementalInvestigationContext(IsolatedCaseTest):
         self.assertEqual(state["materials"]["source_refs"]["items"], [])
         self.assertEqual(state["materials"]["relations"]["items"], [])
         self.assertNotIn("recent_extraction", state)
-        self.assertEqual(state["case_info_directory"]["total_count"], 4)
-        self.assertTrue(all(set(row) == {"id", "title", "type", "title_truncated"}
-                            for row in state["case_info_directory"]["items"]))
+        self.assertNotIn("case_info_directory", state)
+        self.assertNotIn("core_issue", state)
         self.assertEqual(self.path.read_bytes(), before)
         self.assert_canvases_unchanged()
 

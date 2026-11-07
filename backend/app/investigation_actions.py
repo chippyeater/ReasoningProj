@@ -60,19 +60,16 @@ def _check_duplicate(proposal, context, proposals, case):
 def artifacts(case, seen, context, goal, proposals, questions, status):
     """Reuse citation/kind validation; no final model JSON is involved."""
     from app.investigation_agent import _validate_result
-    units, relations, refs = [], [], []
+    units = []
     for item in (p.model_dump(mode="json") for p in proposals):
         material_ids = (item["basis_info_unit_ids"] if item.get("kind") == "evidence_gap" else
                         item["addressing_info_unit_ids"] if item.get("kind") == "evidence_gap_update" else item["info_unit_ids"])
         for uid in material_ids:
             if uid not in units:
                 units.append(uid)
-        for ref in item["evidence_refs"]:
-            if ref not in refs:
-                refs.append(ref)
     return _validate_result(json.dumps({
         "goal": goal, "relevant_info_unit_ids": units,
-        "relevant_relation_ids": relations, "evidence_refs": refs, "open_questions": questions,
+        "relevant_relation_ids": [], "evidence_refs": [], "open_questions": questions,
         "completion_status": status, "proposals": [p.model_dump(mode="json") for p in proposals],
     }, ensure_ascii=False), goal, case, seen, context)
 
@@ -95,57 +92,56 @@ def _propose(case, seen, context, proposals, kind, **values):
     if f"validation:{proposal.proposal_id}" not in candidate.workspaces[issue].reasoning.accepted_proposals:
         return {"status": "ok", "pending": False, "no_change": True,
                 "message": ("The current/staged Gap status is unchanged and all supplied addressing InfoUnits are already associated. "
-                    "Rewording rationale or resubmitting SourceRefs alone does not update a Gap. No Proposal was staged. "
-                    "Inspect any unread Goal-relevant existing material, or Finish if no actual new change is needed. "
+                    "Rewording rationale alone does not update a Gap. No Proposal was staged. "
+                    "Inspect any unread Goal-relevant existing material, or call finish_investigation if no actual new change is needed. "
                     "Do not resubmit the same operation with different wording."
                     if kind == "evidence_gap_update" else
                     "The requested state already holds. No Proposal was staged; continue or Finish.")}
     proposals.append(proposal)
     return {"status": "ok", "proposal_id": proposal.proposal_id, "pending": True,
-            "evidence_status": "traceable_source" if proposal.evidence_refs else "not_directly_evidenced",
             "proposal": proposal.model_dump(mode="json")}
 
 
-def propose_hypothesis(case, seen, context, proposals, *, content, rationale, info_unit_ids, evidence_refs):
-    """Submit one evidence-testable proposition in content, with only its own basis/uncertainty in rationale. Use obtained InfoUnit IDs; exploratory evidence_refs may be empty, and info_unit_ids may be empty if no direct material exists. Submission stages a validated Proposal. Normal Finish atomically commits the run; this does not verify the proposition."""
+def propose_hypothesis(case, seen, context, proposals, *, content, rationale, info_unit_ids):
+    """Create a new, evidence-testable Hypothesis. Use content to state one clear proposition and rationale to explain its basis and uncertainty. Include relevant obtained InfoUnit IDs when available. Returns a proposal_id for referencing the new Hypothesis within the current investigation."""
     return _propose(case, seen, context, proposals, "hypothesis", content=content, rationale=rationale,
-                    info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
+                    info_unit_ids=info_unit_ids)
 
 
-def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info_unit_id, meaning, rationale, evidence_refs,
+def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info_unit_id, meaning, rationale,
                           hypothesis_proposal_ids=None):
-    """Link one obtained InfoUnit and source citation to one Hypothesis. Use a formal hypothesis_id, or null plus one returned hypothesis_proposal_ids entry, never both. A pending parent is resolved to its formal ID when the whole run commits after normal Finish."""
+    """Create an Evidence Link between a Hypothesis and one obtained InfoUnit. Identify the Hypothesis using its existing hypothesis_id or a proposal_id returned earlier in this investigation. Set meaning to support, oppose, or related, and use rationale to explain the relationship."""
     return _propose(case, seen, context, proposals, "evidence_link", hypothesis_ids=[] if hypothesis_id is None else [hypothesis_id],
                     hypothesis_proposal_ids=[] if hypothesis_proposal_ids is None else hypothesis_proposal_ids,
-                    info_unit_ids=[info_unit_id], meaning=meaning, rationale=rationale, evidence_refs=evidence_refs)
+                    info_unit_ids=[info_unit_id], meaning=meaning, rationale=rationale)
 
 
 def propose_evidence_gap(case, seen, context, proposals, *, content, hypothesis_ids, hypothesis_proposal_ids,
-                         rationale, basis_info_unit_ids, evidence_refs):
-    """Submit one unresolved factual question. hypothesis_targets must contain 1–5 actual formal Hypothesis IDs and/or successfully returned Hypothesis proposal IDs. One or several propositions may share the question. basis_info_unit_ids and evidence_refs may be empty; a new Gap has no addressing material."""
+                         rationale, basis_info_unit_ids):
+    """Create an Evidence Gap describing a specific unresolved factual question. Use content to state what needs to be established, rationale to explain its relevance, and hypothesis_targets to associate the question with one or more Hypotheses. Include relevant obtained basis_info_unit_ids when available."""
     return _propose(case, seen, context, proposals, "evidence_gap", content=content, hypothesis_ids=hypothesis_ids,
                     hypothesis_proposal_ids=hypothesis_proposal_ids, rationale=rationale,
-                    basis_info_unit_ids=basis_info_unit_ids, evidence_refs=evidence_refs)
+                    basis_info_unit_ids=basis_info_unit_ids)
 
 
-def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, judgment, rationale, info_unit_ids, evidence_refs):
-    """Suggest unverified/verified/refuted for an existing hypothesis_id, only when judgment actually changes, using obtained InfoUnits and SourceRef citations. This never edits proposition content or creates EvidenceLinks. Explain how the evidence bears on that proposition; missing support alone does not establish refutation."""
+def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, judgment, rationale, info_unit_ids):
+    """Update the judgment of an existing Hypothesis to unverified, verified, or refuted. Provide its hypothesis_id, the new judgment, relevant obtained info_unit_ids, and a rationale explaining the evidential basis for the change."""
     return _propose(case, seen, context, proposals, "hypothesis_status", hypothesis_ids=[hypothesis_id],
-                    judgment=judgment, rationale=rationale, info_unit_ids=info_unit_ids, evidence_refs=evidence_refs)
+                    judgment=judgment, rationale=rationale, info_unit_ids=info_unit_ids)
 
 
 def propose_evidence_gap_update(case, seen, context, proposals, *, gap_id, addressing_info_unit_ids,
-                                status, rationale, evidence_refs):
-    """Update an existing gap_id only when its status changes or at least one obtained InfoUnit in addressing_info_unit_ids is not already associated with it. Keeping open is valid when adding new responding material. Rewording rationale or reusing SourceRefs alone is not an update; after no_change=true, inspect unread relevant material or Finish, without rewording and resubmitting the same operation. Use open or resolved according to the evidence and explain remaining uncertainty. Citations must belong to addressing_info_unit_ids, not the old Gap basis. Normal Finish appends responding material and applies status while preserving the Gap's ID, question, basis and Hypothesis associations. Correct a rejected update instead of creating a duplicate Gap."""
+                                status, rationale):
+    """Update an existing Evidence Gap's status, addressing materials, or both. Use status = resolved when the factual question has been sufficiently answered; otherwise use status = open and explain the remaining uncertainty. Provide addressing_info_unit_ids to associate newly obtained responding materials with the Gap. Submit an update when the status changes or new responding InfoUnits are associated."""
     return _propose(case, seen, context, proposals, "evidence_gap_update", gap_id=gap_id,
                     addressing_info_unit_ids=addressing_info_unit_ids, status=status,
-                    rationale=rationale, evidence_refs=evidence_refs)
+                    rationale=rationale)
 
 
 def finish_investigation(case, seen, context, goal, proposals, *, answer,
                          open_questions, completion_status, answer_basis, knowledge,
                          budget_exhausted=False, read_budget_exhausted=False):
-    """Deliver a concise answer to this run's Goal, preserving staged Proposals for whole-run validation and atomic commit even when the non-Finish tool budget is exhausted. completed means the Goal is sufficiently answered; open_questions may retain follow-up directions, risks or unverified matters that do not prevent its completion. evidence_insufficient means missing critical evidence prevents completing the Goal and requires explicit unresolved conditions. budget_exhausted means the shared tool budget is spent and that limit prevents completing the Goal. unsupported means the Goal exceeds current system capabilities. Choose the status from actual results; do not hide unresolved questions to pass validation. No writes occur on abnormal termination or concurrent reasoning/evidence changes. answer_basis distinguishes general knowledge/capabilities, case metadata, and case material. Case judgments require obtained material. The system preserves obtained source pointers for inspection. No fixed retrieval depth or Proposal count."""
+    """Complete the current investigation by submitting answer, answer_basis, open_questions, and completion_status. Keep answer within 1,000 characters. Use answer_basis = case_material for conclusions based on obtained case evidence, case_metadata for case metadata, or general for general knowledge. Set completion_status = completed when the Goal has been sufficiently addressed, evidence_insufficient when critical evidence is missing, budget_exhausted when the investigation budget prevents completion, or unsupported when the Goal exceeds available capabilities. Include relevant unresolved matters in open_questions."""
     from app.investigation_agent import _validate_summary
     def invalid(code, field, message, fix):
         raise AppError(code, message, details={"category": "result_semantics", "errors": [{
@@ -155,14 +151,14 @@ def finish_investigation(case, seen, context, goal, proposals, *, answer,
     if answer_basis not in {"general", "case_metadata", "case_material"}:
         invalid("invalid_tool_arguments", "answer_basis", "Unknown answer_basis",
                 "Choose general, case_metadata or case_material to match the answer's actual basis.")
-    if any(proposal_material_ids(p) or p.evidence_refs for p in proposals):
+    if any(proposal_material_ids(p) for p in proposals):
         if answer_basis != "case_material":
             invalid("invalid_answer_basis", "answer_basis", "Material-backed artifacts require case_material answer_basis",
-                    "Use case_material for material-backed Proposals; retain their validated evidence references.")
+                    "Use case_material for material-backed Proposals; retain their validated InfoUnit associations.")
     if answer_basis == "case_material":
         investigated = acquisition["has_material"] or acquisition["has_read_result"] or acquisition["read_failed"]
         if case.info_units and not investigated and not read_budget_exhausted:
-            invalid("initial_information_required", "answer_basis", "Read relevant case material before a case judgment; directory titles are discovery metadata",
+            invalid("initial_information_required", "answer_basis", "Read relevant case material before a case judgment",
                     "Actually read relevant material before a case judgment; use general or case_metadata only for answers based on those sources.")
         if completion_status == "completed" and not acquisition["has_material"]:
             invalid("evidence_not_obtained", "completion_status", "Empty/error reads do not establish case facts; explain the unresolved condition",

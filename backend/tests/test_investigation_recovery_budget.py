@@ -21,7 +21,7 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
 
     def hypothesis(self, index, ids=()):
         return f.tool("propose_hypothesis", {"content": f"待核查解释{index}", "rationale": "只是待检验解释。",
-            "info_unit_ids": list(ids), "evidence_refs": []}, f"hyp-{index}")
+            "info_unit_ids": list(ids)}, f"hyp-{index}")
 
     def mixed_calls(self):
         return [f.tool("get_evidence", {"info_unit_id": uid}, f"read-{i}")
@@ -135,18 +135,16 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
         self.assertEqual(len(result["proposals"]), 1)
         self.assertEqual(result["proposals"][0]["info_unit_ids"], ["U029", "U036"])
 
-    def test_invalid_source_recovery_carries_info_unit_and_index(self):
+    def test_unobtained_info_unit_recovery_carries_title_and_search_action(self):
         from test_reasoning_proposals import suggestion, proposal_call
-        bad = {**suggestion("hypothesis"), "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 99}]}
-        _, calls = self.run_script("核对", [proposal_call(bad, [], "bad"),
+        _, calls = self.run_script("核对", [proposal_call(suggestion("hypothesis"), [], "bad"),
             f.tool("get_evidence", {"info_unit_id": "U029"}, "recover"),
-            f.finish('核对', status='completed')], selected=["U029"], issue_key=self.case.issue_set[1])
+            f.finish('核对', status='completed')], issue_key=self.case.issue_set[1])
         errors = self.recovery(calls[1])["validation_details"]["errors"]
-        error = next(e for e in errors if e["code"] == "reference_out_of_range")
-        self.assertEqual(error["source_ref_index"], 99)
+        error = next(e for e in errors if e["code"] == "reference_not_obtained")
         self.assertEqual(error["info_unit_id"], "U029")
         self.assertTrue(error["info_unit_title"])
-        self.assertEqual(error["next_action"]["arguments"], {"info_unit_id": "U029", "offset": 0, "limit": 12})
+        self.assertEqual(error["next_action"]["tool"], "search_info_units")
 
     def test_failure_recovery_does_not_encourage_blind_retry(self):
         with patch.object(tools, "get_evidence", side_effect=OSError("unavailable")):

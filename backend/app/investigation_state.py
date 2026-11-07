@@ -9,25 +9,7 @@ from pydantic import ValidationError
 from app.errors import AppError
 
 MAX_CONTEXT_CHARS = 24000  # Deterministic character proxy, independent of provider tokenizer.
-MAX_DIRECTORY_ITEMS = 80
-MAX_DIRECTORY_CHARS = 6000
 READ_TOOLS = frozenset({"search_info_units", "get_relations", "get_evidence", "search_evidence_gaps"})
-
-
-def case_info_directory(case):
-    """Discovery metadata only; never grant content or SourceRef permissions."""
-    items, size = [], 0
-    for unit in sorted(case.info_units, key=lambda u: u.id):
-        row = {"id": unit.id, "title": unit.title[:120], "type": unit.type.value,
-               "title_truncated": len(unit.title) > 120}
-        cost = len(json.dumps(row, ensure_ascii=False))
-        if len(items) >= MAX_DIRECTORY_ITEMS or size + cost > MAX_DIRECTORY_CHARS:
-            break
-        items.append(row)
-        size += cost
-    total = len(case.info_units)
-    return {"total_count": total, "items": items, "context_truncated": len(items) < total,
-            "omitted_count": total - len(items)}
 
 
 def validation_issues(exc, prefix=(), fix="Correct the indicated field using the tool schema"):
@@ -166,8 +148,6 @@ def model_context(initial, knowledge, recovery=None):
                         for row in workspace.get("reasoning", {}).get(kind, [])] for kind, keys in fields.items()}
     reasoning["has_more"] = workspace.get("reasoning", {}).get("has_more", False)
     result = {"goal": goal, "current_issue": workspace.get("current_issue"),
-        "core_issue": initial.get("core_issue"),
-        "case_info_directory": deepcopy(initial["case_info_directory"]),
         "materials": {
             "info_units": section(sorted(knowledge.info_units.items(), key=lambda kv:rank(kv[1])), 6500),
             "relations": section(sorted(knowledge.relations.items(), key=relation_rank), 3500),
@@ -183,26 +163,13 @@ def model_context(initial, knowledge, recovery=None):
         "recovery": deepcopy(recovery)}
     if len(knowledge.notices) > 6:
         result["notices"].append({"context_truncated": True, "omitted_count": len(knowledge.notices) - 6})
-    # Filter after trimming so omitted material remains discoverable.
-    def directory_view():
-        visible = {row["id"] for row in result["materials"]["info_units"]["items"]}
-        directory = deepcopy(initial["case_info_directory"])
-        directory["items"] = [row for row in directory["items"] if row["id"] not in visible]
-        return directory
-
-    result["case_info_directory"] = directory_view()
-    # Successful proposals and dependency IDs remain visible. Trim material
-    # projections and directory, never the authoritative KnowledgeState.
+    # Trim material projections, never the authoritative KnowledgeState.
     sections = list(result["materials"].values())
     while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and any(s["items"] for s in sections):
         target = max((s for s in sections if s["items"]), key=lambda s:len(json.dumps(s, ensure_ascii=False)))
         row = target["items"].pop()
         key = KnowledgeState.ref_key(row) if "source_ref_index" in row else row["id"]
         target["omitted_ids"].append(key); target["context_truncated"] = True
-        result["case_info_directory"] = directory_view()
-    directory = result["case_info_directory"]
-    while len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS and directory["items"]:
-        directory["items"].pop(); directory["context_truncated"] = True; directory["omitted_count"] += 1
     if len(json.dumps(result, ensure_ascii=False)) > MAX_CONTEXT_CHARS:
         raise AppError("investigation_context_limit", "Required task and proposal context exceeds the context budget")
     return result

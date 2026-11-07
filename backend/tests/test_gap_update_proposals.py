@@ -63,8 +63,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
     def investigate(self, *, before_finish=None, **overrides):
         requests = []
         args = {"gap_id": self.gid, "addressing_info_unit_ids": [self.uid], "status": "open",
-                "rationale": "合同仅记载起租约定，尚无实际履行凭证；部分回应，仍需实际收款或入住记录核对。",
-                "evidence_refs": [{"info_unit_id": self.uid, "source_ref_index": self.source_index}], **overrides}
+                "rationale": "合同仅记载起租约定，尚无实际履行凭证；部分回应，仍需实际收款或入住记录核对。", **overrides}
         async def model(config, messages, definitions, schema=None, **kwargs):
             state = json.loads(messages[1]["content"])
             requests.append(state)
@@ -175,7 +174,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                     reply = replies.tool("get_evidence", {"info_unit_id": self.uid}, "read-source")
                 elif len(requests) == 4:
                     reply = replies.tool("propose_evidence_gap_update", {"gap_id": gap["id"],
-                        "addressing_info_unit_ids": [self.uid], "status": "open", "evidence_refs": pointers,
+                        "addressing_info_unit_ids": [self.uid], "status": "open",
                         "rationale": "补充合同仅记载起租约定，实际履行仍需核对。"}, "update-original")
                 else:
                     reply = replies.finish('核查新增合同', questions=['实际履行仍待核实。'], status='evidence_insufficient')
@@ -270,11 +269,11 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                 return replies.tool("get_evidence", {"info_unit_id": self.uid}, "source")
             if len(requests) == 2:
                 return replies.tool("propose_evidence_gap_update", {"gap_id": self.gid,
-                    "addressing_info_unit_ids": [self.uid], "status": "open", "evidence_refs": pointers,
+                    "addressing_info_unit_ids": [self.uid], "status": "open",
                     "rationale": "新合同只记录起租约定，没有实际收款凭证，原事实问题仍未解决。"}, "update")
             if len(requests) == 3:
                 return replies.tool("propose_hypothesis_status", {"hypothesis_id": self.hids[0],
-                    "judgment": "unverified", "info_unit_ids": [self.uid], "evidence_refs": pointers,
+                    "judgment": "unverified", "info_unit_ids": [self.uid],
                     "rationale": "约定起租不足以证明已履行及没有损失，保留待验证判断。"}, "status")
             return replies.finish('核对新合同', status='evidence_insufficient', questions=['实际履行与收款尚待核实。'])
         with patch.object(llm_client, "load_config", return_value=replies.CONFIG), patch.object(
@@ -306,7 +305,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
                 self.assertIsNotNone(requests[3]["recovery"])
                 self.assertEqual(self.state().gaps[0], self.original_gap)
 
-    def test_wrong_basis_citation_is_repaired_in_same_run_without_new_gap(self):
+    def test_unobtained_responding_material_is_read_in_same_run_without_new_gap(self):
         self.supplement()
         states = []
         async def model(config, messages, definitions, schema=None, **kwargs):
@@ -314,16 +313,14 @@ class TestGapUpdateProposals(IsolatedCaseTest):
             states.append(state)
             turn = len(states)
             if turn <= 2:
-                return replies.tool("get_evidence", {"info_unit_id": self.old_id if turn == 1 else self.uid}, f"read-{turn}")
-            if turn <= 4:
-                if turn == 4:
-                    errors = state["recovery"]["validation_details"]["errors"]
-                    self.assertTrue(any(e["code"] == "proposal_evidence_outside_materials" for e in errors))
-                    self.assertEqual(state["proposals"], [])
+                return replies.tool("get_evidence", {"info_unit_id": self.old_id, "limit": turn}, f"read-{turn}")
+            if turn == 4:
+                errors = state["recovery"]["validation_details"]["errors"]
+                self.assertTrue(any(e["code"] == "reference_not_obtained" for e in errors))
+                return replies.tool("get_evidence", {"info_unit_id": self.uid}, "responding-material")
+            if turn in (3, 5):
                 return replies.tool("propose_evidence_gap_update", {"gap_id": self.gid,
-                    "addressing_info_unit_ids": [self.uid], "status": "open", "rationale": "补充合同部分回应原缺口。",
-                    "evidence_refs": [{"info_unit_id": self.old_id if turn == 3 else self.uid,
-                                      "source_ref_index": 0 if turn == 3 else self.source_index}]}, f"update-{turn}")
+                    "addressing_info_unit_ids": [self.uid], "status": "open", "rationale": "补充合同部分回应原缺口。"}, f"update-{turn}")
             return replies.finish('修正缺口回应', status='evidence_insufficient', questions=['实际履行仍待核实。'])
         with patch.object(llm_client, "load_config", return_value=replies.CONFIG), patch.object(
                 llm_client, "call_tools", new=AsyncMock(side_effect=model)):

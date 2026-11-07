@@ -1,7 +1,8 @@
 """Issue reasoning objects, deliberately separate from InfoUnit/Relation Schema."""
+from copy import deepcopy
 from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import ConfigDict, Field, PrivateAttr, TypeAdapter, field_serializer, model_validator
 
 from app.schemas import ContractModel, Point, Text, SourceRef
 
@@ -101,7 +102,7 @@ class ReasoningEdit(ContractModel):
         return self
 
 
-class ProposalEvidenceRef(ContractModel):
+class InvestigationSourceRef(ContractModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     info_unit_id: Text
     source_ref_index: Annotated[int, Field(ge=0)]
@@ -118,13 +119,11 @@ class ProposalBase(ContractModel):
     meaning: LinkMeaning | None
     judgment: Judgment | None
     rationale: ReasoningText
-    evidence_refs: Annotated[list[ProposalEvidenceRef], Field(max_length=8)]
 
     @model_validator(mode="after")
     def shape(self):
-        if self.kind in {"evidence_link", "hypothesis_status", "evidence_gap_update"} and (
-                not proposal_material_ids(self) or not self.evidence_refs):
-            raise ValueError("Grounded proposals require obtained material IDs and evidence_refs")
+        if self.kind in {"evidence_link", "hypothesis_status", "evidence_gap_update"} and not proposal_material_ids(self):
+            raise ValueError("Grounded proposals require obtained InfoUnit IDs")
         material_field = ("basis_info_unit_ids" if self.kind == "evidence_gap" else
                           "addressing_info_unit_ids" if self.kind == "evidence_gap_update" else "info_unit_ids")
         for field in ("hypothesis_ids", material_field):
@@ -181,6 +180,13 @@ ReasoningProposal = Annotated[MaterialProposal | EvidenceGapProposal | EvidenceG
 PROPOSAL_ADAPTER = TypeAdapter(ReasoningProposal)
 
 
+def read_stored_proposal(value):
+    """Read historical source pointers without accepting them on new tool calls."""
+    if isinstance(value, dict):
+        return {key: item for key, item in value.items() if key != "evidence_refs"}
+    return value
+
+
 def proposal_material_ids(proposal: ReasoningProposal) -> list[str]:
     """References used for citation validation and adoption staleness checks."""
     if proposal.kind == "evidence_gap":
@@ -209,6 +215,27 @@ class ReasoningRun(ContractModel):
     changes: list[ReasoningChange]
     proposals: list[ReasoningProposal] = Field(default_factory=list)
     evidence: list[ReasoningRunEvidence] = Field(default_factory=list)
+    _historical_evidence_refs: dict = PrivateAttr(default_factory=dict)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def stored_proposals(cls, value, handler):
+        legacy = {}
+        if isinstance(value, dict) and isinstance(value.get("proposals"), list):
+            legacy = {i: deepcopy(p["evidence_refs"]) for i, p in enumerate(value["proposals"])
+                      if isinstance(p, dict) and "evidence_refs" in p}
+            value = {**value, "proposals": [read_stored_proposal(p) for p in value["proposals"]]}
+        record = handler(value)
+        if not isinstance(value, cls):
+            record._historical_evidence_refs = legacy
+        return record
+
+    @field_serializer("proposals")
+    def stored_proposal_payloads(self, proposals, info):
+        rows = [p.model_dump(mode=info.mode) for p in proposals]
+        for index, refs in self._historical_evidence_refs.items():
+            rows[index]["evidence_refs"] = deepcopy(refs)
+        return rows
 
 
 class ReasoningState(ContractModel):

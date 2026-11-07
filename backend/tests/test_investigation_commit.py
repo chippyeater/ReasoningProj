@@ -93,7 +93,7 @@ class TestInvestigationCommit(unittest.TestCase):
                 gid = self.edit(gap={"content": f"实际收租情况 {order}", "hypothesis_ids": [hid], "basis_info_unit_ids": ["U026"]}).json()["object_id"]
                 status = {**fixture.suggestion("hypothesis_status", hid), "judgment": "verified"}
                 update = {"kind": "evidence_gap_update", "gap_id": gid, "addressing_info_unit_ids": ["U029"],
-                    "status": "open", "rationale": "仅部分回应", "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}
+                    "status": "open", "rationale": "仅部分回应"}
                 proposals = [status, update, fixture.suggestion("evidence_link", hid)]
                 result, _ = self.run_proposals([proposals[i] for i in order], [gid])
                 self.assertEqual(result["workspace_commit"]["status"], "applied", result)
@@ -113,8 +113,7 @@ class TestInvestigationCommit(unittest.TestCase):
         saved = self.raw()
         proposals = [{**fixture.suggestion("hypothesis_status", first), "judgment": "verified"},
             {"kind": "evidence_gap_update", "gap_id": gap_id, "addressing_info_unit_ids": ["U029"],
-             "status": "resolved", "rationale": "离线协议样例，模拟已有效提交的回应。",
-             "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]},
+             "status": "resolved", "rationale": "离线协议样例，模拟已有效提交的回应。"},
             {**fixture.suggestion("hypothesis_status", second), "judgment": "refuted"}]
         followups = ["后续可调查其他期间的收支，不影响本轮指定期间的完成判断。"]
         script = [agent_fixture.tool("get_evidence", {"info_unit_id": "U029"}),
@@ -201,6 +200,7 @@ class TestInvestigationCommit(unittest.TestCase):
             result, _ = self.run_proposals([fixture.suggestion("hypothesis")])
         path = case_dir(self.case.case_id) / f"runs/{result['run_id']}.output.json"
         audit = json.loads(path.read_text(encoding="utf-8"))
+        audit["result"]["proposals"][0]["evidence_refs"] = [{"info_unit_id": "U029", "source_ref_index": 0}]
         audit["result"]["findings"] = [{"statement": "历史调查的陈述", "info_unit_ids": ["U029"],
             "relation_ids": [], "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}]
         path.write_text(json.dumps(audit, ensure_ascii=False), encoding="utf-8")

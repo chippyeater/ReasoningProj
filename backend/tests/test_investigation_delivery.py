@@ -33,18 +33,18 @@ class TestInvestigationDelivery(unittest.TestCase):
                 return f.tool("search_info_units", {"query": "损失"}, "read")
             visible = {u["id"] for u in state["materials"]["info_units"]["items"]}
             self.assertTrue({"U029", "U036"} <= visible)
-            self.assertFalse(visible & {u["id"] for u in state["case_info_directory"]["items"]})
+            self.assertNotIn("case_info_directory", state)
             if turn == 2:
                 return f.tool("propose_hypothesis", {"content": proposition,
                     "rationale": "房东称空置造成损失；是否少收租金需查计租和收款记录。",
-                    "info_unit_ids": ["U029", "U036"], "evidence_refs": []}, "one-hypothesis")
+                    "info_unit_ids": ["U029", "U036"]}, "one-hypothesis")
             self.assertIn("propose_evidence_link", names)
             hypothesis = state["proposals"][0]
             self.assertEqual(set(hypothesis), {"proposal_id", "kind", "content", "rationale", "info_unit_ids"})
             self.assertEqual(hypothesis["content"], proposition)
             if turn == 3:
                 return f.tool("propose_evidence_gap", {"content": "腾退后的租金是否足额收取？",
-                    "rationale": "核对银行入账与计租期间。", "basis_info_unit_ids": ["U036"], "evidence_refs": [],
+                    "rationale": "核对银行入账与计租期间。", "basis_info_unit_ids": ["U036"],
                     "hypothesis_targets": {"hypothesis_ids": [], "hypothesis_proposal_ids": [hypothesis["proposal_id"]]}}, "one-gap")
             return f.finish(goal, status="evidence_insufficient", questions=["实际收款仍待核实。"],
                             answer="现有陈述不足以确认少收租金，已提交待验证命题和收款核查问题。")
@@ -55,7 +55,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         audit = self.audits()[0]
         # Projection changes neither the adoption contract nor the exact request audit.
         self.assertEqual(audit["result"]["proposals"], result["proposals"])
-        self.assertEqual(result["proposals"][0]["evidence_refs"], [])
+        self.assertNotIn("evidence_refs", result["proposals"][0])
         for call, recorded in zip(calls, audit["model_calls"]):
             self.assertEqual(recorded["request"]["messages"], call["messages"])
 
@@ -72,11 +72,11 @@ class TestInvestigationDelivery(unittest.TestCase):
                 return f.tool("propose_hypothesis", {
                     "content": "租金接续支付，入住间隔未造成少收租金" if not proposals else "新租约延后计租，空置期间确有租金缺口",
                     "rationale": "待检验解释，需要对照计租与实收记录，单方陈述不能证实。",
-                    "info_unit_ids": [uid], "evidence_refs": [{"info_unit_id": uid, "source_ref_index": 0}]}, f"hyp-{len(proposals)}")
+                    "info_unit_ids": [uid]}, f"hyp-{len(proposals)}")
             if len(proposals) == 2:
                 return f.tool("propose_evidence_gap", {"content": "新旧租约的计租期间与实际收款能否衔接？",
                     "hypothesis_targets": {"hypothesis_ids": [], "hypothesis_proposal_ids": [p["proposal_id"] for p in proposals]},
-                    "rationale": "收款与计租记录可以区分是否实际少收租金。", "basis_info_unit_ids": [], "evidence_refs": []}, "gap")
+                    "rationale": "收款与计租记录可以区分是否实际少收租金。", "basis_info_unit_ids": []}, "gap")
             self.assertEqual(len(state["materials"]["source_refs"]["items"]), 3)
             return f.finish(goal, status="completed", answer="已提出两个待检验解释及一个共同缺口，请逐项审阅采纳。")
         result, calls = self.run_script(goal, respond, work_context=self.context(), issue_key=self.case.issue_set[1])
@@ -90,8 +90,7 @@ class TestInvestigationDelivery(unittest.TestCase):
 
     def test_invalid_proposal_does_not_appear_in_memory_or_receipt(self):
         result, calls = self.run_script("提出解释", [f.tool("propose_hypothesis", {
-            "content": "未验证的解释", "rationale": "没有读取来源", "info_unit_ids": ["U029"],
-            "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}),
+            "content": "未验证的解释", "rationale": "没有读取来源", "info_unit_ids": ["U029"]}),
             f.finish("提出解释", status="unsupported", questions=["当前引用尚未取得"], basis="general")],
             work_context=self.context(), issue_key=self.case.issue_set[1])
         self.assertEqual(json.loads(calls[1]["messages"][1]["content"])["proposals"], [])
@@ -112,11 +111,11 @@ class TestInvestigationDelivery(unittest.TestCase):
                 return f.tool("propose_hypothesis", {
                     "content": "若新租约延后计租且该期间无其他收款，则存在少收租金。" if not proposals else "若新租约租金降低且没有差额补偿，则后续租金收入减少。",
                     "rationale": "损失主张需要核对相应的计租或实收条件，尚未核验原文。",
-                    "info_unit_ids": ["U029", "U036"], "evidence_refs": []}, f"hyp-{len(proposals)}")
+                    "info_unit_ids": ["U029", "U036"]}, f"hyp-{len(proposals)}")
             if len(proposals) == 2:
                 return f.tool("propose_evidence_gap", {"content": "腾退后的实际收款是否覆盖原计租期间应收的金额？",
                     "rationale": "对照原租约应收与实际收款，可核查计租断档和租金降低这两个独立命题。",
-                    "basis_info_unit_ids": ["U029", "U036"], "evidence_refs": [],
+                    "basis_info_unit_ids": ["U029", "U036"],
                     "hypothesis_targets": {"hypothesis_ids": [], "hypothesis_proposal_ids": [p["proposal_id"] for p in proposals]}}, "gap")
             return f.finish(goal, status="completed", answer="已提交两个可分别检验的命题及一个共同核查问题，请审阅。")
         result, calls = self.run_script(goal, respond, work_context=self.context(), issue_key=self.case.issue_set[1])
@@ -126,10 +125,10 @@ class TestInvestigationDelivery(unittest.TestCase):
         proposals = result["proposals"]
         self.assertEqual([p["kind"] for p in proposals], ["hypothesis", "hypothesis", "evidence_gap"])
         self.assertEqual(proposals[2]["hypothesis_proposal_ids"], [p["proposal_id"] for p in proposals[:2]])
-        self.assertTrue(all(not p["evidence_refs"] for p in proposals))
+        self.assertTrue(all("evidence_refs" not in p for p in proposals))
         self.assertFalse(any(t["name"] == "get_evidence" for t in self.audits()[0]["tool_calls"]))
 
-    def test_source_required_proposals_reject_empty_and_unobtained_refs_then_recover(self):
+    def test_links_and_status_use_obtained_info_units_without_source_pointers(self):
         context = self.context()
         for name in ("propose_evidence_link", "propose_hypothesis_status"):
             with self.subTest(name=name):
@@ -137,23 +136,20 @@ class TestInvestigationDelivery(unittest.TestCase):
                 from app.reasoning_models import ReasoningEdit, HypothesisEdit
                 _, hid = edit_reasoning(self.case, ReasoningEdit(issue=self.case.issue_set[1], hypothesis=HypothesisEdit(content=f"存在租金损失 {name}")))
                 context["reasoning"]["hypotheses"] = [{"id": hid, "content": "存在租金损失", "revision": 1}]
-                common = {"hypothesis_id": hid, "rationale": "核对陈述的具体依据", "evidence_refs": []}
+                args = {"hypothesis_id": hid, "rationale": "离线协议样例，核对陈述依据。"}
                 if name == "propose_evidence_link":
-                    common.update(info_unit_id="U029", meaning="related", hypothesis_proposal_ids=[])
+                    args.update(info_unit_id="U029", meaning="related", hypothesis_proposal_ids=[])
                 else:
-                    common.update(info_unit_ids=["U029"], judgment="verified")
-                cited = {**common, "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}
-                result, calls = self.run_script("核对假设依据", [f.tool("search_info_units", {"query": "损失"}),
-                    f.tool(name, common, "empty-ref"), f.tool(name, cited, "unobtained-ref"),
-                    f.tool("get_evidence", {"info_unit_id": "U029"}, "source"),
-                    f.tool(name, cited, "valid-ref"), f.finish("核对假设依据", status="completed")],
+                    args.update(info_unit_ids=["U029"], judgment="verified")
+                result, calls = self.run_script("核对假设依据", [f.tool(name, args, "unread"),
+                    f.tool("search_info_units", {"query": "损失"}, "read"),
+                    f.tool(name, args, "obtained"), f.finish("核对假设依据", status="completed")],
                     work_context=context, issue_key=self.case.issue_set[1])
-                missing = json.loads(calls[2]["messages"][1]["content"])["recovery"]
-                unobtained = json.loads(calls[3]["messages"][1]["content"])["recovery"]
-                self.assertEqual(missing["code"], "invalid_tool_arguments")
-                self.assertEqual(unobtained["code"], "invalid_investigation_reference")
+                recovery = json.loads(calls[1]["messages"][1]["content"])["recovery"]
+                self.assertEqual(recovery["code"], "invalid_investigation_reference")
                 self.assertEqual(len(result["proposals"]), 1)
-                self.assertEqual(result["proposals"][0]["evidence_refs"], cited["evidence_refs"])
+                self.assertNotIn("evidence_refs", result["proposals"][0])
+                self.assertFalse(result["evidence_refs"])
 
     def test_generations_and_audits_track_exact_single_prompt_and_request(self):
         backend = tracing.FakeBackend()

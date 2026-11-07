@@ -28,7 +28,7 @@ class TestInvestigationResultContract(unittest.TestCase):
         def proposal(kind):
             return {"kind": kind, "content": "需要核实的假设或证据缺口", "hypothesis_ids": [],
                     ("basis_info_unit_ids" if kind == "evidence_gap" else "info_unit_ids"): ["U029"], "meaning": None, "judgment": None,
-                    "rationale": "当事人陈述需要独立材料核查。", "evidence_refs": [deepcopy(pointer)]}
+                    "rationale": "当事人陈述需要独立材料核查。"}
         return {"goal": "核实实际损失",
             "relevant_info_unit_ids": ["U029"], "relevant_relation_ids": [], "evidence_refs": [pointer],
             "open_questions": ["实际损失仍需核查。"], "completion_status": "evidence_insufficient",
@@ -156,7 +156,7 @@ class TestInvestigationResultContract(unittest.TestCase):
     def test_unretrieved_source_ref_is_a_reference_error_not_a_structure_error(self):
         payload = self.result()
         payload["proposals"] = [payload["proposals"][0]]
-        payload["proposals"][0]["evidence_refs"][0]["source_ref_index"] = 99
+        payload["evidence_refs"][0]["source_ref_index"] = 99
         InvestigationResult.model_validate(payload)
         with self.assertRaises(AppError) as caught:
             self.validate(payload)

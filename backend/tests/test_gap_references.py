@@ -11,7 +11,7 @@ import test_reasoning_proposals as proposal_fixture
 from app.case_store import case_dir
 from app.errors import AppError
 from app.investigation_agent import tool_definitions
-from app.investigation_state import KnowledgeState, case_info_directory, model_context
+from app.investigation_state import KnowledgeState, model_context
 from app.issue_workspaces import get_issue_workspaces, investigation_context, reasoning_references
 from app.reasoning_models import EvidenceGap, PROPOSAL_ADAPTER
 from scripts.migrate_gap_references import migrate_workspace
@@ -165,7 +165,7 @@ class TestGapReferences(unittest.TestCase):
         self.assertEqual(gap["addressing_info_unit_ids"], ids[7:12])
         self.assertTrue(gap["basis_info_unit_ids_truncated"])
         self.assertTrue(gap["addressing_info_unit_ids_truncated"])
-        initial = {"goal": "核查计租", "work_context": work, "case_info_directory": case_info_directory(self.case)}
+        initial = {"goal": "核查计租", "work_context": work}
         projected = model_context(initial, KnowledgeState(initial))["reasoning"]["gaps"][0]
         self.assertEqual(projected["basis_info_unit_ids"], gap["basis_info_unit_ids"])
         self.assertEqual(projected["addressing_info_unit_ids"], gap["addressing_info_unit_ids"])
