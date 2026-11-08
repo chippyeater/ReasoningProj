@@ -1,27 +1,13 @@
 """Issue reasoning objects, deliberately separate from InfoUnit/Relation Schema."""
-from copy import deepcopy
 from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, PrivateAttr, TypeAdapter, field_serializer, model_validator
+from pydantic import ConfigDict, Field, TypeAdapter, model_validator
 
 from app.schemas import ContractModel, Point, Text, SourceRef
 
 ReasoningText = Annotated[str, Field(min_length=1, max_length=600, pattern=r"\S")]
 Judgment = Literal["unverified", "verified", "refuted"]
 LinkMeaning = Literal["support", "oppose", "related"]
-
-
-def migrate_stored_evidence_link(value):
-    """Normalize a stored Link/Proposal in memory; never rewrite historical audits."""
-    if isinstance(value, dict) and value.get("meaning") == "verify":
-        return {**value, "meaning": "related"}
-    return value
-
-
-def migrate_stored_reasoning_state(value):
-    if isinstance(value, dict) and isinstance(value.get("links"), list):
-        return {**value, "links": [migrate_stored_evidence_link(link) for link in value["links"]]}
-    return value
 
 
 class Hypothesis(ContractModel):
@@ -108,6 +94,14 @@ class InvestigationSourceRef(ContractModel):
     source_ref_index: Annotated[int, Field(ge=0)]
 
 
+class ReasoningChange(ContractModel):
+    collection: Literal["hypotheses", "gaps", "links"]
+    object_id: Text
+    before: Hypothesis | EvidenceGap | EvidenceLink | None
+    after: Hypothesis | EvidenceGap | EvidenceLink | None
+    proposal_keys: list[str] = Field(default_factory=list)
+
+
 class ProposalBase(ContractModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     proposal_id: Annotated[str, Field(pattern=r"^proposal-[a-f0-9]{32}$")] | None = None
@@ -119,6 +113,8 @@ class ProposalBase(ContractModel):
     meaning: LinkMeaning | None
     judgment: Judgment | None
     rationale: ReasoningText
+    # Server-generated audit of the operation actually applied to this run.
+    changes: list[ReasoningChange] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def shape(self):
@@ -180,13 +176,6 @@ ReasoningProposal = Annotated[MaterialProposal | EvidenceGapProposal | EvidenceG
 PROPOSAL_ADAPTER = TypeAdapter(ReasoningProposal)
 
 
-def read_stored_proposal(value):
-    """Read historical source pointers without accepting them on new tool calls."""
-    if isinstance(value, dict):
-        return {key: item for key, item in value.items() if key != "evidence_refs"}
-    return value
-
-
 def proposal_material_ids(proposal: ReasoningProposal) -> list[str]:
     """References used for citation validation and adoption staleness checks."""
     if proposal.kind == "evidence_gap":
@@ -194,14 +183,6 @@ def proposal_material_ids(proposal: ReasoningProposal) -> list[str]:
     if proposal.kind == "evidence_gap_update":
         return proposal.addressing_info_unit_ids
     return proposal.info_unit_ids
-
-
-class ReasoningChange(ContractModel):
-    collection: Literal["hypotheses", "gaps", "links"]
-    object_id: Text
-    before: Hypothesis | EvidenceGap | EvidenceLink | None
-    after: Hypothesis | EvidenceGap | EvidenceLink | None
-    proposal_keys: list[str] = Field(default_factory=list)
 
 
 class ReasoningRunEvidence(ContractModel):
@@ -215,27 +196,6 @@ class ReasoningRun(ContractModel):
     changes: list[ReasoningChange]
     proposals: list[ReasoningProposal] = Field(default_factory=list)
     evidence: list[ReasoningRunEvidence] = Field(default_factory=list)
-    _historical_evidence_refs: dict = PrivateAttr(default_factory=dict)
-
-    @model_validator(mode="wrap")
-    @classmethod
-    def stored_proposals(cls, value, handler):
-        legacy = {}
-        if isinstance(value, dict) and isinstance(value.get("proposals"), list):
-            legacy = {i: deepcopy(p["evidence_refs"]) for i, p in enumerate(value["proposals"])
-                      if isinstance(p, dict) and "evidence_refs" in p}
-            value = {**value, "proposals": [read_stored_proposal(p) for p in value["proposals"]]}
-        record = handler(value)
-        if not isinstance(value, cls):
-            record._historical_evidence_refs = legacy
-        return record
-
-    @field_serializer("proposals")
-    def stored_proposal_payloads(self, proposals, info):
-        rows = [p.model_dump(mode=info.mode) for p in proposals]
-        for index, refs in self._historical_evidence_refs.items():
-            rows[index]["evidence_refs"] = deepcopy(refs)
-        return rows
 
 
 class ReasoningState(ContractModel):

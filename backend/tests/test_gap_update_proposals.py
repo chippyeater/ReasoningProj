@@ -111,7 +111,7 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual(gap.revision, self.original_gap.revision + 1)
         self.assertEqual([h.judgment for h in self.state().hypotheses], judgments)
         audit = json.loads((self.data_dir / self.cid / f"runs/{result['run_id']}.output.json").read_text(encoding="utf-8"))
-        self.assertEqual(next(g["revision"] for g in audit["proposal_receipt"]["baseline"]["gaps"] if g["id"] == self.gid), self.original_gap.revision)
+        self.assertEqual(next(g["revision"] for g in audit["workspace_receipt"]["baseline"]["gaps"] if g["id"] == self.gid), self.original_gap.revision)
 
     def test_merged_old_node_uses_new_source_beyond_existing_evidence_tool_window(self):
         self.supplement(merge=True)
@@ -195,8 +195,8 @@ class TestGapUpdateProposals(IsolatedCaseTest):
         self.assertEqual(audit["tool_calls"][1]["no_progress"], 0)
         for call, recorded in zip(requests, audit["model_calls"]):
             self.assertEqual(call, recorded["request"])
-        self.assertEqual(next(g["revision"] for g in audit["proposal_receipt"]["baseline"]["gaps"] if g["id"] == self.gid), before.gaps[0].revision)
-        self.assertTrue(set(self.hids) <= {h["id"] for h in audit["proposal_receipt"]["baseline"]["hypotheses"]})
+        self.assertEqual(next(g["revision"] for g in audit["workspace_receipt"]["baseline"]["gaps"] if g["id"] == self.gid), before.gaps[0].revision)
+        self.assertTrue(set(self.hids) <= {h["id"] for h in audit["workspace_receipt"]["baseline"]["hypotheses"]})
         return result, before
 
     def test_hidden_gap_is_discovered_and_updated_without_recreating_or_judging(self):

@@ -31,7 +31,7 @@ from app.reasoning_models import ReasoningEdit
 from app.reasoning_service import edit_reasoning
 from app.reasoning_models import InvestigationRunEdit, InvestigationRunRef
 from app.reasoning_proposals import reverse_investigation, retry_investigation
-from app.issue_workspaces import IssueWorkspacePatch, get_issue_workspaces, update_issue_workspace, investigation_context
+from app.issue_workspaces import IssueWorkspacePatch, get_issue_workspaces, update_issue_workspace
 from app.observability import flush as flush_observability
 from app.quote_units import QuoteUnit
 from app.relation_service import create_relation, delete_relation, run_relation, update_relation
@@ -96,13 +96,16 @@ async def get_case(case_id: str) -> CaseResponse:
 
 
 @app.post("/api/cases/{case_id}/agent/run")
-async def agent_run(case_id: str, payload: AgentRunInput) -> dict:
+async def agent_run(case_id: str, payload: AgentRunInput, request: Request) -> dict:
     case = require_case(case_id)
     if (payload.selected_reasoning_ids or payload.focused_object_id is not None) and payload.current_issue is None:
         raise AppError("unknown_issue", "Selected reasoning objects require a current Issue")
-    context = investigation_context(case, payload.current_issue, payload.goal, payload.selected_reasoning_ids,
-        selected_info_unit_ids=payload.selected_info_unit_ids, focused_object_id=payload.focused_object_id) if payload.current_issue is not None else None
-    result = await run_investigation(case, payload.goal, payload.selected_info_unit_ids, work_context=context, issue_key=payload.current_issue)
+    # UI selection hints only. The Run captures and projects its own workspace.
+    context = {"current_issue": payload.current_issue, "canvas": {
+        "selected_reasoning_ids": payload.selected_reasoning_ids,
+        "focused_object_id": payload.focused_object_id}} if payload.current_issue is not None else None
+    result = await run_investigation(case, payload.goal, payload.selected_info_unit_ids,
+        work_context=context, issue_key=payload.current_issue, is_cancelled=request.is_disconnected)
     units = {unit.id: unit for unit in case.info_units}
     files = {file.file_id: file for file in case.files}
     # Hydrate only validated, actually used pointers for the UI. Never model input.

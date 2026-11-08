@@ -31,7 +31,7 @@ class TestInvestigationCommit(unittest.TestCase):
     def replay(self, result):
         audit = json.loads((case_dir(self.case.case_id) / f"runs/{result['run_id']}.output.json").read_text(encoding="utf-8"))
         return commit_investigation(self.case, self.issue, result["run_id"],
-            [PROPOSAL_ADAPTER.validate_python(p) for p in result["proposals"]], audit["proposal_receipt"])
+            [PROPOSAL_ADAPTER.validate_python(p) for p in result["proposals"]], audit["workspace_receipt"])
 
     def reverse(self, run_id, restore=False):
         return self.client.post(f"/api/cases/{self.case.case_id}/investigation-changes/reverse", json={
@@ -196,22 +196,6 @@ class TestInvestigationCommit(unittest.TestCase):
         with self.assertRaises(AppError):
             self.replay(result)
 
-    def test_historical_audit_with_findings_can_retry_without_rewriting_it(self):
-        with patch("app.issue_workspaces.write_json", side_effect=OSError("disk full")):
-            result, _ = self.run_proposals([fixture.suggestion("hypothesis")])
-        path = case_dir(self.case.case_id) / f"runs/{result['run_id']}.output.json"
-        audit = json.loads(path.read_text(encoding="utf-8"))
-        audit["result"]["proposals"][0]["evidence_refs"] = [{"info_unit_id": "U029", "source_ref_index": 0}]
-        audit["result"]["findings"] = [{"statement": "历史调查的陈述", "info_unit_ids": ["U029"],
-            "relation_ids": [], "evidence_refs": [{"info_unit_id": "U029", "source_ref_index": 0}]}]
-        path.write_text(json.dumps(audit, ensure_ascii=False), encoding="utf-8")
-        saved = path.read_bytes()
-        response = self.retry(result["run_id"])
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()["workspace_commit"]["status"], "applied")
-        self.assertEqual(path.read_bytes(), saved)
-        self.assertEqual(len(self.state().hypotheses), 1)
-
     def test_finish_preserves_user_issue_switch_during_investigation(self):
         from app.issue_workspaces import update_issue_workspace, IssueWorkspacePatch
         hid = self.hypothesis()
@@ -271,7 +255,7 @@ class TestInvestigationCommit(unittest.TestCase):
         saved = self.raw()
         result, _ = self.run_proposals([fixture.suggestion("evidence_link", hid)], [hid], summary_failure=True)
         self.assertEqual(result["summary_status"], "failed")
-        self.assertEqual(result["workspace_commit"]["status"], "pending")
+        self.assertEqual(result["workspace_commit"]["status"], "discarded")
         self.assertEqual(len(result["proposals"]), 1)
         self.assertEqual(self.raw(), saved)
         self.assertEqual(self.retry(result["run_id"]).status_code, 409)
@@ -325,7 +309,7 @@ class TestInvestigationCommit(unittest.TestCase):
         result, _ = self.run_at_budget(invalid_finish=True)
         self.assertEqual(result["summary_status"], "failed")
         self.assertEqual(result["completion_status"], "budget_exhausted")
-        self.assertEqual(result["workspace_commit"]["status"], "pending")
+        self.assertEqual(result["workspace_commit"]["status"], "discarded")
         self.assertEqual(len(result["proposals"]), 4)
         self.assertEqual(self.retry(result["run_id"]).status_code, 409)
         self.assertEqual(self.raw(), saved)
@@ -335,7 +319,8 @@ class TestInvestigationCommit(unittest.TestCase):
         def user_edit():
             self.assertEqual(self.edit(hypothesis={"id": hid, "content": "用户已修正命题"}).status_code, 200)
         result, _ = self.run_at_budget(before_finish=user_edit)
-        self.assertEqual(result["summary_status"], "completed")
+        self.assertEqual(result["summary_status"], "failed")
+        self.assertEqual(result["finish_status"], "validated")
         self.assertEqual(result["completion_status"], "budget_exhausted")
         self.assertEqual(result["workspace_commit"]["status"], "conflict")
         self.assertEqual(len(self.state().hypotheses), 1)

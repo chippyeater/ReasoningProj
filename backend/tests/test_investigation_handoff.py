@@ -7,6 +7,8 @@ from unittest.mock import patch
 import test_investigation_agent as f
 from app import investigation_agent as agent, investigation_actions as actions
 from app.errors import AppError
+from app.investigation_state import RunWorkspace
+from app.issue_workspaces import get_issue_workspaces
 from app import investigation_tools as tools
 
 
@@ -60,7 +62,9 @@ class TestInvestigationHandoff(unittest.TestCase):
         else:
             values.update(basis_info_unit_ids=["U029", "U036"], hypothesis_ids=["formal-a"])
         values.update(changes)
-        return actions._propose(self.case, seen, context, proposals, kind, **values)
+        if not proposals:
+            self.working = RunWorkspace(get_issue_workspaces(self.case), context["current_issue"], "test")
+        return actions._propose(self.case, seen, self.working, proposals, kind, **values)
 
     def test_exact_and_format_only_duplicates_return_original_pending_id_without_mutation(self):
         context, seen, refs = self.comparison_context()
@@ -87,8 +91,8 @@ class TestInvestigationHandoff(unittest.TestCase):
                         self.submit_pending(kind, duplicate, proposals, context, seen, refs)
                     self.assertEqual(caught.exception.code, "duplicate_proposal")
                     existing = caught.exception.details["errors"][0]["existing_object"]
-                    self.assertEqual(existing["id"], original["proposal_id"])
-                    self.assertEqual(existing["source"], "proposals")
+                    self.assertEqual(existing["id"], original["object_id"])
+                    self.assertEqual(existing["source"], "reasoning")
                     self.assertEqual([p.model_dump(mode="json") for p in proposals], before)
                     self.assertEqual(context, before_context)
                     self.assertEqual(seen, before_seen)
@@ -156,7 +160,7 @@ class TestInvestigationHandoff(unittest.TestCase):
                 with self.assertRaises(AppError) as caught:
                     self.submit_pending(kind, proposals[0].content, proposals, context, seen, list(reversed(refs)), **changes)
                 self.assertEqual(caught.exception.code, "duplicate_proposal")
-                self.assertEqual(caught.exception.details["errors"][0]["existing_object"]["id"], original["proposal_id"])
+                self.assertEqual(caught.exception.details["errors"][0]["existing_object"]["id"], original["object_id"])
                 self.assertEqual([p.model_dump(mode="json") for p in proposals], before)
 
     def test_duplicate_guard_does_not_extend_to_links_status_or_gap_updates(self):
@@ -171,8 +175,9 @@ class TestInvestigationHandoff(unittest.TestCase):
         for kind, values in cases.items():
             with self.subTest(kind=kind):
                 proposals = []
+                working = RunWorkspace(get_issue_workspaces(self.case), context["current_issue"], "test")
                 for _ in range(2):
-                    actions._propose(self.case, seen, context, proposals, kind, rationale="单独审阅该建议。",  **values)
+                    actions._propose(self.case, seen, working, proposals, kind, rationale="单独审阅该建议。",  **values)
                 self.assertEqual(len(proposals), 0 if kind == "hypothesis_status" else 1)
         self.assertEqual(context, before_context)
         self.assertEqual(seen, before_seen)
@@ -218,12 +223,13 @@ class TestInvestigationHandoff(unittest.TestCase):
             if turn == 6:
                 step = state["previous_tool_result"]["recovery"]["next_action"]["steps"][0]
                 self.assertEqual(step["code"], "duplicate_proposal")
-                self.assertEqual(step["existing_object"]["id"], ids[0])
+                self.assertEqual(step["existing_object"]["id"], next(
+                    h["id"] for h in state["reasoning"]["hypotheses"] if h["content"] == contents[0]))
                 return self.gap(gap.replace("确认", "核实", 1).replace("（", "(").replace("）", ")"),
                     list(reversed(ids)), "same-gap")
             step = state["previous_tool_result"]["recovery"]["next_action"]["steps"][0]
             self.assertEqual(step["code"], "duplicate_proposal")
-            self.assertEqual(step["existing_object"]["id"], proposals[2]["proposal_id"])
+            self.assertEqual(step["existing_object"]["id"], state["reasoning"]["gaps"][0]["id"])
             return f.finish("核查租金损失", questions=["尚待核实腾退和计租衔接。"],
                 answer="两种解释仍取决于腾退与计租衔接的实际记录，已提交共同缺口供审阅。")
         context = self.context()
@@ -240,6 +246,13 @@ class TestInvestigationHandoff(unittest.TestCase):
         context["reasoning"]["hypotheses"] = [{"id": "formal-h", "content": "没有实际租金损失", "work_status": "deprecated"}]
         context["reasoning"]["gaps"] = [{"id": "formal-g", "content": "实际腾退日期是什么？",
             "hypothesis_ids": ["formal-h"], "basis_info_unit_ids": ["U029", "U036"]}]
+        from app.issue_workspaces import persist_issue_workspaces
+        from app.reasoning_models import Hypothesis, EvidenceGap
+        current = get_issue_workspaces(self.case)
+        reasoning = current.workspaces[context["current_issue"]].reasoning
+        reasoning.hypotheses = [Hypothesis(**h, updated_at="test") for h in context["reasoning"]["hypotheses"]]
+        reasoning.gaps = [EvidenceGap(**g, updated_at="test") for g in context["reasoning"]["gaps"]]
+        persist_issue_workspaces(self.case, current)
         before = deepcopy(context)
         result, calls = self.run_script("复核已有对象", [
             f.tool("search_info_units", {"query": "损失"}, "read"),

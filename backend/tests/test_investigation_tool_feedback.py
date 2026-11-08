@@ -49,7 +49,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         self.assertEqual(feedback["tool"], "propose_evidence_gap_update")
         self.assertEqual(feedback["status"], "ok")
         self.assertTrue(feedback["no_change"])
-        self.assertFalse(feedback["pending"])
+        self.assertFalse(feedback["applied"])
         self.assertEqual(feedback["message"], audited["message"])
         self.assertEqual(feedback["arguments"]["gap_id"], gid)
         for instruction in ("status is unchanged", "already associated", "rationale", "finish_investigation", "Do not resubmit"):
@@ -116,7 +116,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         failure = AppError("staging_rejected", "The staged batch cannot be applied", details={"errors": [{
             "loc": ["rationale"], "code": "staging_rejected", "message": "Staging failed before any write",
             "fix": "Correct this pending edit and resubmit the indicated tool."}]})
-        with patch.object(reasoning_proposals, "stage_proposals", side_effect=failure):
+        with patch.object(reasoning_proposals, "apply_proposal", side_effect=failure):
             result, calls = self.run_script("核对暂存", [self.hypothesis_call(1),
                 f.finish("核对暂存", status="completed", basis="general")], issue_key=self.issue)
         feedback = self.view(calls[1])["previous_tool_result"]["recovery"]
@@ -165,7 +165,7 @@ class TestInvestigationToolFeedback(unittest.TestCase):
         self.assertIn("returned InfoUnit", feedback["fix"])
         self.assertIsNone(self.view(calls[2])["previous_tool_result"]["recovery"])
 
-    def test_duplicate_query_and_duplicate_proposal_keep_their_distinct_diagnostics(self):
+    def test_duplicate_creation_is_checked_against_current_working_objects(self):
         first = self.hypothesis_call(1)
         second = deepcopy(first)
         second.message["tool_calls"][0]["id"] = "repeated-call"
@@ -175,13 +175,11 @@ class TestInvestigationToolFeedback(unittest.TestCase):
             third,
             f.finish("比较重复调用", status="completed", basis="general")], issue_key=self.issue)
         duplicate = self.view(calls[2])["previous_tool_result"]["recovery"]
-        self.assertEqual(duplicate["code"], "duplicate_query")
-        self.assertIn("Equivalent call", duplicate["message"])
-        self.assertIn("Reuse existing", duplicate["next_action"]["steps"][0]["instruction"])
+        self.assertEqual(duplicate["code"], "duplicate_proposal")
         semantic = self.view(calls[3])["previous_tool_result"]["recovery"]
         self.assertEqual(semantic["code"], "duplicate_proposal")
         obj = semantic["next_action"]["steps"][0]["existing_object"]
-        self.assertEqual(obj["id"], self.view(calls[1])["proposals"][0]["proposal_id"])
+        self.assertEqual(obj["id"], self.view(calls[1])["previous_tool_result"]["result"]["object_id"])
 
     def test_all_four_read_execution_exceptions_reach_the_next_request(self):
         args = {"search_info_units": {"query": "月租"}, "get_relations": {"info_unit_ids": ["U029"]},

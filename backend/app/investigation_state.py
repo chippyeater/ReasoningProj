@@ -1,4 +1,4 @@
-"""Run-local working state; domain records remain existing tool projections."""
+"""Run-owned Workspace and bounded material/context projections."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -15,9 +15,9 @@ READ_TOOLS = frozenset({"search_info_units", "get_relations", "get_evidence", "s
 def tool_feedback(name, args, response, raw=""):
     """Recovery belonging to one execution, including successful no-change results."""
     failed = response["status"] in {"invalid_request", "error"}
-    fields = ("code", "message", "no_change", "pending", "argument_loc", "validation_details",
+    fields = ("code", "message", "no_change", "applied", "argument_loc", "validation_details",
               "recovery_hint", "next_action", "fix")
-    if not failed and not any(response.get(key) for key in fields if key != "pending"):
+    if not failed and not any(response.get(key) for key in fields if key != "applied"):
         return None
     feedback = {key: deepcopy(response[key]) for key in fields if key in response}
     if failed:
@@ -34,7 +34,7 @@ def previous_tool_result(name, call_id, raw, response, args):
         arguments = {"raw": raw}
     failed = response["status"] in {"invalid_request", "error"}
     effect = ("failed" if failed else "no_change" if response.get("no_change") else
-              "staged" if response.get("pending") else "read" if name in READ_TOOLS else "finished")
+              "applied" if response.get("applied") else "read" if name in READ_TOOLS else "finished")
     notices = []
     if name in READ_TOOLS and (response.get("has_more") or response["status"] == "empty"):
         notices.append({key: deepcopy(response[key]) for key in
@@ -45,22 +45,22 @@ def previous_tool_result(name, call_id, raw, response, args):
             "recovery": tool_feedback(name, args, response, raw)}
 
 
-def effective_reasoning(reasoning, proposals):
-    """Overlay accepted pending changes for reasoning only; never edit formal data."""
-    result = deepcopy(reasoning)
-    hypotheses = {h["id"]: h for h in result.get("hypotheses", [])}
-    gaps = {g["id"]: g for g in result.get("gaps", [])}
-    for proposal in proposals:
-        if proposal["kind"] == "hypothesis_status":
-            for hid in proposal["hypothesis_ids"]:
-                if hid in hypotheses:
-                    hypotheses[hid]["judgment"] = proposal["judgment"]
-        elif proposal["kind"] == "evidence_gap_update" and proposal["gap_id"] in gaps:
-            gap = gaps[proposal["gap_id"]]
-            gap["status"] = proposal["status"]
-            gap["addressing_info_unit_ids"] = list(dict.fromkeys([
-                *gap.get("addressing_info_unit_ids", []), *proposal["addressing_info_unit_ids"]]))
-    return result
+class RunWorkspace:
+    """The sole mutable reasoning source for one Investigation; never persisted by tools."""
+    def __init__(self, current, issue, run_id):
+        from app.reasoning_models import ReasoningState
+        self.current = current.model_copy(deep=True)
+        self.issue, self.run_id = issue, run_id
+        self.baseline = self.reasoning.model_copy(deep=True) if issue is not None else ReasoningState()
+        self.initial_visible_ids = set(self.current.workspaces[issue].canvas.visible_node_ids) if issue is not None else set()
+
+    @property
+    def reasoning(self):
+        from app.reasoning_models import ReasoningState
+        return self.current.workspaces[self.issue].reasoning if self.issue is not None else ReasoningState()
+
+    def context(self):
+        return {"current_issue": self.issue, "reasoning": self.reasoning.model_dump(mode="json")} if self.issue is not None else None
 
 
 def validation_issues(exc, prefix=(), fix="Correct the indicated field using the tool schema"):
@@ -77,9 +77,13 @@ def validation_issues(exc, prefix=(), fix="Correct the indicated field using the
 
 class KnowledgeState:
     """Lossless run-local material store; model views are bounded projections."""
-    def __init__(self, initial):
+    def __init__(self, initial, workspace=None):
+        self.workspace = workspace
         self.info_units, self.relations, self.source_refs = {}, {}, {}
         self.work_context = deepcopy(initial.get("work_context", {}))
+        self.reasoning_ids = {row["id"] for kind in ("hypotheses", "gaps")
+                              for row in self.work_context.get("reasoning", {}).get(kind, [])}
+        self.work_context.pop("reasoning", None)
         self.activities, self.proposals = [], []
         canvas = self.work_context.get("canvas", {})
         for row in [*initial.get("selected_info_units", []), *canvas.get("info_units", [])]:
@@ -99,9 +103,10 @@ class KnowledgeState:
         material_keys = set()
         if response["status"] not in {"invalid_request", "error"}:
             if name == "search_evidence_gaps" and response.get("items"):
-                # Replace the bounded reasoning view, not the formal workspace
-                # or the independent material/source store.
-                self.work_context["reasoning"] = deepcopy(response["items"][0])
+                # Remember discovery IDs only; object values always come from
+                # the current Working Workspace, never a cached tool projection.
+                self.reasoning_ids.update(row["id"] for kind in ("hypotheses", "gaps")
+                                          for row in response["items"][0][kind])
                 material_keys.update((kind, row["id"]) for kind in ("hypotheses", "gaps", "links")
                                      for row in response["items"][0][kind])
             touched = []
@@ -150,7 +155,7 @@ class KnowledgeState:
 
 
 def model_context(initial, knowledge):
-    """Bound materials; retain the last execution and accepted pending changes intact."""
+    """Bound materials and project current run objects; Proposals are audit only."""
     from app.investigation_tools import _normalized
     goal = initial["goal"]
     words = set(re.findall(r"[^\W_]+", _normalized(goal)))
@@ -177,8 +182,24 @@ def model_context(initial, knowledge):
     fields = {"hypotheses": ("id", "content", "judgment", "work_status"),
               "gaps": ("id", "content", "hypothesis_ids", "basis_info_unit_ids", "addressing_info_unit_ids", "status"),
               "links": ("id", "hypothesis_id", "info_unit_id", "meaning", "rationale")}
+    source = {}
+    if knowledge.workspace is not None:
+        from app.issue_workspaces import project_reasoning
+        current = knowledge.workspace.reasoning
+        touched = [c["object_id"] for p in knowledge.proposals for c in p.get("changes", [])]
+        order = list(dict.fromkeys(reversed(touched)))
+        def object_rank(obj):
+            return (obj.id in order, -order.index(obj.id) if obj.id in order else 0,
+                    obj.id in knowledge.reasoning_ids, obj.updated_at, obj.id)
+        chosen = []
+        for objects in (current.hypotheses, current.gaps):
+            chosen.extend(sorted((obj for obj in objects if obj.id in knowledge.reasoning_ids or obj.id in order),
+                                 key=object_rank, reverse=True)[:3])
+        visible_hypotheses = sum(h.id in knowledge.reasoning_ids or h.id in order for h in current.hypotheses)
+        source = project_reasoning(current, chosen, object_rank, content_chars=600,
+                                   hypothesis_limit=min(5, max(3, visible_hypotheses)))
     reasoning = {kind: [{k: deepcopy(row[k]) for k in keys if k in row}
-                        for row in workspace.get("reasoning", {}).get(kind, [])] for kind, keys in fields.items()}
+                        for row in source.get(kind, [])] for kind, keys in fields.items()}
     result = {"goal": goal, "current_issue": workspace.get("current_issue"),
         "materials": {
             "info_units": section(sorted(knowledge.info_units.items(), key=lambda kv:rank(kv[1])), 6500),
@@ -189,9 +210,8 @@ def model_context(initial, knowledge):
         # Transport defaults stay in the audit/adoption contract. Preserve all
         # populated fields and dependency IDs in the model's working memory.
         "proposals": [{key: deepcopy(value) for key, value in proposal.items()
-                       if value is not None and value != []}
+                       if key != "changes" and value is not None and value != []}
                       for proposal in knowledge.proposals],
-        "effective_reasoning": effective_reasoning(reasoning, knowledge.proposals),
         "previous_tool_result": deepcopy(knowledge.previous_tool_result)}
     # Trim material projections, never the authoritative KnowledgeState.
     sections = list(result["materials"].values())

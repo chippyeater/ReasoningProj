@@ -24,9 +24,9 @@ class TestInvestigationDelivery(unittest.TestCase):
         def respond(call, turn):
             state = json.loads(call["messages"][1]["content"])
             names = {d["function"]["name"] for d in call["definitions"]}
-            self.assertNotIn("propose_hypothesis_status", names)
-            self.assertNotIn("propose_evidence_gap_update", names)
-            self.assertNotIn("search_evidence_gaps", names)
+            self.assertEqual("propose_hypothesis_status" in names, turn >= 3)
+            self.assertEqual("propose_evidence_gap_update" in names, turn >= 4)
+            self.assertEqual("search_evidence_gaps" in names, turn >= 4)
             self.assertEqual([m["role"] for m in call["messages"]], ["system", "user"])
             if turn == 1:
                 self.assertNotIn("propose_evidence_link", names)
@@ -86,7 +86,7 @@ class TestInvestigationDelivery(unittest.TestCase):
         self.assertEqual(proposals[2]["hypothesis_proposal_ids"], [p["proposal_id"] for p in proposals[:2]])
         self.assertNotIn("findings", result)
         self.assertEqual(len(calls), 6)
-        self.assertIn("proposal_receipt", self.audits()[0])
+        self.assertIn("workspace_receipt", self.audits()[0])
 
     def test_invalid_proposal_does_not_appear_in_memory_or_receipt(self):
         result, calls = self.run_script("提出解释", [f.tool("propose_hypothesis", {
@@ -95,7 +95,7 @@ class TestInvestigationDelivery(unittest.TestCase):
             work_context=self.context(), issue_key=self.case.issue_set[1])
         self.assertEqual(json.loads(calls[1]["messages"][1]["content"])["proposals"], [])
         self.assertEqual(result["proposals"], [])
-        self.assertNotIn("proposal_receipt", self.audits()[0])
+        self.assertIn("workspace_receipt", self.audits()[0])
 
     def test_independent_propositions_share_a_factual_gap_without_requiring_competition(self):
         goal = "根据损失陈述梳理需要核实的命题和事实"

@@ -1,10 +1,11 @@
-"""Stored legacy links migrate on read; new requests use the current meaning."""
+"""Unsupported stored link meanings fail explicitly without migration."""
 import json
 import unittest
 
 import test_reasoning_proposals as fixture
 from app.case_store import case_dir
-from app.issue_workspaces import get_issue_workspaces, persist_issue_workspaces
+from app.issue_workspaces import get_issue_workspaces
+from app.errors import AppError
 
 
 class TestEvidenceLinkMigration(unittest.TestCase):
@@ -14,7 +15,7 @@ class TestEvidenceLinkMigration(unittest.TestCase):
     hypothesis = fixture.TestReasoningProposals.hypothesis
     investigate = fixture.TestReasoningProposals.investigate
 
-    def test_stored_link_is_migrated_on_read_then_saved_with_stable_id(self):
+    def test_unsupported_stored_link_is_rejected_without_rewriting(self):
         hid = self.hypothesis()
         self.edit(hypothesis={"id": hid, "content": "用户已判断的假设", "judgment": "verified"})
         response = self.edit(link={"hypothesis_id": hid, "info_unit_id": "U029", "rationale": "材料有关，方向不明确。"})
@@ -25,18 +26,10 @@ class TestEvidenceLinkMigration(unittest.TestCase):
         payload["workspaces"][self.issue]["reasoning"]["links"][0]["meaning"] = "verify"
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         before = path.read_bytes()
-        state = get_issue_workspaces(self.case)
-        reasoning = state.workspaces[self.issue].reasoning
-        self.assertEqual(reasoning.links[0].meaning, "related")
-        self.assertEqual(reasoning.links[0].id, lid)
-        self.assertEqual(reasoning.hypotheses[0].judgment, "verified")
+        with self.assertRaises(AppError) as caught:
+            get_issue_workspaces(self.case)
+        self.assertEqual(caught.exception.code, "invalid_issue_workspaces")
         self.assertEqual(path.read_bytes(), before)
-        persist_issue_workspaces(self.case, state)
-        saved = json.loads(path.read_text(encoding="utf-8"))["workspaces"][self.issue]["reasoning"]
-        self.assertEqual(saved["links"][0]["meaning"], "related")
-        self.assertEqual(saved["hypotheses"][0]["judgment"], "verified")
-        self.assertEqual(self.edit(link={"id": lid, "hypothesis_id": hid, "info_unit_id": "U029",
-            "meaning": "verify", "rationale": "旧请求不合法"}).status_code, 422)
 
     def test_historical_audit_has_no_replay_entry_and_is_not_rewritten(self):
         hid = self.hypothesis()

@@ -158,5 +158,5 @@ class TestInvestigationRecoveryBudget(unittest.TestCase):
         duplicate.message["tool_calls"][0]["id"] = "duplicate"
         result, calls = self.run_script("核对", [self.hypothesis(0), duplicate,
             f.finish("核对", status="completed", basis="general")], work_context=self.context(), issue_key=self.case.issue_set[1])
-        self.assertEqual(self.recovery(calls[2])["next_action"]["steps"][0]["code"], "duplicate_query")
+        self.assertEqual(self.recovery(calls[2])["next_action"]["steps"][0]["code"], "duplicate_proposal")
         self.assertEqual(len(result["proposals"]), 1)

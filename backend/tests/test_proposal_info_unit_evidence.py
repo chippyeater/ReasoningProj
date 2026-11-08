@@ -1,4 +1,4 @@
-"""InfoUnit-only evidence authority, source integrity and historical run compatibility."""
+"""InfoUnit-only evidence authority, source integrity and run audit integrity."""
 import json
 import unittest
 from unittest.mock import patch
@@ -9,6 +9,7 @@ from app import investigation_actions as actions, investigation_agent as agent, 
 from app.case_store import case_dir, artifact_path
 from app.errors import AppError
 from app.issue_workspaces import get_issue_workspaces, investigation_context
+from app.investigation_state import RunWorkspace
 
 
 class TestProposalInfoUnitEvidence(unittest.TestCase):
@@ -28,7 +29,7 @@ class TestProposalInfoUnitEvidence(unittest.TestCase):
         def respond(call, turn):
             view = json.loads(call["messages"][1]["content"])
             self.assertEqual(set(view), {"goal", "current_issue", "materials", "reasoning", "proposals",
-                "previous_tool_result", "effective_reasoning"})
+                "previous_tool_result"})
             self.assertNotIn("core_issue", view)
             self.assertNotIn("case_info_directory", view)
             if turn == 1:
@@ -86,7 +87,7 @@ class TestProposalInfoUnitEvidence(unittest.TestCase):
             pending = []
             with self.subTest(uid=uid), self.assertRaises(AppError) as caught:
                 actions.propose_hypothesis(self.case, {"units": set(), "relations": set(), "evidence": set()},
-                    context, pending, content="独立待核实命题", rationale="需实际取得材料。", info_unit_ids=[uid])
+                    RunWorkspace(get_issue_workspaces(self.case), self.issue, "test"), pending, content="独立待核实命题", rationale="需实际取得材料。", info_unit_ids=[uid])
             self.assertFalse(pending)
             self.assertEqual(caught.exception.details["errors"][0]["code"], code)
 
@@ -119,15 +120,12 @@ class TestProposalInfoUnitEvidence(unittest.TestCase):
         finally:
             path.write_bytes(original)
 
-    def test_historical_proposal_pointers_read_without_rewriting_and_undo_still_works(self):
+    def test_proposal_change_audit_is_preserved_through_undo_and_following_run(self):
         result, _ = self.run_script("提出解释", [replies.tool("propose_hypothesis", {
             "content": "单方主张仍需核实", "info_unit_ids": ["U029"], "rationale": "保留不确定性。"}, "hyp"),
             replies.finish("提出解释", status="completed")], selected=["U029"], issue_key=self.issue)
         path = case_dir(self.case.case_id) / "issue_workspaces.json"
         raw = json.loads(path.read_text(encoding="utf-8"))
-        raw["workspaces"][self.issue]["reasoning"]["investigation_runs"][result["run_id"]]["proposals"][0]["evidence_refs"] = [
-            {"info_unit_id": "U029", "source_ref_index": 0}]
-        path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
         saved = path.read_bytes()
         self.assertEqual(len(self.state().investigation_runs[result["run_id"]].proposals), 1)
         self.assertEqual(path.read_bytes(), saved)

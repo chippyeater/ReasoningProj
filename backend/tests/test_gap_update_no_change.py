@@ -79,10 +79,10 @@ class TestGapUpdateNoChange(unittest.TestCase):
             feedback = self.feedback(result)[0]
             self.assertEqual(feedback["status"], "ok")
             self.assertTrue(feedback["no_change"])
-            self.assertFalse(feedback["pending"])
-            self.assertEqual(set(feedback), {"status", "pending", "no_change", "message", "next_step"})
+            self.assertFalse(feedback["applied"])
+            self.assertEqual(set(feedback), {"status", "applied", "no_change", "message", "next_step"})
             for explanation in ("status is unchanged", "already associated", "rationale",
-                                "No Proposal was staged", "unread Goal-relevant", "finish_investigation", "Do not resubmit"):
+                                "No change was applied", "unread Goal-relevant", "finish_investigation", "Do not resubmit"):
                 self.assertIn(explanation, feedback["message"])
             self.assertEqual(self.raw(), saved)
 

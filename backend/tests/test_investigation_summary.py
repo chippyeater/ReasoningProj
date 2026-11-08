@@ -73,4 +73,4 @@ class TestSummaryHandoff(unittest.TestCase):
         self.assertEqual(len(result["proposals"]), 1)
         self.assertNotIn("findings", result)
         self.assertEqual(self.audits()[0]["status"], "partial")
-        self.assertTrue(self.audits()[0]["proposal_receipt"])
+        self.assertTrue(self.audits()[0]["workspace_receipt"])

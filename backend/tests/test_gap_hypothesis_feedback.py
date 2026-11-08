@@ -46,13 +46,13 @@ class TestGapHypothesisFeedback(unittest.TestCase):
         self.assertNotIn("notices", view); self.assertNotIn("recovery", view)
         self.assertEqual(previous["tool_call_id"], "gap-update")
         self.assertEqual(previous["arguments"], self.update)
-        self.assertEqual((previous["execution_status"], previous["effect_status"]), ("succeeded", "staged"))
+        self.assertEqual((previous["execution_status"], previous["effect_status"]), ("succeeded", "applied"))
         related = previous["result"]["next_step"]["related_hypotheses"]
         self.assertEqual([h["hypothesis_id"] for h in related], self.hids)
         self.assertEqual([h["content"] for h in related], [h.content for h in before.hypotheses])
-        self.assertTrue(all(h["judgment"] == h["formal_judgment"] == h["effective_judgment"] == "unverified" for h in related))
-        self.assertEqual(view["reasoning"]["gaps"][0]["status"], "open")
-        self.assertEqual(view["effective_reasoning"]["gaps"][0]["status"], "resolved")
+        self.assertTrue(all(h["judgment"] == "unverified" for h in related))
+        self.assertNotIn("effective_reasoning", view)
+        self.assertEqual(view["reasoning"]["gaps"][0]["status"], "resolved")
         final = get_issue_workspaces(self.case).workspaces[self.issue].reasoning
         self.assertEqual([h.judgment for h in final.hypotheses], ["unverified", "unverified"])
         self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update"])
@@ -71,12 +71,10 @@ class TestGapHypothesisFeedback(unittest.TestCase):
         self.assertTrue(previous["recovery"]["no_change"])
         related = previous["result"]["next_step"]["related_hypotheses"]
         self.assertEqual([h["hypothesis_id"] for h in related], self.hids[1:])
-        self.assertEqual(related[0]["formal_judgment"], "unverified")
-        self.assertEqual(related[0]["effective_judgment"], "unverified")
+        self.assertEqual(related[0]["judgment"], "unverified")
         view = self.view(calls[3])
-        self.assertEqual([h["id"] for h in view["reasoning"]["hypotheses"]], self.hids)
-        self.assertEqual(view["reasoning"]["hypotheses"][0]["judgment"], "unverified")
-        self.assertEqual(view["effective_reasoning"]["hypotheses"][0]["judgment"], "verified")
+        self.assertEqual({h["id"] for h in view["reasoning"]["hypotheses"]}, set(self.hids))
+        self.assertEqual(next(h["judgment"] for h in view["reasoning"]["hypotheses"] if h["id"] == self.hids[0]), "verified")
         self.assertEqual(view["proposals"][1]["hypothesis_ids"], self.hids[:1])
         self.assertEqual(view["proposals"][1]["judgment"], "verified")
         self.assertEqual(self.view(calls[4])["previous_tool_result"]["effect_status"], "no_change")
@@ -95,8 +93,7 @@ class TestGapHypothesisFeedback(unittest.TestCase):
         next_step = view["previous_tool_result"]["result"]["next_step"]
         self.assertEqual(next_step["related_hypotheses"], [])
         self.assertIn("无需继续提交", next_step["instruction"])
-        self.assertEqual([h["judgment"] for h in view["reasoning"]["hypotheses"]], ["unverified", "unverified"])
-        self.assertEqual([h["judgment"] for h in view["effective_reasoning"]["hypotheses"]], list(judgments))
+        self.assertEqual({h["id"]: h["judgment"] for h in view["reasoning"]["hypotheses"]}, dict(zip(self.hids, judgments)))
         self.assertEqual([p["kind"] for p in result["proposals"]],
             ["hypothesis_status", "hypothesis_status", "evidence_gap_update"])
         self.assertEqual([h.judgment for h in get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses], list(judgments))
@@ -117,12 +114,12 @@ class TestGapHypothesisFeedback(unittest.TestCase):
 
     def test_rejected_staging_does_not_filter_hypotheses(self):
         from app import reasoning_proposals
-        original = reasoning_proposals.stage_proposals
-        def stage(case, issue, proposals, current, run_id):
-            if any(p.kind == "hypothesis_status" for p in proposals):
+        original = reasoning_proposals.apply_proposal
+        def apply(case, workspace, proposals, proposal):
+            if proposal.kind == "hypothesis_status":
                 raise AppError("staging_rejected", "Status update could not be staged")
-            return original(case, issue, proposals, current, run_id)
-        with patch.object(reasoning_proposals, "stage_proposals", side_effect=stage):
+            return original(case, workspace, proposals, proposal)
+        with patch.object(reasoning_proposals, "apply_proposal", side_effect=apply):
             result, calls = self.run_script("回应 Gap", [f.tool("propose_hypothesis_status", {
                 "hypothesis_id": self.hids[0], "judgment": "verified", "info_unit_ids": ["U029"],
                 "rationale": "模拟暂存失败。"}, "status"), f.tool("propose_evidence_gap_update", self.update, "gap"),
@@ -186,11 +183,10 @@ class TestGapHypothesisFeedback(unittest.TestCase):
         self.assertEqual(first["status"], "truncated")
 
     def test_no_related_hypotheses_returns_empty_and_never_invents_a_target(self):
-        with patch.object(actions, "_propose", return_value={"status": "ok", "pending": False, "no_change": True}):
-            from types import SimpleNamespace
-            workspace = SimpleNamespace(reasoning=SimpleNamespace(gaps=[SimpleNamespace(id="gap-empty", hypothesis_ids=[])]))
-            with patch("app.issue_workspaces.get_issue_workspaces", return_value=SimpleNamespace(workspaces={self.issue: workspace})), \
-                    patch.object(actions, "_hypothesis_states", return_value=({}, {})):
-                response = actions.propose_evidence_gap_update(self.case, {}, {"current_issue": self.issue}, [],
-                    gap_id="gap-empty", status="open", addressing_info_unit_ids=[], rationale="未改变。")
+        from types import SimpleNamespace
+        workspace = SimpleNamespace(reasoning=SimpleNamespace(
+            gaps=[SimpleNamespace(id="gap-empty", hypothesis_ids=[])], hypotheses=[]))
+        with patch.object(actions, "_propose", return_value={"status": "ok", "applied": False, "no_change": True}):
+            response = actions.propose_evidence_gap_update(self.case, {}, workspace, [],
+                gap_id="gap-empty", status="open", addressing_info_unit_ids=[], rationale="未改变。")
         self.assertEqual(response["next_step"]["related_hypotheses"], [])

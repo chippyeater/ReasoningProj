@@ -166,7 +166,9 @@ class TestGapReferences(unittest.TestCase):
         self.assertTrue(gap["basis_info_unit_ids_truncated"])
         self.assertTrue(gap["addressing_info_unit_ids_truncated"])
         initial = {"goal": "核查计租", "work_context": work}
-        projected = model_context(initial, KnowledgeState(initial))["reasoning"]["gaps"][0]
+        from app.investigation_state import RunWorkspace
+        workspace = RunWorkspace(get_issue_workspaces(self.case), self.issue, "test")
+        projected = model_context(initial, KnowledgeState(initial, workspace))["reasoning"]["gaps"][0]
         self.assertEqual(projected["basis_info_unit_ids"], gap["basis_info_unit_ids"])
         self.assertEqual(projected["addressing_info_unit_ids"], gap["addressing_info_unit_ids"])
         self.assertNotIn("info_unit_ids", projected)

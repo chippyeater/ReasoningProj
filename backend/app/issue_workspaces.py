@@ -15,7 +15,7 @@ from pydantic import Field, ValidationError, model_validator
 from app.case_store import case_dir, write_json
 from app.errors import AppError
 from app.schemas import CaseData, ContractModel, Text, WorkspaceState
-from app.reasoning_models import ReasoningState, migrate_stored_reasoning_state
+from app.reasoning_models import ReasoningState
 
 IssueStatus = Literal["pending", "investigating", "closed"]
 
@@ -112,10 +112,6 @@ def _read(case: CaseData) -> IssueWorkspaces:
         return IssueWorkspaces()
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(payload, dict) and isinstance(payload.get("workspaces"), dict):
-            for workspace in payload["workspaces"].values():
-                if isinstance(workspace, dict) and "reasoning" in workspace:
-                    workspace["reasoning"] = migrate_stored_reasoning_state(workspace["reasoning"])
         return IssueWorkspaces.model_validate(payload)
     except (ValueError, UnicodeError, ValidationError) as exc:
         raise AppError("invalid_issue_workspaces", "Stored Issue workspace cannot be read; it has not been overwritten", 409) from exc
@@ -206,9 +202,10 @@ def reasoning_references(case: CaseData, info_unit_id: str) -> list[dict]:
 
 
 def investigation_context(case: CaseData, current_issue: str, goal: str = "", selected_reasoning_ids: list[str] | None = None,
-                          *, selected_info_unit_ids: list[str] | None = None, focused_object_id: str | None = None) -> dict:
+                          *, selected_info_unit_ids: list[str] | None = None, focused_object_id: str | None = None,
+                          current: IssueWorkspaces | None = None) -> dict:
     from app.investigation_tools import _selected_units, _summary, _normalized
-    state = get_issue_workspaces(case)
+    state = current if current is not None else get_issue_workspaces(case)
     if current_issue not in state.workspaces:
         raise AppError("unknown_issue", "Issue does not belong to the current case")
     workspace = state.workspaces[current_issue]

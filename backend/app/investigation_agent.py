@@ -1,7 +1,9 @@
 """Finite, case-bound investigation through native read-only function calls."""
 from __future__ import annotations
 
-from copy import deepcopy
+from copy import copy, deepcopy
+from contextlib import nullcontext
+import asyncio
 import json
 from pathlib import Path
 import re
@@ -19,7 +21,7 @@ from app.prompt_loader import load_prompt
 from app.schemas import CaseData, InfoUnitType, RelationType
 from app.reasoning_models import (InvestigationSourceRef, ReasoningProposal, MaterialProposal,
                                   EvidenceGapProposal, EvidenceGapUpdateProposal, proposal_material_ids)
-from app.investigation_state import KnowledgeState, model_context, tool_feedback, previous_tool_result
+from app.investigation_state import RunWorkspace, KnowledgeState, model_context, tool_feedback, previous_tool_result
 
 MAX_NON_FINISH_TOOL_CALLS = 8  # All read/Proposal attempts, including failures.
 MAX_FINISH_CALLS = 3
@@ -161,11 +163,11 @@ def _arguments(name: str, raw: str) -> dict:
     fields["get_evidence"] = ({"info_unit_id"}, fields["get_evidence"][1])
     fields["search_info_units"] = ({"query"}, fields["search_info_units"][1])
     fields["get_relations"] = ({"info_unit_ids"}, fields["get_relations"][1])
-    # Existing formal-Hypothesis calls remain valid; native schemas ask for an explicit empty list.
+    # Existing Hypothesis calls identify current objects; native schemas ask for an explicit empty list.
     if "propose_evidence_link" in fields:
         fields["propose_evidence_link"] = (fields["propose_evidence_link"][0] - {"hypothesis_proposal_ids"}, fields["propose_evidence_link"][1])
     if name not in fields:
-        raise AppError("unknown_tool", "Only registered investigation and pending-artifact tools are allowed")
+        raise AppError("unknown_tool", "Only registered investigation tools are allowed")
     required, allowed = fields[name]
     if not isinstance(args, dict) or not required <= args.keys() or not args.keys() <= allowed:
         missing = sorted(required - args.keys()) if isinstance(args, dict) else []
@@ -232,18 +234,6 @@ def _material_keys(materials: dict) -> set[tuple[str, str]]:
 def _context_keys(state: dict) -> set[tuple[str, str]]:
     return _material_keys(state["materials"]) | {
         (kind, row["id"]) for kind in ("hypotheses", "gaps", "links") for row in state["reasoning"][kind]}
-
-
-def _include_gap_targets(context, formal, gap_ids):
-    """Capture existing targets for validation/adoption, outside the model view."""
-    if context is None:
-        return
-    gaps = [g for g in formal.gaps if g.id in gap_ids]
-    hids = {hid for g in gaps for hid in g.hypothesis_ids}
-    for kind, objects in (("gaps", gaps), ("hypotheses", [h for h in formal.hypotheses if h.id in hids])):
-        rows = {row["id"]: row for row in context.get("reasoning", {}).get(kind, [])}
-        rows.update((obj.id, obj.model_dump(mode="json")) for obj in objects)
-        context.setdefault("reasoning", {})[kind] = list(rows.values())
 
 
 def _remember(name: str, result: dict, seen: dict) -> None:
@@ -467,7 +457,7 @@ def _tool_recovery(response, name, args=None, case=None):
             step.update(tool=name, instruction=item["fix"])
         elif code == "duplicate_proposal":
             step.update(existing_object=deepcopy(item["existing_object"]),
-                instruction="Reuse the identified formal object or successful pending Proposal and its actual ID; do not create a synonym. For a genuinely competing Hypothesis, state its different condition or distinguishing evidence explicitly. One shared Gap should target all relevant Hypotheses; do not recreate it for each target. No object was modified or adopted.")
+                instruction="Reuse the identified Working Workspace object and its actual ID; do not create a synonym. For a genuinely competing Hypothesis, state its different condition or distinguishing evidence explicitly. One shared Gap should target all relevant Hypotheses; do not recreate it for each target. No object was modified or adopted.")
         elif code in {"invalid_hypothesis_target", "invalid_hypothesis_proposal_target"}:
             step.update(tool=name, instruction="Use a real Hypothesis ID from the current Issue, or a Hypothesis Proposal ID successfully returned in this run in the appropriate dependency field, then resubmit.")
         elif code == "duplicate_query":
@@ -588,35 +578,33 @@ def _validate_summary(text, proposals):
 
 async def run_investigation(case: CaseData, goal: str,
                             selected_info_unit_ids: list[str] | None = None, *, work_context: dict | None = None,
-                            issue_key: str | None = None) -> dict:
+                            issue_key: str | None = None, is_cancelled=None) -> dict:
     """One goal-driven loop. Task plans and activity history are not model input."""
     from app import investigation_actions as actions
-    from app.reasoning_proposals import proposal_receipt, commit_investigation
+    from app.reasoning_proposals import workspace_receipt, commit_investigation
     if not isinstance(goal, str) or not goal.strip() or len(goal) > 2000:
         raise AppError("invalid_investigation_goal", "goal must contain 1 to 2000 nonblank characters")
-    bound_case = case.model_copy(deep=True)
+    from app.issue_workspaces import get_issue_workspaces, investigation_context, workspace_lock, IssueWorkspaces
+    run_id, created_at = f"investigation-{uuid4().hex}", now_iso()
+    with workspace_lock(case) if issue_key is not None else nullcontext():
+        bound_case = case.model_copy(deep=True)
+        current = get_issue_workspaces(bound_case) if issue_key is not None else IssueWorkspaces()
+    if issue_key is not None and issue_key not in current.workspaces:
+        raise AppError("unknown_issue", "Issue does not belong to the current case")
+    working = RunWorkspace(current, issue_key, run_id)
     work_context = deepcopy(work_context)
-    from app.issue_workspaces import get_issue_workspaces, investigation_context
-    from app.reasoning_models import ReasoningState
-    # The formal Issue snapshot governs availability, independently of its
-    # model projection. It stays on the server; discovery is a bounded read.
-    formal = ReasoningState()
     if issue_key is not None:
-        workspace = get_issue_workspaces(bound_case).workspaces.get(issue_key)
-        if workspace is None:
-            raise AppError("unknown_issue", "Issue does not belong to the current case")
-        formal = workspace.reasoning
-        if work_context is None:
-            work_context = investigation_context(bound_case, issue_key, goal, selected_info_unit_ids=selected_info_unit_ids)
-        elif work_context.get("current_issue", issue_key) != issue_key:
+        if work_context is not None and work_context.get("current_issue", issue_key) != issue_key:
             raise AppError("unknown_issue", "Investigation context belongs to another Issue")
-        work_context["current_issue"] = issue_key
+        canvas = (work_context or {}).get("canvas", {})
+        work_context = investigation_context(bound_case, issue_key, goal, canvas.get("selected_reasoning_ids"),
+            selected_info_unit_ids=selected_info_unit_ids, focused_object_id=canvas.get("focused_object_id"),
+            current=working.current)
     selected = [] if not selected_info_unit_ids else tools._selected_units(bound_case, selected_info_unit_ids)
     initial_input = {"goal": goal,
         "selected_info_units": [tools._summary(unit) for unit in selected]}
     if work_context is not None:
         initial_input["work_context"] = deepcopy(work_context)
-    run_id, created_at = f"investigation-{uuid4().hex}", now_iso()
     trace = RunTrace(case_id=bound_case.case_id, case_title=bound_case.case_title, stage="Investigation Agent",
         run_id=run_id, workflow_id=run_id, created_at=created_at, initial_input=initial_input)
     audit = {"run_id": run_id, "run_name": trace.run_name, "stage": "investigation_agent",
@@ -637,6 +625,7 @@ async def run_investigation(case: CaseData, goal: str,
     finish_required = False
     completion = "evidence_insufficient"
     workspace_commit = {"status": "pending", "changes": []}
+    finish_status, run_status = "pending", "running"
 
     def bucket(name):
         return ("read" if name in READ_TOOLS else "proposal" if name in actions.PROPOSAL_TOOLS
@@ -651,14 +640,21 @@ async def run_investigation(case: CaseData, goal: str,
     def closure_code():
         return "finish_required" if finish_required else "tool_budget_exhausted" if non_finish_exhausted() else "no_progress_limit"
 
+    async def check_cancellation():
+        if is_cancelled is not None and await is_cancelled():
+            raise asyncio.CancelledError()
+
     def snapshot(answer=None, summary_status="pending"):
-        result = actions.artifacts(bound_case, seen, work_context, goal, proposals, open_questions, completion).model_dump(mode="json")
+        result = actions.artifacts(bound_case, seen, working.context(), goal, proposals, open_questions, completion).model_dump(mode="json")
+        if run_status in {"failed", "cancelled"} and result["completion_status"] == "completed":
+            result["completion_status"] = "evidence_insufficient"
         if answer_basis not in {"general", "case_metadata"} and completion != "unsupported":
             # Provenance records obtained material, without asserting support for the answer.
             result.update(relevant_info_unit_ids=sorted(seen["units"]), relevant_relation_ids=sorted(seen["relations"]),
                 evidence_refs=[{"info_unit_id": uid, "source_ref_index": index} for uid, index in sorted(seen["evidence"])])
         return {**result, "answer": answer, "answer_basis": answer_basis,
             "summary_status": summary_status, "limitations": list(dict.fromkeys(limitations)), "run_id": run_id,
+            "finish_status": finish_status, "run_status": run_status,
             "workspace_commit": workspace_commit,
             "stop_reason": stop_reason or "running", "tool_call_count": executed,
             "tool_attempt_count": attempts, "tool_budget_used": dict(used), "model_call_count": len(audit["model_calls"])}
@@ -670,8 +666,8 @@ async def run_investigation(case: CaseData, goal: str,
             audit["information_acquisition"] = knowledge.acquisition()
         audit["stop_reason"] = stop_reason
         audit["result"] = snapshot()
-        if proposals:
-            audit["proposal_receipt"] = proposal_receipt(bound_case, issue_key, proposals, formal)
+        if issue_key is not None:
+            audit["workspace_receipt"] = workspace_receipt(bound_case, working, proposals)
         _write_audit(bound_case.case_id, output_path, audit)
 
     def record_final_state():
@@ -681,7 +677,9 @@ async def run_investigation(case: CaseData, goal: str,
                 metadata={"information_acquisition": audit.get("information_acquisition")})
 
     def stopped(reason):
-        nonlocal stop_reason, completion
+        nonlocal stop_reason, completion, workspace_commit, run_status, finish_status
+        workspace_commit = {"status": "discarded", "changes": []}
+        run_status, finish_status = "failed", "failed"
         stop_reason = reason
         completion = "budget_exhausted" if non_finish_exhausted() else "evidence_insufficient"
         limitations.append("Execution stopped without a validated answer: " + reason)
@@ -694,7 +692,7 @@ async def run_investigation(case: CaseData, goal: str,
         return output
 
     try:
-        knowledge = KnowledgeState(initial_input)
+        knowledge = KnowledgeState(initial_input, working)
         config = llm_client.load_config()
         prompt = load_prompt(PROMPT_PATH, PROMPT_NAME)
         metadata = prompt.metadata(config.model)
@@ -703,14 +701,15 @@ async def run_investigation(case: CaseData, goal: str,
             "run_id": run_id, "model_input": initial_input, "system_prompt": {"content": prompt.content, **metadata},
             "tools": tool_definitions(), "configuration": config.public_metadata()})
         while True:
+            await check_cancellation()
             if used["finish"] >= MAX_FINISH_CALLS:
                 return stopped("tool_budget_exhausted")
             if len(audit["model_calls"]) >= MAX_MODEL_CALLS:
                 return stopped("model_budget_exhausted")
-            targeted = {"propose_hypothesis_status": bool(formal.hypotheses),
-                        "propose_evidence_gap_update": bool(formal.gaps),
-                        "search_evidence_gaps": bool(formal.gaps),
-                        "propose_evidence_link": bool(formal.hypotheses) or any(p.kind == "hypothesis" for p in proposals)}
+            targeted = {"propose_hypothesis_status": bool(working.reasoning.hypotheses),
+                        "propose_evidence_gap_update": bool(working.reasoning.gaps),
+                        "search_evidence_gaps": bool(working.reasoning.gaps),
+                        "propose_evidence_link": bool(working.reasoning.hypotheses)}
             available = [d for d in tool_definitions() if d["function"]["name"] == "finish_investigation"
                          or (not investigation_closed() and
                              targeted.get(d["function"]["name"], True) and
@@ -741,6 +740,7 @@ async def run_investigation(case: CaseData, goal: str,
                     model_parameters={"max_completion_tokens": config.max_completion_tokens}, metadata=call_metadata) as generation:
                 reply = await llm_client.call_tools(config, request_messages, available, tool_choice=choice)
                 generation.record_reply(reply)
+            await check_cancellation()
             call_audit.update(raw_response=reply.response, message=deepcopy(reply.message))
             calls = reply.message.get("tool_calls")
             if not calls:
@@ -775,31 +775,32 @@ async def run_investigation(case: CaseData, goal: str,
                     if not permitted:
                         raise AppError(closure_code(), _closure_message(closure_code()))
                     prior = fingerprints.get(fingerprint)
-                    if prior and prior["successful"] and name in READ_TOOLS:
+                    if (prior and prior["successful"] and name in READ_TOOLS
+                            and (name != "search_evidence_gaps" or prior["state"][3] == signature[3])):
                         response = {**deepcopy(prior["result"]), "cached": True}
                     else:
-                        if prior and (prior["successful"] or prior["state"] == signature):
+                        if prior and name not in actions.PROPOSAL_TOOLS and prior["state"] == signature:
                             raise AppError("duplicate_query", "Equivalent call was already attempted in this working state")
                         tool_audit["executed"] = True
                         executed += 1
                         if name in READ_TOOLS:
                             internal = {"exclude_info_unit_ids": visible_units} if name == "search_info_units" else {}
                             if name == "search_evidence_gaps":
-                                internal = {"reasoning": formal}
+                                internal = {"reasoning": working.reasoning}
                             response = getattr(tools, name)(bound_case, **args, **internal)
                             if response["status"] not in {"error", "invalid_request"}:
                                 _remember(name, response, seen)
                         elif name in actions.PROPOSAL_TOOLS:
                             draft = list(proposals)
+                            candidate = copy(working)
                             action_args = deepcopy(args)
                             if name == "propose_evidence_gap":
                                 action_args.update(action_args.pop("hypothesis_targets"))
-                            if name == "propose_evidence_gap_update":
-                                _include_gap_targets(work_context, formal, {action_args["gap_id"]})
-                            response = actions.PROPOSAL_TOOLS[name](bound_case, seen, work_context, draft, **action_args)
+                            response = actions.PROPOSAL_TOOLS[name](bound_case, seen, candidate, draft, **action_args)
+                            working.current = candidate.current
                             proposals = draft
                         else:
-                            finished = actions.finish_investigation(bound_case, seen, work_context, goal, proposals,
+                            finished = actions.finish_investigation(bound_case, seen, working.context(), goal, proposals,
                                 **args, knowledge=knowledge,
                                 read_budget_exhausted=investigation_closed(),
                                 budget_exhausted=non_finish_exhausted())
@@ -822,12 +823,6 @@ async def run_investigation(case: CaseData, goal: str,
                 _tool_recovery(response, name, args, bound_case)
                 failed = response["status"] in {"invalid_request", "error"}
                 knowledge.previous_tool_result = previous_tool_result(name, call["id"], raw, response, args)
-                if name == "search_evidence_gaps" and not failed and response["items"]:
-                    # Only discovered targets enter the existing validation and
-                    # receipt context. Keep full revisions/associations here;
-                    # the model receives only the tool's bounded projection.
-                    gap_ids = {g["id"] for g in response["items"][0]["gaps"]}
-                    _include_gap_targets(work_context, formal, gap_ids)
                 merged_keys = knowledge.merge(name, args, response, executed=tool_audit["executed"])
                 read_progress = name in READ_TOOLS and not failed and bool(
                     merged_keys & (_context_keys(model_context(initial_input, knowledge)) - _context_keys(state)))
@@ -842,18 +837,20 @@ async def run_investigation(case: CaseData, goal: str,
                     **({"excluded_info_unit_ids": sorted(visible_units)} if name == "search_info_units" else {})})
             persist()
             if finished:
+                finish_status = "validated"
                 stop_reason = "finish_investigation"
                 output = snapshot(answer, "completed")
-                audit.update(status="success", stop_reason=stop_reason, result=output)
+                audit.update(status="committing", stop_reason=stop_reason, result=output)
                 # Save every validated artifact before the single workspace write.
                 _write_audit(bound_case.case_id, output_path, audit)
+                await check_cancellation()
                 # The shared tool budget limits investigation, not a validated Finish's commit.
-                if proposals:
+                if issue_key is not None:
                     try:
                         def validate_commit(current_case):
-                            actions.artifacts(current_case, seen, work_context, goal, proposals, open_questions, completion)
+                            actions.artifacts(current_case, seen, working.context(), goal, proposals, open_questions, completion)
                         workspace_commit = commit_investigation(case, issue_key, run_id, proposals,
-                            audit["proposal_receipt"], validate=validate_commit,
+                            audit["workspace_receipt"], validate=validate_commit,
                             obtained_sources=knowledge.source_refs.values())
                     except Exception as exc:
                         workspace_commit = {"status": "conflict" if isinstance(exc, AppError) and exc.status_code == 409 else "failed",
@@ -861,17 +858,40 @@ async def run_investigation(case: CaseData, goal: str,
                         limitations.append("本轮提案未写入推理工作区；结果已保留，可检查后重新调查。")
                 else:
                     workspace_commit = {"status": "no_change", "changes": []}
-                output = snapshot(answer, "completed")
+                committed = workspace_commit["status"] in {"applied", "no_change"}
+                run_status = ("completed" if completion == "completed" else "incomplete") if committed else "failed"
+                if not committed and completion == "completed":
+                    completion = "evidence_insufficient"
+                    open_questions.append("本轮工作区未提交成功，需要解决提交错误后再完成调查。")
+                output = snapshot(answer if committed else None, "completed" if committed else "failed")
+                audit["status"] = "success" if committed else "failed"
                 audit["result"] = output
                 try:
                     _write_audit(bound_case.case_id, output_path, audit)
                 except AppError:
                     # The workspace's atomic run journal remains authoritative.
                     output["limitations"].append("最终审计输出保存失败；已写入变更以工作区运行记录为准。")
-                record_final_state()
-                trace.finish_success(output)
+                try:
+                    record_final_state()
+                    trace.finish_success(output)
+                except Exception:
+                    # The atomic commit has already decided the outcome.
+                    output["limitations"].append("最终 Trace 记录失败；提交结果以工作区运行记录为准。")
                 return output
+    except asyncio.CancelledError:
+        stop_reason, run_status, finish_status = "cancelled", "cancelled", "failed"
+        workspace_commit = {"status": "discarded", "changes": []}
+        audit.update(status="cancelled", stop_reason=stop_reason, result=snapshot(None, "failed"))
+        try:
+            _write_audit(bound_case.case_id, output_path, audit)
+        except AppError:
+            pass  # Preserve cancellation even when its audit cannot be saved.
+        finally:
+            trace.finish_error(AppError("investigation_cancelled", "Investigation cancelled; working changes discarded"))
+        raise
     except Exception as exc:
+        run_status, finish_status = "failed", "failed"
+        workspace_commit = {"status": "discarded", "changes": []}
         error = trace.error_payload(exc)
         stop_reason = "model_failed" if isinstance(exc, llm_client.LLMFailure) else "error"
         persist()

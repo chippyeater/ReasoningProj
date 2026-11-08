@@ -100,9 +100,10 @@ class TestInvestigationResultContract(unittest.TestCase):
         validated = self.validate(payload)
         self.assertEqual([p.kind for p in validated.proposals], ["hypothesis", "hypothesis", "evidence_gap", "evidence_gap"])
         self.assertEqual(validated.proposals[2].hypothesis_proposal_indices, [0, 1])
-        # Forward reference is also unambiguous; proposals are never sorted.
+        # A Run can only reference parents already created by earlier tools.
         payload["proposals"] = [payload["proposals"][3], payload["proposals"][1]]
-        self.assertEqual(self.validate(payload).proposals[0].hypothesis_proposal_indices, [1])
+        with self.assertRaises(AppError):
+            self.validate(payload)
 
     def test_index_bounds_types_duplicates_and_combined_limit_are_strict(self):
         for indices in ([-1], [6], [True], ["0"], [0, 0], [{"run_id": "another-run", "index": 0}]):

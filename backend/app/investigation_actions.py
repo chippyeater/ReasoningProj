@@ -1,4 +1,4 @@
-"""Validated investigation artifacts. These tools never write the Issue workspace."""
+"""Validated run-local edits. Tools never write the shared Issue workspace."""
 import json
 import re
 from uuid import uuid4
@@ -7,7 +7,7 @@ from app.errors import AppError
 from app.reasoning_models import PROPOSAL_ADAPTER, proposal_material_ids
 
 
-def _check_duplicate(proposal, context, proposals, case):
+def _check_duplicate(proposal, workspace):
     """A conservative text guard, alongside the model's semantic comparison.
 
     Compare the stated proposition/question, not rationale, citation order or
@@ -16,7 +16,6 @@ def _check_duplicate(proposal, context, proposals, case):
     if proposal.kind not in {"hypothesis", "evidence_gap"}:
         return
     from app.investigation_tools import _normalized
-    from app.issue_workspaces import get_issue_workspaces
 
     def key(content):
         text = re.sub(r"\s+", " ", _normalized(content).strip())
@@ -36,14 +35,7 @@ def _check_duplicate(proposal, context, proposals, case):
         return re.sub(r"(?<![a-z0-9])\s+|\s+(?![a-z0-9])", "", text)
 
     section = "hypotheses" if proposal.kind == "hypothesis" else "gaps"
-    formal = list((context or {}).get("reasoning", {}).get(section, []))
-    # The model receives a bounded workspace projection. Check omitted formal
-    # objects too, without injecting the full workspace into model context.
-    workspace = get_issue_workspaces(case).workspaces.get((context or {}).get("current_issue"))
-    if workspace:
-        formal = [obj.model_dump(mode="json") for obj in getattr(workspace.reasoning, section)] + formal
-    candidates = [("reasoning", obj) for obj in formal if not obj.get("content_truncated")]
-    candidates += [("proposals", p.model_dump(mode="json")) for p in proposals if p.kind == proposal.kind]
+    candidates = [("reasoning", obj.model_dump(mode="json")) for obj in getattr(workspace.reasoning, section)]
     current = key(proposal.content)
     for source, obj in candidates:
         previous = key(obj["content"])
@@ -74,95 +66,80 @@ def artifacts(case, seen, context, goal, proposals, questions, status):
     }, ensure_ascii=False), goal, case, seen, context)
 
 
-def _propose(case, seen, context, proposals, kind, **values):
+def _propose(case, seen, workspace, proposals, kind, **values):
     if len(proposals) >= 6:
-        raise AppError("proposal_limit", "At most six pending proposals per run")
+        raise AppError("proposal_limit", "At most six changes per run")
     proposal = PROPOSAL_ADAPTER.validate_python({
         "kind": kind, "content": None, "hypothesis_ids": [], "meaning": None, "judgment": None,
         **values, "proposal_id": f"proposal-{uuid4().hex}",
     })
     # No append until every citation and current-run dependency has passed.
-    artifacts(case, seen, context, "validate pending suggestion", [*proposals, proposal], [], "evidence_insufficient")
-    _check_duplicate(proposal, context, proposals, case)
-    from app.issue_workspaces import get_issue_workspaces
-    from app.reasoning_proposals import stage_proposals
-    issue = context["current_issue"]
-    current = get_issue_workspaces(case)
-    candidate, _ = stage_proposals(case, issue, [*proposals, proposal], current, "validation")
-    if f"validation:{proposal.proposal_id}" not in candidate.workspaces[issue].reasoning.accepted_proposals:
-        return {"status": "ok", "pending": False, "no_change": True,
-                "message": ("The current/staged Gap status is unchanged and all supplied addressing InfoUnits are already associated. "
-                    "Rewording rationale alone does not update a Gap. No Proposal was staged. "
+    artifacts(case, seen, workspace.context(), "validate reasoning change", [*proposals, proposal], [], "evidence_insufficient")
+    _check_duplicate(proposal, workspace)
+    from app.reasoning_proposals import apply_proposal
+    object_id = apply_proposal(case, workspace, proposals, proposal)
+    if object_id is None:
+        return {"status": "ok", "applied": False, "no_change": True,
+                "message": ("The current Gap status is unchanged and all supplied addressing InfoUnits are already associated. "
+                    "Rewording rationale alone does not update a Gap. No change was applied. "
                     "Inspect any unread Goal-relevant existing material, or call finish_investigation if no actual new change is needed. "
                     "Do not resubmit the same operation with different wording."
                     if kind == "evidence_gap_update" else
-                    "The requested state already holds. No Proposal was staged; continue or Finish.")}
+                    "The requested state already holds. No change was applied; continue or Finish.")}
     proposals.append(proposal)
-    return {"status": "ok", "proposal_id": proposal.proposal_id, "pending": True,
-            "proposal": proposal.model_dump(mode="json")}
+    return {"status": "ok", "proposal_id": proposal.proposal_id, "object_id": object_id, "applied": True,
+            "proposal": proposal.model_dump(mode="json", exclude={"changes"})}
 
 
-def propose_hypothesis(case, seen, context, proposals, *, content, rationale, info_unit_ids):
+def propose_hypothesis(case, seen, workspace, proposals, *, content, rationale, info_unit_ids):
     """Create a new, evidence-testable Hypothesis. Use content to state one clear proposition and rationale to explain its basis and uncertainty. Include relevant obtained InfoUnit IDs when available. Returns a proposal_id for referencing the new Hypothesis within the current investigation."""
-    return _propose(case, seen, context, proposals, "hypothesis", content=content, rationale=rationale,
+    return _propose(case, seen, workspace, proposals, "hypothesis", content=content, rationale=rationale,
                     info_unit_ids=info_unit_ids)
 
 
-def propose_evidence_link(case, seen, context, proposals, *, hypothesis_id, info_unit_id, meaning, rationale,
+def propose_evidence_link(case, seen, workspace, proposals, *, hypothesis_id, info_unit_id, meaning, rationale,
                           hypothesis_proposal_ids=None):
     """Create an Evidence Link between a Hypothesis and one obtained InfoUnit. Identify the Hypothesis using its existing hypothesis_id or a proposal_id returned earlier in this investigation. Set meaning to support, oppose, or related, and use rationale to explain the relationship."""
-    return _propose(case, seen, context, proposals, "evidence_link", hypothesis_ids=[] if hypothesis_id is None else [hypothesis_id],
+    return _propose(case, seen, workspace, proposals, "evidence_link", hypothesis_ids=[] if hypothesis_id is None else [hypothesis_id],
                     hypothesis_proposal_ids=[] if hypothesis_proposal_ids is None else hypothesis_proposal_ids,
                     info_unit_ids=[info_unit_id], meaning=meaning, rationale=rationale)
 
 
-def propose_evidence_gap(case, seen, context, proposals, *, content, hypothesis_ids, hypothesis_proposal_ids,
+def propose_evidence_gap(case, seen, workspace, proposals, *, content, hypothesis_ids, hypothesis_proposal_ids,
                          rationale, basis_info_unit_ids):
     """Create an Evidence Gap describing a specific unresolved factual question. Use content to state what needs to be established, rationale to explain its relevance, and hypothesis_targets to associate the question with one or more Hypotheses. Include relevant obtained basis_info_unit_ids when available."""
-    return _propose(case, seen, context, proposals, "evidence_gap", content=content, hypothesis_ids=hypothesis_ids,
+    return _propose(case, seen, workspace, proposals, "evidence_gap", content=content, hypothesis_ids=hypothesis_ids,
                     hypothesis_proposal_ids=hypothesis_proposal_ids, rationale=rationale,
                     basis_info_unit_ids=basis_info_unit_ids)
 
 
-def propose_hypothesis_status(case, seen, context, proposals, *, hypothesis_id, judgment, rationale, info_unit_ids):
+def propose_hypothesis_status(case, seen, workspace, proposals, *, hypothesis_id, judgment, rationale, info_unit_ids):
     """Update the judgment of an existing Hypothesis to unverified, verified, or refuted. Provide its hypothesis_id, the new judgment, relevant obtained info_unit_ids, and a rationale explaining the evidential basis for the change."""
-    return _propose(case, seen, context, proposals, "hypothesis_status", hypothesis_ids=[hypothesis_id],
+    return _propose(case, seen, workspace, proposals, "hypothesis_status", hypothesis_ids=[hypothesis_id],
                     judgment=judgment, rationale=rationale, info_unit_ids=info_unit_ids)
 
 
-def propose_evidence_gap_update(case, seen, context, proposals, *, gap_id, addressing_info_unit_ids,
+def propose_evidence_gap_update(case, seen, workspace, proposals, *, gap_id, addressing_info_unit_ids,
                                 status, rationale):
     """Update an existing Evidence Gap's status, addressing materials, or both. Use status = resolved when the factual question has been sufficiently answered; otherwise use status = open and explain the remaining uncertainty. Provide addressing_info_unit_ids to associate newly obtained responding materials with the Gap. Submit an update when the status changes or new responding InfoUnits are associated."""
-    response = _propose(case, seen, context, proposals, "evidence_gap_update", gap_id=gap_id,
+    response = _propose(case, seen, workspace, proposals, "evidence_gap_update", gap_id=gap_id,
                         addressing_info_unit_ids=addressing_info_unit_ids, status=status, rationale=rationale)
-    formal, effective = _hypothesis_states(case, context, proposals)
-    from app.issue_workspaces import get_issue_workspaces
-    state = get_issue_workspaces(case).workspaces[context["current_issue"]].reasoning
+    state = workspace.reasoning
     gap = next(g for g in state.gaps if g.id == gap_id)
-    # Only successfully staged changes enter proposals; failed/no-change calls do not.
-    updated_hypothesis_ids = {hid for p in proposals if p.kind == "hypothesis_status" for hid in p.hypothesis_ids}
+    hypotheses = {h.id: h for h in state.hypotheses}
+    # The current object's provenance identifies its successful status edit.
+    from app.reasoning_proposals import proposal_key
+    status_keys = {proposal_key(workspace.run_id, proposals, index)
+                   for index, p in enumerate(proposals) if p.kind == "hypothesis_status"}
     related_hypotheses = [
-        {"hypothesis_id": hid, "content": formal[hid]["content"], "judgment": formal[hid]["judgment"],
-         "formal_judgment": formal[hid]["judgment"], "effective_judgment": effective[hid]["judgment"],
-         "pending_changes": [p.model_dump(mode="json") for p in proposals
-                             if p.kind == "hypothesis_status" and hid in p.hypothesis_ids]}
-        for hid in gap.hypothesis_ids if hid not in updated_hypothesis_ids]
+        {"hypothesis_id": hid, "content": hypotheses[hid].content, "judgment": hypotheses[hid].judgment}
+        for hid in gap.hypothesis_ids if hypotheses[hid].proposal_key not in status_keys]
     response["next_step"] = {"related_hypotheses": related_hypotheses,
         "instruction": (
             "请检查本次回应 Gap 的证据是否对关联 Hypothesis 的判断产生影响。根据证据实际证明力，判断是否需要更新；判断改变时调用 propose_hypothesis_status，不变时保留原状态，不创建无意义 Proposal。Gap resolved 不自动改变 Hypothesis judgment。"
             if related_hypotheses else
             "没有尚未提交状态更新的关联 Hypothesis，无需继续提交 Hypothesis 状态更新；不要重复提交已有 Proposal。")}
     return response
-
-
-def _hypothesis_states(case, context, proposals):
-    from app.issue_workspaces import get_issue_workspaces
-    from app.investigation_state import effective_reasoning
-    workspace = get_issue_workspaces(case).workspaces.get((context or {}).get("current_issue"))
-    reasoning = workspace.reasoning.model_dump(mode="json") if workspace else {"hypotheses": [], "gaps": [], "links": []}
-    effective = effective_reasoning(reasoning, [p.model_dump(mode="json") for p in proposals])
-    return ({h["id"]: h for h in reasoning["hypotheses"]},
-            {h["id"]: h for h in effective["hypotheses"]})
 
 
 def finish_investigation(case, seen, context, goal, proposals, *, answer,

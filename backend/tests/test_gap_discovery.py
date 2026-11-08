@@ -60,7 +60,7 @@ class TestGapDiscovery(unittest.TestCase):
                 self.assertEqual(result["status"], "invalid_request")
                 self.assertEqual(result["items"], [])
 
-    def test_reasoning_read_replaces_only_the_view_and_grants_no_material_or_source(self):
+    def test_reasoning_read_records_discovery_ids_without_caching_state_or_granting_evidence(self):
         initial = {"work_context": {"reasoning": {"hypotheses": [], "gaps": [], "links": [], "has_more": True}}}
         memory = KnowledgeState(initial)
         initial_copy = deepcopy(initial)
@@ -72,4 +72,5 @@ class TestGapDiscovery(unittest.TestCase):
         self.assertEqual(initial, initial_copy)
         other = search_evidence_gaps(self.case, info_unit_ids=["U036"], reasoning=self.reasoning())
         memory.merge("search_evidence_gaps", {"query": None, "info_unit_ids": ["U036"], "limit": 1}, other)
-        self.assertEqual([g["id"] for g in memory.work_context["reasoning"]["gaps"]], ["g-1"])
+        self.assertIn("g-1", memory.reasoning_ids)
+        self.assertNotIn("reasoning", memory.work_context)

@@ -89,7 +89,7 @@ class TestIssueWorkspaces(unittest.TestCase):
             response = client.post(url, json={"goal": "核对来源", "current_issue": issue, "selected_info_unit_ids": ["U001"]})
             self.assertEqual(response.status_code, 200, response.text)
         initial = json.loads(requests[0]["messages"][1]["content"])
-        self.assertEqual(initial["core_issue"], self.case.core_issue)
+        self.assertNotIn("core_issue", initial)
         self.assertEqual(initial["current_issue"], issue)
         self.assertIn("U001", [u["id"] for u in initial["materials"]["info_units"]["items"]])
         for forbidden in ("visible_node_ids", "node_positions", "viewport", "quote_units", "files"):
