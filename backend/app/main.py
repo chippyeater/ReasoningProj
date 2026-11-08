@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
@@ -24,6 +24,7 @@ from app.case_store import (
     read_parsed_document, save_case, set_current_case,
 )
 from app.errors import AppError
+from app.case_materials import render_case_materials
 from app.extraction_service import run_extraction
 from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_proposal
 from app.investigation_agent import run_investigation, latest_investigation_result
@@ -31,7 +32,7 @@ from app.reasoning_models import ReasoningEdit
 from app.reasoning_service import edit_reasoning
 from app.reasoning_models import InvestigationRunEdit, InvestigationRunRef
 from app.reasoning_proposals import reverse_investigation, retry_investigation
-from app.issue_workspaces import IssueWorkspacePatch, get_issue_workspaces, update_issue_workspace
+from app.issue_workspaces import IssueWorkspacePatch, get_issue_workspaces, update_issue_workspace, workspace_lock
 from app.observability import flush as flush_observability
 from app.quote_units import QuoteUnit
 from app.relation_service import create_relation, delete_relation, run_relation, update_relation
@@ -273,6 +274,25 @@ async def update_workspace(case_id: str, payload: WorkspaceState) -> CaseRespons
 @app.get("/api/cases/{case_id}/issue-workspaces")
 async def read_issue_workspaces(case_id: str):
     return get_issue_workspaces(require_case(case_id))
+
+
+@app.get("/api/cases/{case_id}/materials", response_class=HTMLResponse)
+async def case_materials(case_id: str):
+    # Metadata and saved workspace only: do not parse files, run an agent, or
+    # persist a second business snapshot just to view the material package.
+    case = load_case_snapshot(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    # Use the same lock as Case/Workspace writers so a concurrent edit cannot
+    # mix old InfoUnits with a newly committed reasoning state.
+    with workspace_lock(case):
+        case = load_case_snapshot(case_id)
+        if case is None:
+            raise HTTPException(status_code=404, detail="Case not found")
+        workspaces = get_issue_workspaces(case)
+    return HTMLResponse(render_case_materials(case, workspaces), headers={
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+    })
 
 
 @app.patch("/api/cases/{case_id}/issue-reasoning")
