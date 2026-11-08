@@ -43,6 +43,7 @@ import {
 import { ReasoningEditor, judgments, meanings, type ReasoningEditorTarget } from "./components/ReasoningEditor";
 import { ReasoningSuggestions, reasoningText } from "./components/ReasoningSuggestions";
 import { InvestigationResultPanel } from "./components/InvestigationResultPanel";
+import { CaseMaterialsPage } from "./components/CaseMaterialsPage";
 import { useWorkspaceAgentRuns } from "./useWorkspaceAgentRuns";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
@@ -531,6 +532,7 @@ const EMPTY_REASONING: ReasoningState = { hypotheses: [], gaps: [], links: [], a
 export default function App() {
   const [evidences, setEvidences] = useState<AddedEvidence[]>([]);
   const [currentCase, setCurrentCase] = useState<CaseData | null>(null);
+  const [materialsCaseId, setMaterialsCaseId] = useState<string | null>(null);
   const [caseLoading, setCaseLoading] = useState(false);
   const [error, setError] = useState("");
   const [isDropActive, setIsDropActive] = useState(false);
@@ -3005,6 +3007,11 @@ export default function App() {
             </div>
           </div>
 
+          <button type="button" className="case-materials-entry" disabled={!currentCase || workspaceSaving > 0}
+            onClick={() => currentCase && setMaterialsCaseId(currentCase.case_id)}>
+            案件材料 <span>全部争议问题 ↗</span>
+          </button>
+
           <div className="search-row">
             <div className="search-box">
               <input value={searchKeyword} onChange={(event) => setSearchKeyword(event.target.value)} placeholder="Search..." />
@@ -3418,6 +3425,9 @@ export default function App() {
             onLocate={id => { setReasoningEditor(null); locateAgentNode(id); }} onInvestigate={investigateReasoning} /> : null}
         </section>
       </div>
+      {materialsCaseId && currentCase?.case_id === materialsCaseId ? <CaseMaterialsPage
+        key={materialsCaseId} caseId={materialsCaseId} caseTitle={currentCase.case_title}
+        onClose={() => setMaterialsCaseId(null)} /> : null}
     </main>
   );
 }

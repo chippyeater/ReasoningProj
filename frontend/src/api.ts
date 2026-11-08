@@ -443,6 +443,17 @@ export async function getIssueWorkspaces(caseId: string): Promise<IssueWorkspace
   return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/issue-workspaces`));
 }
 
+export async function getCaseMaterials(caseId: string, signal?: AbortSignal): Promise<string> {
+  const response = await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/materials`, {
+    cache: "no-store", signal,
+  });
+  if (!response.ok) await readJson(response);
+  if (!response.headers.get("content-type")?.includes("text/html")) {
+    throw new Error("案件材料未返回 HTML，请重新生成。");
+  }
+  return response.text();
+}
+
 export async function updateIssueWorkspace(caseId: string, patch: {
   issue: string; status?: IssueStatus; canvas?: IssueCanvas;
 }): Promise<IssueWorkspaces> {
