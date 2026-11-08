@@ -139,13 +139,19 @@ def propose_evidence_gap_update(case, seen, context, proposals, *, gap_id, addre
     from app.issue_workspaces import get_issue_workspaces
     state = get_issue_workspaces(case).workspaces[context["current_issue"]].reasoning
     gap = next(g for g in state.gaps if g.id == gap_id)
-    response["next_step"] = {"related_hypotheses": [
+    # Only successfully staged changes enter proposals; failed/no-change calls do not.
+    updated_hypothesis_ids = {hid for p in proposals if p.kind == "hypothesis_status" for hid in p.hypothesis_ids}
+    related_hypotheses = [
         {"hypothesis_id": hid, "content": formal[hid]["content"], "judgment": formal[hid]["judgment"],
          "formal_judgment": formal[hid]["judgment"], "effective_judgment": effective[hid]["judgment"],
          "pending_changes": [p.model_dump(mode="json") for p in proposals
                              if p.kind == "hypothesis_status" and hid in p.hypothesis_ids]}
-        for hid in gap.hypothesis_ids],
-        "instruction": "请检查本次回应 Gap 的证据是否对关联 Hypothesis 的判断产生影响。根据证据实际证明力，判断是否需要更新；判断改变时调用 propose_hypothesis_status，不变时保留原状态，不创建无意义 Proposal。Gap resolved 不自动改变 Hypothesis judgment。"}
+        for hid in gap.hypothesis_ids if hid not in updated_hypothesis_ids]
+    response["next_step"] = {"related_hypotheses": related_hypotheses,
+        "instruction": (
+            "请检查本次回应 Gap 的证据是否对关联 Hypothesis 的判断产生影响。根据证据实际证明力，判断是否需要更新；判断改变时调用 propose_hypothesis_status，不变时保留原状态，不创建无意义 Proposal。Gap resolved 不自动改变 Hypothesis judgment。"
+            if related_hypotheses else
+            "没有尚未提交状态更新的关联 Hypothesis，无需继续提交 Hypothesis 状态更新；不要重复提交已有 Proposal。")}
     return response
 
 

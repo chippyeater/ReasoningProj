@@ -7,6 +7,7 @@ from unittest.mock import patch
 import test_investigation_agent as f
 import test_reasoning_proposals as fixture
 from app import investigation_actions as actions, investigation_state as state
+from app.errors import AppError
 from app.issue_workspaces import get_issue_workspaces, investigation_context
 
 
@@ -57,7 +58,7 @@ class TestGapHypothesisFeedback(unittest.TestCase):
         self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update"])
         self.assertEqual(result["completion_status"], "completed")
 
-    def test_pending_judgment_is_returned_and_no_change_retains_full_feedback(self):
+    def test_pending_judgment_is_filtered_and_no_change_retains_full_feedback(self):
         status = {"hypothesis_id": self.hids[0], "judgment": "verified", "info_unit_ids": ["U029"],
                   "rationale": "根据本轮材料更新判断。"}
         result, calls = self.run_gap([f.tool("propose_hypothesis_status", status, "hyp-update"),
@@ -68,13 +69,68 @@ class TestGapHypothesisFeedback(unittest.TestCase):
         self.assertEqual(previous["effect_status"], "no_change")
         self.assertTrue(previous["result"]["no_change"])
         self.assertTrue(previous["recovery"]["no_change"])
-        related = previous["result"]["next_step"]["related_hypotheses"][0]
-        self.assertEqual(related["formal_judgment"], "unverified")
-        self.assertEqual(related["effective_judgment"], "verified")
-        self.assertEqual(related["pending_changes"][0]["judgment"], "verified")
+        related = previous["result"]["next_step"]["related_hypotheses"]
+        self.assertEqual([h["hypothesis_id"] for h in related], self.hids[1:])
+        self.assertEqual(related[0]["formal_judgment"], "unverified")
+        self.assertEqual(related[0]["effective_judgment"], "unverified")
+        view = self.view(calls[3])
+        self.assertEqual([h["id"] for h in view["reasoning"]["hypotheses"]], self.hids)
+        self.assertEqual(view["reasoning"]["hypotheses"][0]["judgment"], "unverified")
+        self.assertEqual(view["effective_reasoning"]["hypotheses"][0]["judgment"], "verified")
+        self.assertEqual(view["proposals"][1]["hypothesis_ids"], self.hids[:1])
+        self.assertEqual(view["proposals"][1]["judgment"], "verified")
         self.assertEqual(self.view(calls[4])["previous_tool_result"]["effect_status"], "no_change")
         self.assertEqual(len(result["proposals"]), 2)
         self.assertEqual(get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses[0].judgment, "verified")
+
+    def test_all_pending_judgments_leave_an_empty_next_step_without_changing_state(self):
+        judgments = ("verified", "refuted")
+        updates = [f.tool("propose_hypothesis_status", {"hypothesis_id": hid, "judgment": judgment,
+            "info_unit_ids": ["U029"], "rationale": "离线协议回归：已成功暂存的判断。"}, f"hyp-{i}")
+            for i, (hid, judgment) in enumerate(zip(self.hids, judgments))]
+        result, calls = self.run_script("回应 Gap", [*updates,
+            f.tool("propose_evidence_gap_update", self.update, "gap"), f.finish("回应 Gap", status="completed")],
+            selected=["U029"], issue_key=self.issue, work_context=self.context)
+        view = self.view(calls[3])
+        next_step = view["previous_tool_result"]["result"]["next_step"]
+        self.assertEqual(next_step["related_hypotheses"], [])
+        self.assertIn("无需继续提交", next_step["instruction"])
+        self.assertEqual([h["judgment"] for h in view["reasoning"]["hypotheses"]], ["unverified", "unverified"])
+        self.assertEqual([h["judgment"] for h in view["effective_reasoning"]["hypotheses"]], list(judgments))
+        self.assertEqual([p["kind"] for p in result["proposals"]],
+            ["hypothesis_status", "hypothesis_status", "evidence_gap_update"])
+        self.assertEqual([h.judgment for h in get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses], list(judgments))
+
+    def test_invalid_and_no_change_status_calls_do_not_filter_hypotheses(self):
+        for overrides, execution_status in [({"judgment": "invalid"}, "failed"),
+                ({"info_unit_ids": ["foreign-unit"]}, "failed"), ({"judgment": "unverified"}, "succeeded")]:
+            with self.subTest(overrides=overrides):
+                args = {"hypothesis_id": self.hids[0], "judgment": "verified", "info_unit_ids": ["U029"],
+                    "rationale": "此次操作未成功暂存。", **overrides}
+                result, calls = self.run_script("回应 Gap", [f.tool("propose_hypothesis_status", args, "status"),
+                    f.tool("propose_evidence_gap_update", self.update, "gap"), f.finish("回应 Gap", status="completed")],
+                    selected=["U029"], issue_key=self.issue, work_context=self.context)
+                self.assertEqual(self.view(calls[1])["previous_tool_result"]["execution_status"], execution_status)
+                related = self.view(calls[2])["previous_tool_result"]["result"]["next_step"]["related_hypotheses"]
+                self.assertEqual([h["hypothesis_id"] for h in related], self.hids)
+                self.assertFalse(any(p["kind"] == "hypothesis_status" for p in result["proposals"]))
+
+    def test_rejected_staging_does_not_filter_hypotheses(self):
+        from app import reasoning_proposals
+        original = reasoning_proposals.stage_proposals
+        def stage(case, issue, proposals, current, run_id):
+            if any(p.kind == "hypothesis_status" for p in proposals):
+                raise AppError("staging_rejected", "Status update could not be staged")
+            return original(case, issue, proposals, current, run_id)
+        with patch.object(reasoning_proposals, "stage_proposals", side_effect=stage):
+            result, calls = self.run_script("回应 Gap", [f.tool("propose_hypothesis_status", {
+                "hypothesis_id": self.hids[0], "judgment": "verified", "info_unit_ids": ["U029"],
+                "rationale": "模拟暂存失败。"}, "status"), f.tool("propose_evidence_gap_update", self.update, "gap"),
+                f.finish("回应 Gap", status="completed")], selected=["U029"], issue_key=self.issue, work_context=self.context)
+        self.assertEqual(self.view(calls[1])["previous_tool_result"]["recovery"]["code"], "staging_rejected")
+        related = self.view(calls[2])["previous_tool_result"]["result"]["next_step"]["related_hypotheses"]
+        self.assertEqual([h["hypothesis_id"] for h in related], self.hids)
+        self.assertEqual([p["kind"] for p in result["proposals"]], ["evidence_gap_update"])
 
     def test_case_a2_changed_judgments_require_two_real_status_calls_and_commit(self):
         calls_to_make = [f.tool("propose_hypothesis_status", {"hypothesis_id": hid, "judgment": judgment,
@@ -92,17 +148,22 @@ class TestGapHypothesisFeedback(unittest.TestCase):
         def respond(call, step):
             view = self.view(call)
             if step == 1:
-                return f.tool("propose_evidence_gap_update", self.update, "gap")
+                return f.tool("propose_hypothesis_status", {"hypothesis_id": self.hids[0],
+                    "judgment": "verified", "info_unit_ids": ["U029"], "rationale": "H1 已有成功暂存的判断。"}, "h1")
             if step == 2:
+                return f.tool("propose_evidence_gap_update", self.update, "gap")
+            if step == 3:
                 related = view["previous_tool_result"]["result"]["next_step"]["related_hypotheses"]
                 returned_ids.extend(h["hypothesis_id"] for h in related)
                 return f.tool("propose_hypothesis_status", {"hypothesis_id": returned_ids[0],
-                    "judgment": "verified", "info_unit_ids": ["U029"], "rationale": "离线协议回归的状态更新。"}, "status")
+                    "judgment": "refuted", "info_unit_ids": ["U029"], "rationale": "继续处理 H2 的状态更新。"}, "h2")
             return f.finish("核查", status="completed")
         result, _ = self.run_script("核查 Gap 后评估关联对象", respond,
             selected=["U029"], issue_key=self.issue, work_context=self.context)
-        self.assertEqual(returned_ids, self.hids)
+        self.assertEqual(returned_ids, self.hids[1:])
         self.assertEqual(result["completion_status"], "completed")
+        self.assertEqual([h.judgment for h in get_issue_workspaces(self.case).workspaces[self.issue].reasoning.hypotheses],
+            ["verified", "refuted"])
 
     def test_last_execution_replaces_truncation_and_failure_without_mutating_originals(self):
         first = {"status": "truncated", "items": [], "has_more": True, "error": None}
