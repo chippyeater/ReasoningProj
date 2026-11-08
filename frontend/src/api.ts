@@ -454,6 +454,17 @@ export async function getCaseMaterials(caseId: string, signal?: AbortSignal): Pr
   return response.text();
 }
 
+export async function getCaseMaterialsZip(caseId: string, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/materials.zip`, {
+    cache: "no-store", signal,
+  });
+  if (!response.ok) await readJson(response);
+  if (!response.headers.get("content-type")?.includes("application/zip")) {
+    throw new Error("案件材料包未返回 ZIP，请重试下载。");
+  }
+  return response.blob();
+}
+
 export async function updateIssueWorkspace(caseId: string, patch: {
   issue: string; status?: IssueStatus; canvas?: IssueCanvas;
 }): Promise<IssueWorkspaces> {

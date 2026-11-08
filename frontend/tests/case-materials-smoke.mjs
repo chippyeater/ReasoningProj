@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import { createServer } from 'vite';
 
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -11,16 +11,26 @@ const root = fileURLToPath(new URL('../..', import.meta.url));
 // Reuse the isolated backend fixture and real HTML endpoint. No live case data,
 // backend server, model transport, or additional test dependencies are needed.
 const fixture = spawnSync(`${root}/backend/.venv/Scripts/python.exe`, ['-c', `
-import json, sys
+import base64, json, sys
+from io import BytesIO
+from pypdf import PdfWriter
 sys.path[:0] = ['backend', 'backend/tests']
-from test_case_materials import TestCaseMaterials
+from test_case_materials_export import TestCaseMaterialsExport
+from support import docx_bytes
 from app.case_service import create_empty_case
 from app.case_store import save_case
 from app.issue_workspaces import persist_issue_workspaces
-t = TestCaseMaterials()
+t = TestCaseMaterialsExport()
 t.setUp()
 try:
     url = t.fixture()
+    t.append('合同 #100%.docx', docx_bytes('原始合同内容，不改变原件字节。'))
+    t.append('原始图像.png', base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aotUAAAAASUVORK5CYII='))
+    pdf = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=300, height=400)
+    writer.write(pdf)
+    t.append('原始扫描.pdf', pdf.getvalue())
     t.case.files[0].filename = '<img src=x onerror="window.injected=1">.txt'
     t.case.info_units[0].content = '甲称已付款。<img src=x onerror="window.injected=1">'
     save_case(t.case)
@@ -30,11 +40,18 @@ try:
     t.state.workspaces[t.b].reasoning.gaps[0].status = 'resolved'
     persist_issue_workspaces(t.case, t.state)
     second = t.client.get(url).text
+    archive = t.client.get(f'/api/cases/{t.case.case_id}/materials.zip').content
+    originals = {}
+    for file in t.case.files:
+        response = t.client.get(t.original_url(file.file_id))
+        originals[file.file_id] = dict(raw=base64.b64encode(response.content).decode(),
+            headers={key: response.headers[key] for key in ('content-type', 'content-disposition', 'content-security-policy', 'x-content-type-options')})
     blank = create_empty_case('空白案件')
     save_case(blank, set_current=False)
     blank_html = t.client.get(f'/api/cases/{blank.case_id}/materials').text
     print(json.dumps(dict(case=t.case.model_dump(mode='json'), state=t.state.model_dump(mode='json'),
-        first=first, second=second, blank=blank.model_dump(mode='json'), blank_html=blank_html)))
+        first=first, second=second, blank=blank.model_dump(mode='json'), blank_html=blank_html,
+        originals=originals, archive=base64.b64encode(archive).decode())))
 finally:
     t.doCleanups()
 `], { cwd: root, encoding: 'utf8' });
@@ -51,8 +68,9 @@ test('Case materials: navigation, saved snapshots, sources, failure recovery and
     page.setDefaultTimeout(10000);
     const errors = [], mutations = [], forbidden = [];
     page.on('pageerror', error => errors.push(error.message));
-    let caseData = data.case, revision = 'first', fail = false;
-    await page.route('**/api/**', async route => {
+    let caseData = data.case, revision = 'first', fail = false, failZip = false;
+    // Context routing also intercepts the first request of a new source tab.
+    await page.context().route('**/api/**', async route => {
       const request = route.request(), url = new URL(request.url()), method = request.method();
       if (method === 'OPTIONS') return route.fulfill({ status: 204 });
       if (method !== 'GET') mutations.push([method, url.pathname]);
@@ -66,6 +84,15 @@ test('Case materials: navigation, saved snapshots, sources, failure recovery and
       if (suffix === '/materials') {
         if (fail) return route.fulfill({ status: 500, json: { detail: '模拟读取失败' } });
         return route.fulfill({ contentType: 'text/html; charset=utf-8', body: caseData === data.blank ? data.blank_html : data[revision] });
+      }
+      if (suffix === '/materials.zip') {
+        if (failZip) return route.fulfill({ status: 409, json: { detail: { code: 'original_file_missing', message: '原始文件缺失：file-missing' } } });
+        return route.fulfill({ contentType: 'application/zip', body: Buffer.from(data.archive, 'base64') });
+      }
+      const original = suffix.match(/^\/files\/([^/]+)\/original$/);
+      if (original && data.originals[original[1]]) {
+        const file = data.originals[original[1]];
+        return route.fulfill({ headers: file.headers, body: Buffer.from(file.raw, 'base64') });
       }
       if (!suffix) return reply({ case: caseData });
       forbidden.push([method, url.pathname]);
@@ -87,7 +114,9 @@ test('Case materials: navigation, saved snapshots, sources, failure recovery and
 
     await t.test('opens the actual HTML artifact with all issues, real file IDs and safe content', async () => {
       await open();
-      assert.equal(await page.locator('iframe').getAttribute('sandbox'), 'allow-scripts');
+      const sandbox = await page.locator('iframe').getAttribute('sandbox');
+      assert.match(sandbox, /allow-popups-to-escape-sandbox/);
+      assert.doesNotMatch(sandbox, /allow-same-origin/);
       assert.equal(await reader.locator('img').count(), 0);
       assert.match(await reader.locator('.snapshot').innerText(), /覆盖全部 2 个 Issue/);
       assert.equal(await reader.locator('.contents > a').count(), 6);
@@ -111,11 +140,11 @@ test('Case materials: navigation, saved snapshots, sources, failure recovery and
       assert.match(await sources.innerText(), /info-report/);
       assert.match(await sources.innerText(), /租金是否支付/);
       assert.match(await sources.innerText(), /押金是否返还/);
-      await sources.getByRole('link').click();
+      await sources.locator('.source-panel:visible a[href^="#file-"]').click();
       assert.equal(await reader.locator('#files').isVisible(), true);
-      assert.equal(await reader.locator('[data-file-id]').count(), 1);
-      assert.equal(await reader.locator('[data-file-id]').getAttribute('data-file-id'), data.case.files[0].file_id);
-      assert.equal(await reader.locator('.file-record').getAttribute('open'), '');
+      assert.equal(await reader.locator('[data-file-id]').count(), data.case.files.length);
+      assert.equal(await reader.locator('[data-file-id]').first().getAttribute('data-file-id'), data.case.files[0].file_id);
+      assert.equal(await reader.locator('.file-record').first().getAttribute('open'), '');
       await sources.getByRole('button', { name: '收起证据与来源' }).click();
       await chapter('待补充事项').click();
       assert.match(await reader.locator('#gaps').innerText(), /仍需取得押金转账凭证/);
@@ -125,7 +154,96 @@ test('Case materials: navigation, saved snapshots, sources, failure recovery and
       assert.equal(mutations.length, mutationCount);
     });
 
+    await t.test('source sidebar and directory open originals by ID and download unsupported formats', async () => {
+      await chapter('事实时间线').click();
+      await reader.locator('.timeline-event').filter({ hasText: '付款陈述' }).getByRole('button', { name: '查看来源与关联 ↗' }).click();
+      const sources = reader.getByRole('complementary', { name: '相关证据及文件来源' });
+      const popupPromise = page.waitForEvent('popup');
+      await sources.getByRole('link', { name: '打开原始文件 ↗' }).click();
+      const popup = await popupPromise;
+      await popup.waitForLoadState('domcontentloaded');
+      assert.match(popup.url(), new RegExp(`/files/${data.case.files[0].file_id}/original$`));
+      assert.equal(await popup.locator('body').innerText(), Buffer.from(data.originals[data.case.files[0].file_id].raw, 'base64').toString());
+      assert.equal(await popup.evaluate(() => window.opener), null);
+      await popup.close();
+      await sources.getByRole('button', { name: '收起证据与来源' }).click();
+      await chapter('证据目录').click();
+      const office = reader.locator(`[data-file-id="${data.case.files[1].file_id}"]`);
+      await office.locator('summary').first().click();
+      const downloadPromise = page.waitForEvent('download');
+      await office.getByRole('link', { name: '打开原始文件 ↗' }).click();
+      const download = await downloadPromise;
+      assert.equal(download.suggestedFilename(), '合同 #100%.docx');
+      assert.deepEqual(await readFile(await download.path()), Buffer.from(data.originals[data.case.files[1].file_id].raw, 'base64'));
+      const image = reader.locator(`[data-file-id="${data.case.files[2].file_id}"]`);
+      await image.locator('summary').first().click();
+      const imagePromise = page.waitForEvent('popup');
+      await image.getByRole('link', { name: '打开原始文件 ↗' }).click();
+      const imagePage = await imagePromise;
+      await imagePage.waitForLoadState('load');
+      assert.equal(await imagePage.locator('img').evaluate(img => img.naturalWidth), 1);
+      await imagePage.close();
+      const pdf = reader.locator(`[data-file-id="${data.case.files[3].file_id}"]`);
+      await pdf.locator('summary').first().click();
+      const pdfPromise = page.waitForEvent('popup');
+      await pdf.getByRole('link', { name: '打开原始文件 ↗' }).click();
+      const pdfPage = await pdfPromise;
+      await pdfPage.waitForLoadState('domcontentloaded');
+      await mkdir(`${root}/tmp`, { recursive: true });
+      // Chromium renders PDFs in its built-in extension frame, outside the
+      // original response document's DOM. Verify the actual native plugin.
+      const viewer = pdfPage.frames().find(frame => frame.url().startsWith('chrome-extension://'))
+        ?? await pdfPage.waitForEvent('framenavigated', { predicate: frame => frame.url().startsWith('chrome-extension://') });
+      await viewer.locator('embed[type="application/x-google-chrome-pdf"]').waitFor({ state: 'attached' });
+      await pdfPage.screenshot({ path: `${root}/tmp/case-materials-original-pdf.png` });
+      await pdfPage.close();
+    });
+
+    await t.test('download button handles missing originals and produces an archive that runs offline without network', async () => {
+      const downloadButton = page.getByRole('button', { name: '下载案件材料包', exact: true });
+      failZip = true;
+      await downloadButton.click();
+      await page.getByRole('alert').waitFor();
+      assert.match(await page.getByRole('alert').innerText(), /下载失败.*original_file_missing/);
+      assert.equal(await reader.locator('#files').isVisible(), true);
+      failZip = false;
+      const downloadPromise = page.waitForEvent('download');
+      await downloadButton.click();
+      const download = await downloadPromise;
+      assert.equal(download.suggestedFilename(), 'case-materials.zip');
+      const archivePath = await download.path();
+      assert.deepEqual(await readFile(archivePath), Buffer.from(data.archive, 'base64'));
+      await mkdir(`${root}/tmp`, { recursive: true });
+      const folder = await mkdtemp(`${root}/tmp/case-materials-offline-`);
+      const extracted = spawnSync(`${root}/backend/.venv/Scripts/python.exe`, ['-c', `
+import sys
+from zipfile import ZipFile
+with ZipFile(sys.argv[1]) as archive:
+    archive.extractall(sys.argv[2])
+`, archivePath, folder], { encoding: 'utf8' });
+      assert.equal(extracted.status, 0, extracted.stderr);
+      const offline = await browser.newPage();
+      const network = [];
+      await offline.context().route(/^https?:\/\//, route => { network.push(route.request().url()); return route.abort(); });
+      await offline.goto(pathToFileURL(`${folder}/index.html`).href);
+      assert.equal(await offline.locator('.chapter:visible').count(), 1);
+      await offline.getByRole('navigation', { name: '材料包目录' }).getByRole('link', { name: '争议问题与证据对应表', exact: true }).click();
+      assert.match(await offline.locator('#issues').innerText(), /重新生成后的押金命题/);
+      await offline.locator('.contents > a[href="#files"]').click();
+      await offline.locator('.file-record').first().locator('summary').first().click();
+      const popupPromise = offline.waitForEvent('popup');
+      await offline.locator('.file-record').first().getByRole('link', { name: '打开原始文件 ↗' }).click();
+      const source = await popupPromise;
+      await source.waitForLoadState('domcontentloaded');
+      assert.equal(new URL(source.url()).protocol, 'file:');
+      assert.match(await source.locator('body').innerText(), /甲称已付款/);
+      await source.close();
+      assert.deepEqual(network, []);
+      await offline.close();
+    });
+
     await t.test('regeneration refreshes saved judgments/gaps; failure retains the previous snapshot and retry works', async () => {
+      await chapter('协商准备摘要').click();
       fail = true;
       await page.getByRole('button', { name: '重新生成', exact: true }).click();
       await page.getByRole('alert').waitFor();
