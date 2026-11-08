@@ -42,6 +42,7 @@ summary { cursor: pointer; padding: 10px 0; color: #e2deef; }
 .evidence-link { border-left: 2px solid #48405e; padding: 12px 20px; margin: 12px 0 16px 4px; }
 .source-button { border: 0; background: transparent; color: #c5beff; padding: 6px 0; font-size: 12px; text-align: left; }
 .source-button:hover { text-decoration: underline; }
+.original-link { display: inline-block; padding: 6px 0; font-size: 12px; }
 .timeline-event { position: relative; padding: 2px 0 24px 26px; margin-left: 5px; border-left: 1px solid #48405e; }
 .timeline-event::before { content: ""; position: absolute; left: -5px; top: 10px; width: 9px; height: 9px; border-radius: 50%; background: #aea6ff; }
 .time-label { color: #b9b0de; font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }

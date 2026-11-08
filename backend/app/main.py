@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
@@ -25,6 +25,7 @@ from app.case_store import (
 )
 from app.errors import AppError
 from app.case_materials import render_case_materials
+from app.case_materials_export import build_case_materials_zip, original_file, original_response_type, safe_original_filename
 from app.extraction_service import run_extraction
 from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_proposal
 from app.investigation_agent import run_investigation, latest_investigation_result
@@ -189,6 +190,20 @@ async def get_parsed_text(case_id: str, file_id: str) -> ParsedDocument:
     return read_parsed_document(case_id, file)
 
 
+@app.get("/api/cases/{case_id}/files/{file_id}/original")
+def get_original_file(case_id: str, file_id: str):
+    case = load_case_snapshot(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    file, path = original_file(case, file_id)
+    media_type, disposition = original_response_type(file)
+    return FileResponse(path, media_type=media_type, filename=safe_original_filename(file.filename),
+        content_disposition_type=disposition, headers={
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+        })
+
+
 @app.get("/api/cases/{case_id}/extraction-input", response_model=ExtractionInput)
 async def get_extraction_input(case_id: str, file_id: Annotated[list[str] | None, Query()] = None) -> ExtractionInput:
     return build_extraction_input(require_case(case_id), file_id)
@@ -277,7 +292,7 @@ async def read_issue_workspaces(case_id: str):
 
 
 @app.get("/api/cases/{case_id}/materials", response_class=HTMLResponse)
-async def case_materials(case_id: str):
+async def case_materials(case_id: str, request: Request):
     # Metadata and saved workspace only: do not parse files, run an agent, or
     # persist a second business snapshot just to view the material package.
     case = load_case_snapshot(case_id)
@@ -290,7 +305,24 @@ async def case_materials(case_id: str):
         if case is None:
             raise HTTPException(status_code=404, detail="Case not found")
         workspaces = get_issue_workspaces(case)
-    return HTMLResponse(render_case_materials(case, workspaces), headers={
+    return HTMLResponse(render_case_materials(case, workspaces,
+        source_url=lambda file: str(request.url_for('get_original_file', case_id=case_id, file_id=file.file_id))), headers={
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+    })
+
+
+@app.get("/api/cases/{case_id}/materials.zip")
+def export_case_materials(case_id: str):
+    case = load_case_snapshot(case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    with workspace_lock(case):
+        case = load_case_snapshot(case_id)
+        if case is None:
+            raise HTTPException(status_code=404, detail="Case not found")
+        archive = build_case_materials_zip(case, get_issue_workspaces(case))
+    return Response(archive, media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="case-materials.zip"',
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
     })
 

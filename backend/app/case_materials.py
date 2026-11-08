@@ -1,12 +1,14 @@
 """Read-only HTML projection of the saved Case and every current Issue workspace."""
 from base64 import b64encode
+from collections.abc import Callable
 from datetime import datetime, timezone
 from hashlib import sha256
 from html import escape
 from pathlib import Path
+from urllib.parse import quote
 
 from app.issue_workspaces import IssueWorkspaces, issue_keys
-from app.schemas import CaseData, InfoUnit
+from app.schemas import CaseData, CaseFile, InfoUnit
 
 SECTIONS = (
     ("overview", "案件概况"), ("timeline", "事实时间线"),
@@ -37,7 +39,8 @@ def classification(unit: InfoUnit) -> tuple[str, str]:
     return "unverified", "待核实事项"
 
 
-def render_case_materials(case: CaseData, workspaces: IssueWorkspaces) -> str:
+def render_case_materials(case: CaseData, workspaces: IssueWorkspaces, *,
+                          source_url: Callable[[CaseFile], str] | None = None) -> str:
     """No writes, model calls, source parsing, or conclusions beyond saved labels.
 
     IDs in HTML attributes are generated locally; business IDs are escaped text.
@@ -72,6 +75,12 @@ def render_case_materials(case: CaseData, workspaces: IssueWorkspaces) -> str:
 
     def source_button(uid: str) -> str:
         return f'<button type="button" class="source-button" data-source="{unit_targets[uid]}">查看来源与关联 ↗</button>'
+
+    def original_link(file: CaseFile) -> str:
+        url = source_url(file) if source_url else (
+            f'/api/cases/{quote(case.case_id, safe="")}/files/{quote(file.file_id, safe="")}/original')
+        return (f'<a class="original-link" href="{text(url)}" target="_blank" rel="noopener noreferrer">'
+                '打开原始文件 ↗</a>')
 
     def source_labels(unit: InfoUnit) -> str:
         labels = []
@@ -190,6 +199,7 @@ def render_case_materials(case: CaseData, workspaces: IssueWorkspaces) -> str:
         file_rows.append(f'<details class="file-record" id="{file_targets[fid]}" data-file-id="{text(fid)}">'
             f'<summary>{text(file.filename)} <span class="badge">{text(file.file_type.value)}</span></summary>'
             f'<p>原始文件 ID：<code>{text(fid)}</code></p><p class="meta">解析状态：{text(file.parse_status.value)}</p>'
+            f'{original_link(file)}'
             f'<p>相关 Issue：{text("；".join(related_issues) or "尚未关联 Issue")}</p>'
             '<h4>关联信息节点</h4>' + unit_list(associated, '尚无关联 InfoUnit。') + '</details>')
     files_html = '<p class="note">按原始文件 ID 去重，包含本 Case 的全部上传文件；同名文件仍按不同 ID 保留。</p>' + (''.join(file_rows) or empty('尚无原始上传文件。'))
@@ -217,7 +227,7 @@ def render_case_materials(case: CaseData, workspaces: IssueWorkspaces) -> str:
         for fid in dict.fromkeys(ref.file_id for ref in unit.source_refs):
             if fid in files:
                 refs.append(f'<li><a href="#{file_targets[fid]}">{text(files[fid].filename)}</a>'
-                            f'<p class="meta">原始文件 ID：<code>{text(fid)}</code></p></li>')
+                            f'<p class="meta">原始文件 ID：<code>{text(fid)}</code></p>{original_link(files[fid])}</li>')
             else:
                 refs.append('<li>来源未关联：引用的文件不在当前 Case 文件目录中。</li>')
         connected = ''.join(f'<li>{badge(link.meaning, MEANINGS[link.meaning])}<p>{text(h.content)}</p>'
