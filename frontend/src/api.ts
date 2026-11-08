@@ -23,10 +23,17 @@ export type AgentResult = {
     changes: ReasoningChange[]; error?: { code: string; message: string } };
 };
 
-export async function runAgent(caseId: string, input: { goal: string; selected_info_unit_ids: string[]; current_issue?: string; selected_reasoning_ids?: string[]; focused_object_id?: string | null }): Promise<AgentResult> {
+export async function runAgent(caseId: string, input: { run_id: string; goal: string; selected_info_unit_ids: string[]; current_issue?: string; selected_reasoning_ids?: string[]; focused_object_id?: string | null }): Promise<AgentResult> {
   return readJson<AgentResult>(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/agent/run`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
   }));
+}
+
+export async function getLatestAgentResult(caseId: string, issue: string): Promise<AgentResult | null> {
+  const query = issue ? `?${new URLSearchParams({ issue })}` : "";
+  const response = await readJson<{ result: AgentResult | null }>(await fetch(
+    `${API_BASE}/api/cases/${encodeURIComponent(caseId)}/agent/latest${query}`));
+  return response.result;
 }
 
 export type FileType = "pdf" | "docx" | "image" | "txt" | "markdown" | "other";

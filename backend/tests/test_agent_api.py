@@ -13,6 +13,78 @@ from app import case_store, llm_client, main
 class TestAgentAPI(unittest.TestCase):
     setUp = fixtures.TestInvestigationAgent.setUp
     tearDown = fixtures.TestInvestigationAgent.tearDown
+
+    def test_latest_restores_saved_workspace_answer_and_original_sources_read_only(self):
+        self._workspace_enabled = True
+        issue = self.case.issue_set[0]
+        replies = [fixtures.tool("get_evidence", {"info_unit_id": "U029"}), fixtures.finish("核查", status="completed")]
+        with patch.object(main, "require_case", return_value=self.case), patch.object(llm_client, "call_tools", side_effect=replies) as model:
+            client = TestClient(main.app)
+            original = client.post(f"/api/cases/{self.case.case_id}/agent/run", json={
+                "goal": "核查", "selected_info_unit_ids": ["U029"], "current_issue": issue})
+            self.assertEqual(original.status_code, 200, original.text)
+            saved = self.fixture.disk_snapshot()
+            changed = self.case.model_copy(deep=True)
+            unit = next(u for u in changed.info_units if u.id == "U029")
+            unit.source_refs[0].quote = "后续修改的原文，不能替换历史依据。"
+            with patch.object(main, "require_case", return_value=changed):
+                restored = client.get(f"/api/cases/{self.case.case_id}/agent/latest", params={"issue": issue})
+            self.assertEqual(restored.status_code, 200, restored.text)
+            self.assertEqual(restored.json()["result"], original.json())
+            self.assertEqual(model.call_count, 2)
+            self.assertEqual(self.fixture.disk_snapshot(), saved)
+            other = client.get(f"/api/cases/{self.case.case_id}/agent/latest", params={"issue": self.case.issue_set[1]})
+            self.assertIsNone(other.json()["result"])
+            unknown = client.get(f"/api/cases/{self.case.case_id}/agent/latest", params={"issue": "unknown"})
+            self.assertEqual(unknown.status_code, 422)
+
+    def test_latest_is_case_scoped_and_selects_creation_time_not_file_order(self):
+        issue = self.case.issue_set[0]
+        result = {"run_id": "investigation-" + "a" * 32, "goal": "较新结果", "answer": "保留答复",
+                  "run_status": "incomplete", "evidence_refs": [], "workspace_commit": {"status": "no_change", "changes": []}}
+        for suffix, timestamp, goal in (("a", "2026-11-08T08:33:31Z", "较新结果"), ("z", "2026-11-08T08:00:00Z", "较旧结果")):
+            case_store.write_json(case_store.artifact_path(self.case.case_id, f"runs/investigation-{suffix}.output.json"),
+                {"created_at": timestamp, "workspace_receipt": {"issue": issue}, "result": {**result, "goal": goal}})
+        other_case = self.case.model_copy(update={"case_id": "case-other"})
+        case_store.write_json(case_store.artifact_path(other_case.case_id, "runs/investigation-b.output.json"),
+            {"created_at": "2026-11-09T08:00:00Z", "workspace_receipt": {"issue": issue}, "result": {**result, "goal": "其他案件"}})
+        with patch.object(main, "require_case", return_value=self.case), patch.object(llm_client, "call_tools") as model:
+            restored = TestClient(main.app).get(f"/api/cases/{self.case.case_id}/agent/latest", params={"issue": issue})
+            self.assertEqual(restored.json()["result"]["goal"], "较新结果")
+            self.assertEqual(restored.json()["result"]["run_status"], "incomplete")
+            model.assert_not_called()
+
+    def test_client_run_id_is_used_and_cannot_reexecute_or_overwrite_audit(self):
+        run_id = "investigation-" + "a" * 32
+        with patch.object(main, "require_case", return_value=self.case), patch.object(llm_client, "call_tools",
+                side_effect=[fixtures.finish("核对来源", status="unsupported")]) as model:
+            client = TestClient(main.app)
+            payload = {"goal": "核对来源", "run_id": run_id}
+            response = client.post(f"/api/cases/{self.case.case_id}/agent/run", json=payload)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["run_id"], run_id)
+            output = case_store.artifact_path(self.case.case_id, f"runs/{run_id}.output.json")
+            original = output.read_bytes()
+            duplicate = client.post(f"/api/cases/{self.case.case_id}/agent/run", json=payload)
+            self.assertEqual(duplicate.status_code, 409, duplicate.text)
+            self.assertEqual(duplicate.json()["detail"]["code"], "duplicate_investigation_run")
+            self.assertEqual(output.read_bytes(), original)
+            self.assertEqual(model.call_count, 1)
+
+            # A failed earlier Run may have only an output artifact. Protect it too.
+            case_store.artifact_path(self.case.case_id, f"runs/{run_id}.input.json").unlink()
+            duplicate = client.post(f"/api/cases/{self.case.case_id}/agent/run", json=payload)
+            self.assertEqual(duplicate.status_code, 409, duplicate.text)
+            self.assertEqual(output.read_bytes(), original)
+            self.assertEqual(model.call_count, 1)
+
+    def test_client_run_id_rejects_invalid_paths_before_model_call(self):
+        with patch.object(main, "require_case", return_value=self.case), patch.object(llm_client, "call_tools") as model:
+            for run_id in ("../other", "investigation-wrong", "investigation-" + "a" * 33):
+                response = TestClient(main.app).post(f"/api/cases/{self.case.case_id}/agent/run",
+                    json={"goal": "核查", "run_id": run_id})
+                self.assertEqual(response.status_code, 422)
+            model.assert_not_called()
     def test_http_runs_dynamic_loop_with_bounded_initial_wire_request(self):
         goal = "核对损失说法"
         requests = []

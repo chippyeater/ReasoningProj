@@ -364,6 +364,43 @@ def _write_audit(case_id: str, path: str, payload: dict) -> None:
         raise AppError("investigation_audit_failed", "Cannot persist the investigation audit", 500) from exc
 
 
+def latest_investigation_result(case: CaseData, issue: str | None) -> dict | None:
+    """Read the latest saved result for one Workspace; never execute or commit it."""
+    from app.issue_workspaces import get_issue_workspaces
+    workspace = get_issue_workspaces(case).workspaces.get(issue) if issue is not None else None
+    if issue is not None and workspace is None:
+        raise AppError("unknown_issue", "Issue does not belong to the current case")
+    latest = None
+    try:
+        for path in artifact_path(case.case_id, "runs").glob("investigation-*.output.json"):
+            audit = json.loads(path.read_text(encoding="utf-8"))
+            if (audit.get("workspace_receipt") or {}).get("issue") != issue or not audit.get("result"):
+                continue
+            if latest is None or audit["created_at"] > latest["created_at"]:
+                latest = audit
+    except (OSError, ValueError, KeyError) as exc:
+        raise AppError("investigation_audit_failed", "Cannot read the saved investigation result", 500) from exc
+    if latest is None or latest["result"].get("run_status") == "running":
+        return None
+    result = deepcopy(latest["result"])
+    # Source indices may since have changed. Display the original audited source,
+    # rather than substituting today's SourceRef at the same index.
+    obtained = (latest.get("knowledge_state") or {}).get("source_refs", {})
+    files = {file.file_id: file.filename for file in case.files}
+    evidence = []
+    for pointer in result["evidence_refs"]:
+        row = obtained.get(f"{pointer['info_unit_id']}:{pointer['source_ref_index']}")
+        if not row or not row.get("source_ref"):
+            raise AppError("investigation_audit_failed", "Saved investigation source is missing", 500)
+        source = row["source_ref"]
+        evidence.append({**pointer, **source, "filename": files.get(source["file_id"], "原始材料（已移除）")})
+    if workspace is not None:
+        committed = workspace.reasoning.investigation_runs.get(result["run_id"])
+        if committed is not None:
+            result["workspace_commit"] = committed.model_dump(mode="json")
+    return {**result, "evidence": evidence}
+
+
 def _tool_recovery(response, name, args=None, case=None):
     """Add actionable diagnostics to this loop's existing tool error envelope."""
     if response["status"] not in {"error", "invalid_request"}:
@@ -578,14 +615,16 @@ def _validate_summary(text, proposals):
 
 async def run_investigation(case: CaseData, goal: str,
                             selected_info_unit_ids: list[str] | None = None, *, work_context: dict | None = None,
-                            issue_key: str | None = None, is_cancelled=None) -> dict:
+                            issue_key: str | None = None, is_cancelled=None, run_id: str | None = None) -> dict:
     """One goal-driven loop. Task plans and activity history are not model input."""
     from app import investigation_actions as actions
     from app.reasoning_proposals import workspace_receipt, commit_investigation
     if not isinstance(goal, str) or not goal.strip() or len(goal) > 2000:
         raise AppError("invalid_investigation_goal", "goal must contain 1 to 2000 nonblank characters")
     from app.issue_workspaces import get_issue_workspaces, investigation_context, workspace_lock, IssueWorkspaces
-    run_id, created_at = f"investigation-{uuid4().hex}", now_iso()
+    run_id, created_at = run_id or f"investigation-{uuid4().hex}", now_iso()
+    if not re.fullmatch(r"investigation-[0-9a-f]{32}", run_id):
+        raise AppError("invalid_investigation_run_id", "Invalid Investigation Run ID")
     with workspace_lock(case) if issue_key is not None else nullcontext():
         bound_case = case.model_copy(deep=True)
         current = get_issue_workspaces(bound_case) if issue_key is not None else IssueWorkspaces()
@@ -605,6 +644,19 @@ async def run_investigation(case: CaseData, goal: str,
         "selected_info_units": [tools._summary(unit) for unit in selected]}
     if work_context is not None:
         initial_input["work_context"] = deepcopy(work_context)
+    # Reserve the existing input artifact exclusively: a repeated client ID must
+    # never overwrite an earlier audit or resend an already started Run.
+    input_path = artifact_path(bound_case.case_id, f"runs/{run_id}.input.json")
+    try:
+        input_path.parent.mkdir(parents=True, exist_ok=True)
+        if artifact_path(bound_case.case_id, f"runs/{run_id}.output.json").exists():
+            raise FileExistsError(run_id)
+        with input_path.open("x", encoding="utf-8") as handle:
+            json.dump({"run_id": run_id}, handle)
+    except FileExistsError as exc:
+        raise AppError("duplicate_investigation_run", "Investigation Run ID already exists", 409) from exc
+    except OSError as exc:
+        raise AppError("investigation_audit_failed", "Cannot persist the investigation audit", 500) from exc
     trace = RunTrace(case_id=bound_case.case_id, case_title=bound_case.case_title, stage="Investigation Agent",
         run_id=run_id, workflow_id=run_id, created_at=created_at, initial_input=initial_input)
     audit = {"run_id": run_id, "run_name": trace.run_name, "stage": "investigation_agent",

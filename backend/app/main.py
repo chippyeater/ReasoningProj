@@ -26,7 +26,7 @@ from app.case_store import (
 from app.errors import AppError
 from app.extraction_service import run_extraction
 from app.info_unit_agent import confirm_info_unit_proposal, generate_info_unit_proposal
-from app.investigation_agent import run_investigation
+from app.investigation_agent import run_investigation, latest_investigation_result
 from app.reasoning_models import ReasoningEdit
 from app.reasoning_service import edit_reasoning
 from app.reasoning_models import InvestigationRunEdit, InvestigationRunRef
@@ -95,6 +95,11 @@ async def get_case(case_id: str) -> CaseResponse:
     return CaseResponse(case=require_case(case_id))
 
 
+@app.get("/api/cases/{case_id}/agent/latest")
+async def agent_latest(case_id: str, issue: str | None = None) -> dict:
+    return {"result": latest_investigation_result(require_case(case_id), issue)}
+
+
 @app.post("/api/cases/{case_id}/agent/run")
 async def agent_run(case_id: str, payload: AgentRunInput, request: Request) -> dict:
     case = require_case(case_id)
@@ -105,7 +110,7 @@ async def agent_run(case_id: str, payload: AgentRunInput, request: Request) -> d
         "selected_reasoning_ids": payload.selected_reasoning_ids,
         "focused_object_id": payload.focused_object_id}} if payload.current_issue is not None else None
     result = await run_investigation(case, payload.goal, payload.selected_info_unit_ids,
-        work_context=context, issue_key=payload.current_issue, is_cancelled=request.is_disconnected)
+        work_context=context, issue_key=payload.current_issue, is_cancelled=request.is_disconnected, run_id=payload.run_id)
     units = {unit.id: unit for unit in case.info_units}
     files = {file.file_id: file for file in case.files}
     # Hydrate only validated, actually used pointers for the UI. Never model input.

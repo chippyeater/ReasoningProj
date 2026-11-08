@@ -13,6 +13,7 @@ import {
   listQuoteUnits,
   selectCase,
   runAgent,
+  getLatestAgentResult,
   routeTask,
   runExtraction,
   runRelation,
@@ -32,7 +33,6 @@ import {
   type CaseSummary,
   type InferenceCard,
   type InfoUnit,
-  type AgentResult,
   type InfoUnitSubtype,
   type InfoUnitType,
   type InfoUnitMutationInput,
@@ -43,6 +43,7 @@ import {
 import { ReasoningEditor, judgments, meanings, type ReasoningEditorTarget } from "./components/ReasoningEditor";
 import { ReasoningSuggestions, reasoningText } from "./components/ReasoningSuggestions";
 import { InvestigationResultPanel } from "./components/InvestigationResultPanel";
+import { useWorkspaceAgentRuns } from "./useWorkspaceAgentRuns";
 import myAvatar from "./assets/my-avatar.png";
 import folderIcon from "./assets/folder.png";
 import chevronsUpIcon from "./assets/chevrons-up.png";
@@ -591,12 +592,16 @@ export default function App() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string | null; relationId: string | null; reasoningLinkId: string | null } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const [islandHeight, setIslandHeight] = useState(ISLAND_MIN_HEIGHT);
-  const [agentResult, setAgentResult] = useState<AgentResult | null>(null);
-  const agentRequestRef = useRef(0);
+  const { runs: agentRuns, update: updateAgentRun, start: startAgentRun, restore: restoreAgentRun, get: getAgentRun } = useWorkspaceAgentRuns();
+  const agentRun = agentRuns[JSON.stringify([currentCase?.case_id ?? "", activeIssue])];
+  const agentResult = agentRun?.result ?? null;
+  const agentBusy = agentRun?.status === "running";
+  const agentError = agentRun?.error ?? "";
+  function setAgentError(error: string) {
+    updateAgentRun(currentCase?.case_id ?? "", activeIssue, { error });
+  }
   const agentCaseIdRef = useRef(currentCase?.case_id);
   agentCaseIdRef.current = currentCase?.case_id;
-  const [agentBusy, setAgentBusy] = useState(false);
-  const [agentError, setAgentError] = useState("");
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const nodeElementRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -723,12 +728,24 @@ export default function App() {
   }, [agentError, agentResult, island.text, island.visible, activeIssue, selectedInfoUnitIds.length, agentBusy]);
 
   useEffect(() => {
-    agentRequestRef.current += 1;
     setContextMenu(null);
-    setAgentBusy(false);
     setReasoningEditor(null); setReasoningError("");
-    setAgentResult(null);
-    setAgentError("");
+    const run = agentRuns[JSON.stringify([currentCase?.case_id ?? "", activeIssue])];
+    setIsland(current => ({ ...current, visible: Boolean(run?.result || run?.status === "running" || run?.error),
+      text: run?.goal ?? "" }));
+    const caseId = currentCase?.case_id;
+    if (!caseId || (issues.length && !activeIssue) || run) return;
+    let cancelled = false;
+    void getLatestAgentResult(caseId, activeIssue).then(result => {
+      if (!cancelled && result && restoreAgentRun(caseId, activeIssue, result))
+        setIsland(current => ({ ...current, visible: true, text: result.goal }));
+    }).catch(err => {
+      if (!cancelled && !getAgentRun(caseId, activeIssue)) {
+        updateAgentRun(caseId, activeIssue, { error: `历史调查结果加载失败：${err instanceof Error ? err.message : "未知错误"}` });
+        setIsland(current => ({ ...current, visible: true }));
+      }
+    });
+    return () => { cancelled = true; };
   }, [currentCase?.case_id, activeIssue]);
 
   useEffect(() => {
@@ -1480,13 +1497,14 @@ export default function App() {
   }
 
   function mergeReasoningWorkspaces(caseId: string, issue: string, workspaces: IssueWorkspaces, previousVisible: Set<string>) {
-    if (agentCaseIdRef.current !== caseId || issueStateRef.current?.data.active_issue !== issue) return;
+    if (agentCaseIdRef.current !== caseId || issueStateRef.current?.caseId !== caseId) return;
     // Only merge server-owned reasoning and new membership/positions. The
     // user may have panned or selected while this write was in flight.
     const latest = issueStateRef.current;
     if (!latest) return;
     const local = latest.data.workspaces[issue];
     const remote = workspaces.workspaces[issue];
+    if (!local || !remote) return;
     const remoteIds = new Set([...remote.reasoning.hypotheses, ...remote.reasoning.gaps].map(obj => obj.id));
     const deletedIds = new Set([...local.reasoning.hypotheses, ...local.reasoning.gaps]
       .filter(obj => !remoteIds.has(obj.id)).map(obj => obj.id));
@@ -1499,7 +1517,8 @@ export default function App() {
     } };
     const next = { ...latest, data: { ...latest.data, workspaces: { ...latest.data.workspaces, [issue]: merged } } };
     issueStateRef.current = next; setIssueState(next);
-    return remote;
+    // Background merges must not move the currently displayed selection/view.
+    return next.data.active_issue === issue ? remote : undefined;
   }
 
   async function refreshReasoning(caseId: string, issue: string, previousVisible: Set<string>) {
@@ -1536,10 +1555,9 @@ export default function App() {
         const previousVisible = new Set(issueStateRef.current?.data.workspaces[issue]?.canvas.visible_node_ids ?? []);
         const response = await retryInvestigationChanges(caseId, { issue, run_id: runId });
         mergeReasoningWorkspaces(caseId, issue, response.workspaces, previousVisible);
-        if (agentCaseIdRef.current === caseId) {
-          setAgentResult(current => current?.run_id === runId
-            ? { ...current, workspace_commit: response.workspace_commit } : current);
-        }
+        const run = agentRuns[JSON.stringify([caseId, issue])];
+        if (run?.result?.run_id === runId)
+          updateAgentRun(caseId, issue, { result: { ...run.result, workspace_commit: response.workspace_commit } }, runId);
       });
     } catch (err) {
       if (agentCaseIdRef.current === caseId && issueStateRef.current?.data.active_issue === issue) setReasoningError(reasoningFailure(err));
@@ -2166,7 +2184,7 @@ export default function App() {
 
   async function onRunAgent() {
     if (agentBusy) return;
-    setAgentResult(null); setReasoningError("");
+    setReasoningError("");
     if (!currentCase) { setAgentError("请先选择案件。"); return; }
     if (issues.length && !issueData) { setAgentError("请先加载当前 Issue 工作区。"); return; }
     if (selectedReasoningIds.length > 3) { setAgentError("每次最多选择 3 个推理对象。"); return; }
@@ -2174,27 +2192,26 @@ export default function App() {
     if (!goal) { setAgentError("请输入调查问题。"); return; }
     if (selectedInfoUnitIds.length > 5) { setAgentError("每次最多选择 5 个信息节点。"); return; }
     const caseId = currentCase.case_id;
-    const request = ++agentRequestRef.current;
-    setAgentBusy(true);
-    setAgentError("");
-    setAgentResult(null);
+    const runIssue = activeIssue;
+    const runId = startAgentRun(caseId, runIssue, goal);
+    if (!runId) return;
+    const semanticFocus = focusedNodeId && [...currentCase.info_units, ...reasoning.hypotheses, ...reasoning.gaps].some(obj => obj.id === focusedNodeId) ? focusedNodeId : null;
+    const previousVisible = new Set(issueStateRef.current?.data.workspaces[runIssue]?.canvas.visible_node_ids ?? []);
     try {
       await workspaceMutationQueueRef.current;
-      if (request !== agentRequestRef.current || agentCaseIdRef.current !== caseId) return;
-      if (workspaceErrorRef.current) throw new Error("请先重试保存当前工作区，再开展调查。");
-      const semanticFocus = focusedNodeId && [...currentCase.info_units, ...reasoning.hypotheses, ...reasoning.gaps].some(obj => obj.id === focusedNodeId) ? focusedNodeId : null;
-      const runIssue = activeIssue;
-      const previousVisible = new Set(issueStateRef.current?.data.workspaces[runIssue]?.canvas.visible_node_ids ?? []);
-      const result = await runAgent(caseId, { goal, selected_info_unit_ids: selectedInfoUnitIds, selected_reasoning_ids: selectedReasoningIds, ...(activeIssue ? { current_issue: activeIssue, focused_object_id: semanticFocus } : {}) });
-      if (request === agentRequestRef.current && agentCaseIdRef.current === caseId) {
-        setAgentResult(result);
-        if (runIssue) await refreshReasoning(caseId, runIssue, previousVisible);
+      if (issueStateRef.current?.caseId === caseId && workspaceErrorRef.current)
+        throw new Error("请先重试保存当前工作区，再开展调查。");
+      const result = await runAgent(caseId, { run_id: runId, goal, selected_info_unit_ids: selectedInfoUnitIds, selected_reasoning_ids: selectedReasoningIds, ...(runIssue ? { current_issue: runIssue, focused_object_id: semanticFocus } : {}) });
+      updateAgentRun(caseId, runIssue, { result }, runId);
+      if (runIssue && result.workspace_commit?.status === "applied") {
+        try { await refreshReasoning(caseId, runIssue, previousVisible); }
+        catch (err) {
+          updateAgentRun(caseId, runIssue, { error: `调查结果已保存，但工作区刷新失败：${err instanceof Error ? err.message : "未知错误"}` }, runId);
+        }
       }
+      updateAgentRun(caseId, runIssue, { status: result.run_status ?? "completed" }, runId);
     } catch (err) {
-      if (request === agentRequestRef.current && agentCaseIdRef.current === caseId)
-        setAgentError(err instanceof Error ? err.message : "调查失败，请重试。");
-    } finally {
-      if (request === agentRequestRef.current && agentCaseIdRef.current === caseId) setAgentBusy(false);
+      updateAgentRun(caseId, runIssue, { status: "failed", error: err instanceof Error ? err.message : "调查失败，请重试。" }, runId);
     }
   }
 
@@ -3364,7 +3381,7 @@ export default function App() {
                 {agentBusy ? <p role="status">调查中…正在按需检索和核对依据。</p> : null}
                 {agentResult ? <InvestigationResultPanel key={`result-${agentResult.run_id}`} result={agentResult} infoUnits={currentCase?.info_units ?? []}
                   relations={currentCase?.relations ?? []} onLocate={locateAgentNode}
-                  onClose={() => setAgentResult(null)} /> : null}
+                  onClose={() => updateAgentRun(currentCase?.case_id ?? "", activeIssue, { result: null })} /> : null}
                 {currentCase ? <ReasoningSuggestions result={agentResult} state={reasoning} caseData={currentCase}
                   busy={reasoningBusy} error={reasoningError} onReverse={(runId, restore) => void reverseAgentRun(runId, restore)} onRetry={runId => void retryAgentRun(runId)}
                   onEdit={change => openReasoningEditor({ kind: change.collection === "hypotheses" ? "hypothesis" : change.collection === "gaps" ? "gap" : "link", id: change.object_id })}
