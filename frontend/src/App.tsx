@@ -1536,6 +1536,10 @@ export default function App() {
         const previousVisible = new Set(issueStateRef.current?.data.workspaces[issue]?.canvas.visible_node_ids ?? []);
         const response = await retryInvestigationChanges(caseId, { issue, run_id: runId });
         mergeReasoningWorkspaces(caseId, issue, response.workspaces, previousVisible);
+        if (agentCaseIdRef.current === caseId) {
+          setAgentResult(current => current?.run_id === runId
+            ? { ...current, workspace_commit: response.workspace_commit } : current);
+        }
       });
     } catch (err) {
       if (agentCaseIdRef.current === caseId && issueStateRef.current?.data.active_issue === issue) setReasoningError(reasoningFailure(err));

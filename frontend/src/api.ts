@@ -6,6 +6,8 @@ export type AgentResult = {
   answer_basis: "general" | "case_metadata" | "case_material" | null;
   answer?: string | null;
   summary_status?: "pending" | "completed" | "failed";
+  finish_status?: "pending" | "validated" | "failed";
+  run_status?: "running" | "completed" | "incomplete" | "failed" | "cancelled";
   limitations?: string[];
   relevant_info_unit_ids: string[];
   relevant_relation_ids: string[];
@@ -17,7 +19,7 @@ export type AgentResult = {
   stop_reason: string;
   tool_call_count: number;
   proposals?: ReasoningProposal[];
-  workspace_commit?: { status: "pending" | "applied" | "undone" | "no_change" | "failed" | "conflict" | "budget_exhausted";
+  workspace_commit?: { status: "pending" | "applied" | "undone" | "no_change" | "failed" | "conflict" | "discarded";
     changes: ReasoningChange[]; error?: { code: string; message: string } };
 };
 
@@ -393,7 +395,7 @@ export type ReasoningState = { hypotheses: Hypothesis[]; gaps: EvidenceGap[]; li
   investigation_runs?: Record<string, ReasoningRun> };
 type ProposalFields = {
   content: string | null; hypothesis_ids: string[]; meaning: LinkMeaning | null;
-  judgment: Judgment | null; rationale: string; evidence_refs?: AgentEvidenceRef[]; // Historical runs only.
+  judgment: Judgment | null; rationale: string; changes: ReasoningChange[];
   proposal_id?: string | null; hypothesis_proposal_ids?: string[]; hypothesis_proposal_indices?: number[] };
 export type ReasoningProposal = ProposalFields & (
   { kind: "evidence_gap"; basis_info_unit_ids: string[] } |
@@ -424,7 +426,7 @@ export async function reverseInvestigationChanges(caseId: string, input: {
   }));
 }
 
-export async function retryInvestigationChanges(caseId: string, input: { issue: string; run_id: string }): Promise<{ workspaces: IssueWorkspaces }> {
+export async function retryInvestigationChanges(caseId: string, input: { issue: string; run_id: string }): Promise<{ workspaces: IssueWorkspaces; workspace_commit: ReasoningRun }> {
   return readJson(await fetch(`${API_BASE}/api/cases/${encodeURIComponent(caseId)}/investigation-changes/retry`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
   }));

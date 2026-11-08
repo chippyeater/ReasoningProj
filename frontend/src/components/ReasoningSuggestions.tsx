@@ -20,12 +20,12 @@ export function ReasoningSuggestions({ result, state, caseData, busy, error, onR
   if (!runs.length && !pending?.proposals?.length && !error) return null;
   const text = (value: string) => reasoningText(value, caseData, state, result?.evidence);
   return <section className="reasoning-suggestions" aria-label="调查变更记录">
-    {pending?.proposals?.length ? <details open><summary>本轮未写入（{pending.proposals.length} 项暂存提案）</summary>
+    {pending?.proposals?.length ? <details open><summary>本轮未写入（{pending.proposals.length} 项变更记录）</summary>
       <p>{pending.workspace_commit?.status === "conflict" ? "调查期间推理或材料已被修改。" : "调查未正常完成或提交失败。"}未写入任何推理变更，提案与运行记录已保留。</p>
       {pending.proposals.map((item, index) => <article key={index}><strong>{text(item.content ?? "更新已有推理")}</strong><p>{text(item.rationale)}</p>
         {proposalInfoUnitIds(item).map(id => <button type="button" key={id} onClick={() => onLocate(id)}>{caseData.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}
       </article>)}
-      {pending.workspace_commit?.status === "failed" && pending.summary_status === "completed"
+      {pending.workspace_commit?.status === "failed" && pending.finish_status === "validated"
         ? <button type="button" disabled={busy} onClick={() => onRetry(pending.run_id)}>重试写入本轮变更</button> : null}
     </details> : null}
     {runs.length ? <details open><summary>调查变更记录（{runs.length} 轮）</summary><p>Agent 已统一写入内部推理对象；来源可定位不代表命题已被证实。你可以编辑、删除，或撤销本轮变更。</p>
@@ -46,11 +46,6 @@ export function ReasoningSuggestions({ result, state, caseData, busy, error, onR
             {"judgment" in obj ? <p>{change.before && "judgment" in change.before ? `${judgments[change.before.judgment]} → ` : ""}{judgments[obj.judgment]}</p> : null}
             {"addressing_info_unit_ids" in obj ? <p>{obj.status === "open" ? "仍待补证" : "缺口已回应"} · 回应材料：{obj.addressing_info_unit_ids.map(id => caseData.info_units.find(u => u.id === id)?.title ?? "相关材料").join("、") || "暂无"}</p> : null}
             <details><summary>查看变更依据</summary>{basis.map((item, i) => <div key={i}><p>{text(item.rationale)}</p>
-              {item.evidence_refs?.map((ref, j) => {
-                const unit = caseData.info_units.find(u => u.id === ref.info_unit_id);
-                const snapshot = run.evidence.find(e => e.info_unit_id === ref.info_unit_id && e.source_ref_index === ref.source_ref_index);
-                return <div key={j}><button type="button" onClick={() => onLocate(ref.info_unit_id)}>{unit?.title ?? "相关材料"}</button><blockquote>{snapshot?.source_ref.quote ?? "来源当前不可用"}</blockquote></div>;
-              })}
               {proposalInfoUnitIds(item).map(id => <button type="button" key={id} onClick={() => onLocate(id)}>{caseData.info_units.find(u => u.id === id)?.title ?? "相关材料"}</button>)}
             </div>)}</details>
             {current ? <button type="button" disabled={busy} onClick={() => onEdit(change)}>查看与编辑</button> : <p>对象当前已删除或撤销</p>}

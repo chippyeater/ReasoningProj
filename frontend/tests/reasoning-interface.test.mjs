@@ -29,7 +29,7 @@ const result = { run_id: 'investigation-test', proposals: [], evidence: [], evid
   summary_status: 'completed', completion_status: 'evidence_insufficient', answer_basis: 'case_material',
   goal: '核对收款', answer: '实际收款尚待核实。' };
 const proposal = { proposal_id: 'proposal-test', kind: 'hypothesis', content: '房东少收租金',
-  rationale: '需要核对计租与收款。', evidence_refs: [], info_unit_ids: ['info-rent'], hypothesis_ids: [] };
+  rationale: '需要核对计租与收款。', changes: [], info_unit_ids: ['info-rent'], hypothesis_ids: [] };
 const props = { state, caseData, busy: false, error: '', onReverse() {}, onRetry() {}, onEdit() {}, onLocate() {} };
 const change = { collection: 'hypotheses', object_id: 'hyp-agent', before: null,
   after: { id: 'hyp-agent', content: '房东少收租金', judgment: 'unverified', work_status: 'active' },
@@ -42,12 +42,12 @@ test('committed changes show editing and undo without approval controls', () => 
   assert.match(html, /已统一写入内部推理对象/);
   assert.match(html, /查看与编辑/);
   assert.match(html, /撤销本轮变更/);
-  assert.match(html, /未附原文引用/);
+  assert.match(html, /收款记录/);
   assert.doesNotMatch(html, /采纳建议|忽略建议|请先采纳/);
 });
 
 test('failed and budget exhausted runs expose retained proposals without write controls', () => {
-  for (const status of ['failed', 'conflict', 'budget_exhausted', 'pending']) {
+  for (const status of ['failed', 'conflict', 'discarded', 'pending']) {
     const html = render(ReasoningSuggestions, { ...props, result: { ...result,
       proposals: [proposal], workspace_commit: { status, changes: [] } } });
     assert.match(html, /未写入任何推理变更/);
@@ -64,14 +64,12 @@ test('history survives closing the result and offers restore after undo', () => 
   assert.doesNotMatch(html, /采纳|待确认/);
 });
 
-test('historical basis uses the committed source snapshot after case material changes', () => {
-  const cited = { ...proposal, evidence_refs: [{ info_unit_id: 'info-rent', source_ref_index: 0 }] };
+test('operation basis uses InfoUnit IDs without requiring source pointers', () => {
   const html = render(ReasoningSuggestions, { ...props, result: null,
-    caseData: { ...caseData, info_units: [{ ...caseData.info_units[0], source_refs: [{ quote: '用户后来改过的来源' }] }] },
-    state: { ...state, investigation_runs: { [result.run_id]: { ...run, proposals: [cited], evidence: [
-      { info_unit_id: 'info-rent', source_ref_index: 0, source_ref: { quote: '运行时实际引用的原文' } }] } } } });
-  assert.match(html, /运行时实际引用的原文/);
-  assert.doesNotMatch(html, /用户后来改过的来源/);
+    state: { ...state, investigation_runs: { [result.run_id]: run } } });
+  assert.match(html, /收款记录/);
+  assert.match(html, /需要核对计租与收款/);
+  assert.doesNotMatch(html, /未附原文引用/);
 });
 
 test('result has one missing-source warning and metadata answers do not imply missing evidence', () => {
@@ -95,11 +93,19 @@ test('Hypothesis and Gap editors distinguish a proposition from a factual questi
 });
 
 test('only a normal Finish with failed persistence offers a write retry', () => {
-  for (const status of ['failed', 'conflict', 'pending', 'budget_exhausted']) {
-    const html = render(ReasoningSuggestions, { ...props, result: { ...result, proposals: [proposal],
+  for (const status of ['failed', 'conflict', 'pending', 'discarded']) {
+    const html = render(ReasoningSuggestions, { ...props, result: { ...result, finish_status: 'validated', summary_status: 'failed', proposals: [proposal],
       workspace_commit: { status, changes: [] } } });
     assert.equal(html.includes('重试写入本轮变更'), status === 'failed');
   }
+});
+
+test('successful write retry does not keep claiming that changes were never written', () => {
+  const html = render(InvestigationResultPanel, { result: { ...result, summary_status: 'failed',
+    finish_status: 'validated', workspace_commit: { status: 'applied', changes: [change] } },
+    infoUnits: [], relations: [], onLocate() {}, onClose() {} });
+  assert.match(html, /本轮变更已写入/);
+  assert.doesNotMatch(html, /本轮未写入推理工作区/);
 });
 
 test('new and historical results show summary and sources while ignoring old Findings', () => {
@@ -124,7 +130,7 @@ test('unfinished result preserves failure and material display without Findings'
     limitations: ['来源文件暂时无法读取。'], proposals: [proposal] },
     infoUnits: caseData.info_units, relations: [], onLocate() {}, onClose() {} });
   assert.match(html, /role="alert"/);
-  assert.match(html, /已取得的材料与暂存提案仍可查看/);
+  assert.match(html, /已取得的材料与变更记录仍可查看/);
   assert.match(html, /本轮未写入推理工作区/);
   assert.match(html, /部分材料暂时无法读取/);
   assert.doesNotMatch(html, /已核查的发现/);
