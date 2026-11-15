@@ -7,7 +7,7 @@ Case 侧栏的「案件材料」打开独立 HTML 档案阅读器。支持六章
 `GET /api/cases/{case_id}/materials` 每次在既有 Workspace 锁内读取 `case.json` 的最新有效快照和该 Case 的 `issue_workspaces.json`，避免并发编辑混用不同时刻的业务数据。通过既有 `get_issue_workspaces` 投影当前全部 `core_issue / issue_set`，不按 `active_issue`、画布可见节点或当前选择裁剪。
 
 - 案件概况：`case_title`、人物/组织 InfoUnits、事件/状态陈述、立场 InfoUnits、核心 Issue、各 Issue 状态与命题/Gap 数量。
-- 事实时间线：事件类 InfoUnits；时间取已保存 `TimelineView.events.related_info_unit_ids` 对应的 `time_label / sort_date`。没有已保存时间时显示「事件时间未记录」，不使用 `InfoUnit.created_at` 作为发生时间。
+- 事实时间线：直接读取事件类 `InfoUnit.event_time`，按 ISO 日期前缀排序，时间范围按起点排序；原样显示日、年月、年份或起止范围，不补全日期。null 显示「事件时间不确定」并放在末尾；同一起点按 InfoUnit ID 稳定排序。不依赖 TimelineView 或 `InfoUnit.created_at`，来源和真实性标签沿用原有判断。
 - 争议与证据：每个 Issue 的 `reasoning.hypotheses`、原样保留的 `judgment / work_status`，及 `EvidenceLink.hypothesis_id → info_unit_id` 的支持/反对/相关关系与理由。
 - 证据目录：全部 `CaseFile`，以 `file_id` 去重；`InfoUnit.source_refs[].file_id → CaseFile.file_id` 是唯一原始文件关联路径。同名不同 ID 的文件保留；无关联 InfoUnit 的上传文件仍列出。相关 Issue 来自 InfoUnit 的 `related_issue`、画布成员、EvidenceLink 和 Gap 的真实引用，不推测跨 Issue 关系。
 - 待补充事项：全部 Issue 中 `status == open` 的 Gap，保留其 `hypothesis_ids`、形成依据及回应材料；已解决的 Gap 只计数。回应材料不等于 Gap 已解决。

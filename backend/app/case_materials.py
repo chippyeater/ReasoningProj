@@ -133,29 +133,21 @@ def render_case_materials(case: CaseData, workspaces: IssueWorkspaces, *,
         f'{len(open_gaps)} 个未解决缺口 · {resolved_count} 个已解决缺口</p>'
         + (f'<ul class="progress">{progress}</ul>' if progress else empty('尚无 Issue 调查状态。')))
 
-    # Reuse saved semantic timeline labels. InfoUnit.created_at is extraction time.
-    times = {uid: [] for uid in units}
-    for view in case.reasoning_views:
-        if view.view_type == "timeline":
-            for event in view.payload.events:
-                for uid in event.related_info_unit_ids:
-                    times[uid].append(event)
-
     def event_key(unit):
-        dates = [e.sort_date for e in times[unit.id] if e.sort_date]
-        return (not bool(dates), min(dates) if dates else "", unit.id)
+        # Canonical ISO date prefixes sort chronologically without inventing
+        # missing components. Ranges use their start; unknown times come last.
+        return (unit.event_time is None, (unit.event_time or "").split("/")[0], unit.id)
 
     timeline_rows = []
     for unit in sorted(events, key=event_key):
-        labels = list(dict.fromkeys(e.time_label for e in times[unit.id]))
-        time_label = " / ".join(labels) if labels else "事件时间未记录"
+        time_label = unit.event_time or "事件时间不确定"
         kind, label = classification(unit)
         linked = "".join(hypothesis_card(h, issue) for issue, _, h in links_by_unit[unit.id])
         timeline_rows.append(f'<article class="timeline-event"><div class="time-label">{text(time_label)}</div>'
             f'<h3>{text(unit.title)}</h3>{badge(kind, label)}<p>{text(unit.content)}</p>'
             f'<p class="meta">陈述者：{text(unit.speaker or "未记录")} · InfoUnit ID：<code>{text(unit.id)}</code></p>'
             f'{source_labels(unit)}{source_button(unit.id)}<details><summary>关联命题及其判断</summary>{linked or empty("尚无关联命题。")}</details></article>')
-    timeline = ('<p class="note">事件时间沿用已保存时间线；没有时间记录时不推测。命题判断独立展示，不反向改变来源陈述的性质。</p>'
+    timeline = ('<p class="note">事件时间取自信息节点，保留原有日期精度；时间范围按起点排序，不确定时间列在末尾，不推测具体日期。命题判断独立展示，不反向改变来源陈述的性质。</p>'
                 + ("".join(timeline_rows) or empty('尚无事件类 InfoUnit，暂无可整理的时间线。')))
 
     issue_rows = []

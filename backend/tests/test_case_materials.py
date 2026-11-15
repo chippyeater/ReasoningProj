@@ -37,7 +37,7 @@ class Document(HTMLParser):
 
 class TestCaseMaterials(IsolatedCaseTest):
     def fixture(self):
-        raw = '甲称已付款。乙要求返还押金。银行到账一百元。双方核实已经交付。'
+        raw = '甲称2026年3月5日已付款。乙要求返还押金。银行到账一百元。双方核实已经交付。'
         uploaded = self.upload(raw=raw.encode(), source_kind='communication')
         self.case = case_store.load_case(uploaded['case_id'])
         self.case.case_title = '租赁争议材料包'
@@ -50,7 +50,7 @@ class TestCaseMaterials(IsolatedCaseTest):
         values = dict(source_refs=[ref], side=None, actor=None, target=None, created_at=self.now)
         self.case.info_units = [
             InfoUnit(**values, id='info-report', type='event', subtype='reported', title='付款陈述',
-                     content='甲称已经付款，仍待核实。', speaker='甲', related_issue=self.a),
+                     content='甲称已经付款，仍待核实。', speaker='甲', related_issue=self.a, event_time='2026-03-05'),
             InfoUnit(**values, id='info-request', type='position', subtype=None, title='返还诉求',
                      content='乙要求返还全部押金。', speaker='乙', related_issue=self.b),
             InfoUnit(**values, id='info-record', type='event', subtype='documented', title='到账记录',
@@ -133,11 +133,52 @@ class TestCaseMaterials(IsolatedCaseTest):
         self.assertNotIn('甲称已经付款', confirmed)
         self.assertIn('communication', doc.sections['preparation'])
 
-    def test_event_time_reuses_saved_timeline_never_created_at(self):
+    def test_event_time_uses_info_unit_and_ignores_saved_timeline_and_created_at(self):
         doc = Document(self.client.get(self.fixture()).text)
-        self.assertIn('2026年10月1日', doc.sections['timeline'])
-        self.assertIn('事件时间未记录', doc.sections['timeline'])
+        self.assertIn('2026-03-05', doc.sections['timeline'])
+        self.assertNotIn('2026年10月1日', doc.sections['timeline'])
+        self.assertIn('事件时间不确定', doc.sections['timeline'])
         self.assertNotIn(self.now, doc.sections['timeline'])
+        self.assertLess(doc.sections['timeline'].index('付款陈述'), doc.sections['timeline'].index('到账记录'))
+
+    def test_timeline_sorts_dates_ranges_and_partial_precision_with_unknown_last(self):
+        raw = '甲称2024年、2025年3月、2026年3月5日至2026年3月7日、2026年4月、2027年曾付款。'
+        saved = self.upload(raw=raw.encode(), source_kind='testimony')
+        case = case_store.load_case(saved['case_id'])
+        ref = SourceRef(file_id=case.files[0].file_id, source_kind='testimony', quote=raw, start=0, end=len(raw))
+        dates = [None, '2027', '2026-04', '2026-03-07', '2026-03-05/2026-03-07',
+                 '2026-03-05', '2025-03', '2024']
+        case.info_units = [InfoUnit(id=f'event-{index}', type='event', subtype='reported', title=f'付款事件{index}',
+            content=raw, event_time=value, source_refs=[ref], speaker='甲', side=None, actor=None, target=None,
+            related_issue=None, created_at=case.created_at) for index, value in enumerate(dates)]
+        case_store.save_case(case)
+        doc = Document(self.client.get(f'/api/cases/{case.case_id}/materials').text)
+        content = doc.sections['timeline']
+        positions = [content.index(f'付款事件{index}') for index in (7, 6, 4, 5, 3, 2, 1, 0)]
+        self.assertEqual(positions, sorted(positions))
+        for value in dates[1:]:
+            self.assertIn(value, content)
+        # A year/month is displayed as saved, never expanded into a fictitious day.
+        self.assertNotIn('2024-01-01', content)
+        self.assertNotIn('2025-03-01', content)
+        self.assertIn('事件时间不确定', content)
+        self.assertIn('当事人 / 来源陈述 · 未证实', content)
+        self.assertIn(case.files[0].filename, content)
+
+    def test_timeline_reads_current_edit_and_clears_old_time_after_content_change(self):
+        url = self.fixture()
+        info_url = f'/api/cases/{self.case.case_id}/info-units/info-report'
+        response = self.client.patch(info_url, json={'event_time': '2026-03'})
+        self.assertEqual(response.status_code, 200, response.text)
+        content = Document(self.client.get(url).text).sections['timeline']
+        self.assertIn('2026-03', content)
+        self.assertNotIn('2026-03-05', content)
+        response = self.client.patch(info_url, json={'content': '甲改称曾经付款，时间仍待核实。'})
+        self.assertEqual(response.status_code, 200, response.text)
+        content = Document(self.client.get(url).text).sections['timeline']
+        self.assertNotIn('2026-03', content)
+        self.assertNotIn('2026年10月1日', content)
+        self.assertIn('事件时间不确定', content)
 
     def test_open_gaps_only_with_local_hypothesis_basis_and_addressing(self):
         doc = Document(self.client.get(self.fixture()).text)
