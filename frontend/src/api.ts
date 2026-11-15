@@ -85,6 +85,7 @@ export type InfoUnit = {
   subtype: InfoUnitSubtype | null;
   title: string;
   content: string;
+  event_time: string | null;
   source_refs: Array<{
     file_id: string;
     source_kind: "document" | "communication" | "testimony" | "record" | "other";
@@ -117,6 +118,7 @@ export type InfoUnitMutationInput = {
   subtype: InfoUnitSubtype | null;
   title: string;
   content: string;
+  event_time?: string | null;
   speaker: string | null;
   side: string | null;
   actor: string | null;

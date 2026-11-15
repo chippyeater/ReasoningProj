@@ -52,6 +52,8 @@ def model_unit(_file_id, evidence_id, **changes):
         related_issue="款项是否已支付",
     )
     value.update(changes)
+    if value["type"] == "event":
+        value.setdefault("event_time", None)
     return value
 
 

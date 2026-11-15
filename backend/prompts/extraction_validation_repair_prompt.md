@@ -16,6 +16,7 @@
 6. `type/subtype/speaker/related_issue` 的修复严格遵循 Schema v0.3。无法根据材料确定的事实不能擅自补全。
 7. 如果来源不足以支持原节点的重要语义，不得编造“修复成功”；应显式报告该节点无法修复，由后端按原有安全策略处理。
 8. 严禁重新生成完整 `ModelExtraction`、未失败的 InfoUnits 或新的案件争点；无关文本不应进入输出。
+9. `event_time` 只用于 event，使用 YYYY-MM-DD、YYYY-MM、YYYY 或 YYYY-MM-DD/YYYY-MM-DD。必须由所选 Quote Units 支持事件发生时间，不能借用文件/陈述日期或推测缺失年份；模糊或无可靠依据时设为 null，content 保留原文时间描述，reported/documented 不变。
 
 ## 输出
 

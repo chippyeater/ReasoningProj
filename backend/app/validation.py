@@ -1,6 +1,8 @@
 """Validate v0.3 results against fixed cached text and confirmed provenance."""
 from __future__ import annotations
 
+import re
+
 from app.case_store import read_parsed_document
 from app.errors import AppError
 from app.schemas import (
@@ -8,6 +10,26 @@ from app.schemas import (
     SourceRef, ValidationErrorItem, ValidationInput, ValidationResult, check_relations,
 )
 from app.validation_repair import issue
+
+
+def event_time_supported(value: str | None, references: list[SourceRef]) -> bool:
+    """Check explicit date components only; this does not prove an event occurred."""
+    if value is None:
+        return True
+    for endpoint in value.split("/"):
+        parts = [str(int(part)) for part in endpoint.split("-")]
+        # Match each endpoint within one selected quote. A separate date Quote
+        # Unit may supply the time for an event described in another selected unit.
+        year = endpoint[:4]
+        pattern = rf"(?<!\d){year}(?:年|(?!\w))"
+        if len(parts) >= 2:
+            pattern = rf"(?<![\d]){year}\s*(?:年|[-/.])\s*0?{parts[1]}(?:月|(?![\d]))"
+        if len(parts) == 3:
+            pattern = (rf"(?<![\d]){year}\s*(?:年|[-/.])\s*0?{parts[1]}\s*"
+                       rf"(?:月|[-/.])\s*0?{parts[2]}(?![\d])")
+        if not any(re.search(pattern, ref.quote) for ref in references):
+            return False
+    return True
 
 
 def locate_source_ref(case_id: str, file: CaseFile, quote: str) -> SourceRef:
@@ -30,6 +52,9 @@ def validate_extraction(case_id: str, value: ValidationInput) -> ValidationResul
     errors: list[ValidationErrorItem] = []
     documents: dict[str, str] = {}
     for unit in value.extraction.info_units:
+        if not event_time_supported(unit.event_time, unit.source_refs):
+            errors.append(ValidationErrorItem(item_id=unit.id, field="event_time",
+                message="Event time is not explicit in selected Quote Units; use null"))
         for index, ref in enumerate(unit.source_refs):
             field = f"source_refs.{index}"
             try:

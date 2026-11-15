@@ -5,7 +5,9 @@ Transport envelopes live in api_models.py. No input upgrades or field aliases.
 from __future__ import annotations
 
 from enum import Enum
+from datetime import date
 from pathlib import PurePosixPath
+import re
 from typing import Annotated, Generic, Literal, TypeVar
 
 from fastapi import UploadFile
@@ -153,12 +155,29 @@ class SourceRef(ContractModel):
         return self
 
 
+def check_event_time(value: str | None) -> str | None:
+    """Keep date precision in the string; reject invalid dates and reversed ranges."""
+    if value is None:
+        return None
+    if not re.fullmatch(r"[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?(?:/[0-9]{4}-[0-9]{2}-[0-9]{2})?", value):
+        raise ValueError("event_time must be YYYY, YYYY-MM, YYYY-MM-DD or YYYY-MM-DD/YYYY-MM-DD")
+    parts = value.split("/")
+    if len(parts) == 2 and len(parts[0]) != 10:
+        raise ValueError("event_time ranges require two full dates")
+    for part in parts:
+        date.fromisoformat(part + {4: "-01-01", 7: "-01", 10: ""}[len(part)])
+    if len(parts) == 2 and parts[0] > parts[1]:
+        raise ValueError("event_time range must be chronological")
+    return value
+
+
 class InfoUnit(ContractModel):
     id: Text
     type: InfoUnitType
     subtype: InfoUnitSubtype | None
     title: Title
     content: Content
+    event_time: str | None = None
     source_refs: Annotated[list[SourceRef], Field(min_length=1)]
     speaker: Text | None
     side: Text | None
@@ -177,6 +196,9 @@ class InfoUnit(ContractModel):
     @model_validator(mode="after")
     def check_classification(self) -> InfoUnit:
         check_info_classification(self.type, self.subtype)
+        check_event_time(self.event_time)
+        if self.type != InfoUnitType.event and self.event_time is not None:
+            raise ValueError("event_time is only allowed for events")
         if self.type in {InfoUnitType.state, InfoUnitType.position} and self.speaker is None:
             raise ValueError("state and position require a nonempty speaker")
         return self

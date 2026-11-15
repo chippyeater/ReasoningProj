@@ -47,6 +47,7 @@ class CreateInfoUnitInput(ContractModel):
     subtype: InfoUnitSubtype | None = None
     title: Title
     content: Content
+    event_time: str | None = None
     evidence_ids: EvidenceIds
     speaker: Text | None = None
     side: Text | None = None
@@ -60,6 +61,7 @@ class UpdateInfoUnitInput(ContractModel):
     subtype: InfoUnitSubtype | None = None
     title: Title | None = None
     content: Content | None = None
+    event_time: str | None = None
     evidence_ids: EvidenceIds | None = None
     speaker: Text | None = None
     side: Text | None = None

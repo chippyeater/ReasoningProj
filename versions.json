@@ -15,14 +15,14 @@
     {
       "name": "extraction",
       "path": "backend/prompts/extraction_system_prompt.md",
-      "version": 2,
-      "sha256": "b40af2068ec1d72a56fb57ae0ecf4eeb03085537b75e12c65667db69232ca6e7"
+      "version": 3,
+      "sha256": "2c4ce531015d74b10f0c43a16791941137b734fb046e2a7e98d8f75b1851bc20"
     },
     {
       "name": "extraction_validation_repair",
       "path": "backend/prompts/extraction_validation_repair_prompt.md",
-      "version": 1,
-      "sha256": "4d50767c75da4e70c68e3f9d7e3e068becfc41d4e3608747a2ae51bf8a424357"
+      "version": 2,
+      "sha256": "467ca2da26d33aa234ef7d9552216ffc5f1fbc5513ebb6752ef71ddb9ee1e81d"
     },
     {
       "name": "hypothesis_composer",

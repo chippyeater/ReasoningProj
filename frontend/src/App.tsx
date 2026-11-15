@@ -167,6 +167,7 @@ type InfoUnitDraft = {
   subtype: InfoUnitSubtype | null;
   title: string;
   content: string;
+  eventTime: string;
   speaker: string;
   side: string;
   actor: string;
@@ -184,6 +185,7 @@ function emptyInfoUnitDraft(): InfoUnitDraft {
     subtype: null,
     title: "",
     content: "",
+    eventTime: "",
     speaker: "",
     side: "",
     actor: "",
@@ -198,6 +200,7 @@ function infoUnitDraft(unit: InfoUnit): InfoUnitDraft {
     subtype: unit.subtype,
     title: unit.title,
     content: unit.content,
+    eventTime: unit.event_time ?? "",
     speaker: unit.speaker ?? "",
     side: unit.side ?? "",
     actor: unit.actor ?? "",
@@ -1896,11 +1899,12 @@ export default function App() {
       } else if (type === "event") {
         subtype = current.subtype && EVENT_SUBTYPES.includes(current.subtype) ? current.subtype : null;
       }
-      return { ...current, type, subtype };
+      return { ...current, type, subtype, eventTime: type === current.type ? current.eventTime : "" };
     });
   }
 
   function toggleEvidence(quoteId: string) {
+    setInfoUnitDraftState((current) => ({ ...current, eventTime: "" }));
     setSelectedEvidenceIds((current) => current.includes(quoteId)
       ? current.filter((id) => id !== quoteId)
       : [...current, quoteId]);
@@ -1913,6 +1917,7 @@ export default function App() {
       subtype: infoUnitDraftState.subtype,
       title: infoUnitDraftState.title.trim(),
       content: infoUnitDraftState.content.trim(),
+      event_time: infoUnitDraftState.type === "event" ? nullableText(infoUnitDraftState.eventTime) : null,
       speaker: nullableText(infoUnitDraftState.speaker),
       side: nullableText(infoUnitDraftState.side),
       actor: nullableText(infoUnitDraftState.actor),
@@ -2684,8 +2689,15 @@ export default function App() {
               </label>
               <label className="editor-field editor-field-wide">
                 <span>Content</span>
-                <textarea rows={4} value={infoUnitDraftState.content} onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, content: event.target.value }))} />
+                <textarea rows={4} value={infoUnitDraftState.content} onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, content: event.target.value, eventTime: "" }))} />
               </label>
+              {infoUnitDraftState.type === "event" ? (
+                <label className="editor-field editor-field-wide">
+                  <span>事件时间（不确定时留空）</span>
+                  <input value={infoUnitDraftState.eventTime} placeholder="2026-03-05 / 2026-03 / 2026 / 2026-03-05/2026-03-07"
+                    onChange={(event) => setInfoUnitDraftState((current) => ({ ...current, eventTime: event.target.value }))} />
+                </label>
+              ) : null}
               <label className="editor-field">
                 <span>Type</span>
                 <select value={infoUnitDraftState.type} onChange={(event) => changeInfoUnitType(event.target.value as InfoUnitType)}>

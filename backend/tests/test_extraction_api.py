@@ -7,6 +7,7 @@ from support import IsolatedCaseTest, docx_bytes, model_result, model_unit, quot
 from app import case_store, file_parsers, llm_client, observability
 from app.case_service import now_iso
 from app import extraction_service
+from app.prompt_loader import load_prompt
 
 CONFIG = llm_client.LLMConfig("azure", "https://test.services.ai.azure.com/openai/v1", "configured-model", "test-secret")
 
@@ -343,6 +344,7 @@ class TestExtractionAPI(IsolatedCaseTest):
         original = model_unit(fid, self.evidence(case, '甲：我已付款'), type='unknown')
         repaired = dict(original)
         repaired['type'] = 'event'
+        repaired['event_time'] = None
         replies = [
             llm_client.LLMReply(model_result([original]), {'step': 'extract'}),
             llm_client.LLMReply(json.dumps({
@@ -393,7 +395,8 @@ class TestExtractionAPI(IsolatedCaseTest):
         self.assertIn('Extraction Validation Repair · revalidate', names)
         repair_generation = next(start for start, _ in spans
                                  if start['name'] == 'Extraction Validation Repair · model call')
-        self.assertEqual(repair_generation['version'], 'v1')
+        self.assertEqual(repair_generation['version'], load_prompt(
+            extraction_service.VALIDATION_REPAIR_PROMPT_PATH, 'extraction_validation_repair').version)
         self.assertEqual(
             repair_generation['metadata']['prompt_name'], 'extraction_validation_repair')
 

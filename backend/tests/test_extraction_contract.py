@@ -16,6 +16,8 @@ def candidate(local_id, kind, subtype, title, content, _file_id, evidence_id, **
         "actor_local_id": None, "target_local_id": None, "related_issue": ISSUE,
     }
     value.update(changes)
+    if kind == "event":
+        value.setdefault("event_time", None)
     return value
 
 

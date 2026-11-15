@@ -19,6 +19,7 @@ from app.schemas import (
     ParseStatus, PipelineStage, RelationInput, RunStatus, SourceKind, SourceRef, StageRun, Text,
     TimelineView, Viewport, WorkspaceState,
 )
+from app.validation import event_time_supported
 
 
 def now_iso() -> str:
@@ -91,6 +92,8 @@ def prepare_info_unit_creation(case: CaseData, payload: CreateInfoUnitInput) -> 
             "invalid_info_unit", "InfoUnit violates the current schema",
             details={"errors": exc.errors(include_url=False, include_input=False, include_context=False)},
         ) from exc
+    if not event_time_supported(unit.event_time, unit.source_refs):
+        raise AppError("invalid_info_unit", "Event time is not explicit in selected Quote Units; use null")
     candidate = case.model_copy(deep=True)
     candidate.info_units.append(unit)
     try:
@@ -113,6 +116,10 @@ def prepare_info_unit_update(case: CaseData, info_unit_id: str, payload: UpdateI
     current = case.info_units[index]
     values = current.model_dump(mode="json")
     values.update(payload.model_dump(mode="json", exclude_unset=True, exclude={"evidence_ids"}))
+    if "event_time" not in payload.model_fields_set and (
+            values["content"] != current.content or values["type"] != current.type
+            or "evidence_ids" in payload.model_fields_set):
+        values["event_time"] = None
     if "evidence_ids" in payload.model_fields_set:
         values["source_refs"] = [
             ref.model_dump(mode="json")
@@ -128,6 +135,8 @@ def prepare_info_unit_update(case: CaseData, info_unit_id: str, payload: UpdateI
             "invalid_info_unit", "InfoUnit violates the current schema",
             details={"errors": exc.errors(include_url=False, include_input=False, include_context=False)},
         ) from exc
+    if not event_time_supported(updated.event_time, updated.source_refs):
+        raise AppError("invalid_info_unit", "Event time is not explicit in selected Quote Units; use null")
     candidate = case.model_copy(deep=True)
     candidate.info_units[index] = updated
     try:

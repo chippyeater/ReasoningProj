@@ -282,6 +282,7 @@ type InfoUnit = {
 
   title: string;   // 2—24 个 Unicode 字符
   content: string; // 4—220 个 Unicode 字符，保留必要条件及来源限定
+  event_time?: string | null; // 仅 event 可非空；YYYY-MM-DD、YYYY-MM、YYYY 或 YYYY-MM-DD/YYYY-MM-DD
 
   source_refs: SourceRef[];
   speaker: string | null; // state / position 必填非空
@@ -298,6 +299,8 @@ type InfoUnit = {
 **长度要求：** `title` 2–24 字符，`content` 4–220 字符；后端使用 Unicode 码点长度和去除首尾空白后的文本做校验。数字、英文、标点均参与计数。控制的是单节点文本，不是要求把多条独立信息压到一个节点，也不允许为满足上限而静默截断重要条件。超出上限应返回候选校验错误，由模型重写或合理拆分。
 
 **Subtype 校验：** `entity` 必须从四种实体子类中选择；`event` 只允许 `reported/documented/null` 由初始提取产生，`verified` 只能由独立核验工作流写入；`state/rule/position` 的 `subtype` 必须为 `null`。
+
+**事件时间：** `event_time` 表示事件发生时间，不借用文件/陈述日期，不推测缺失年份；模糊或不能可靠规范化时为 null，原文时间仍保留在 content。时间必须由所选 evidence_ids 的 Quote Units 支持，结构化时间不改变真实性判断。修改内容、类型或证据时，未重新提交的旧时间清空；修改标题等其他字段保留时间。相同内容但 event_time 不同的节点不自动合并。
 
 **重要边界：** 单方陈述一个搬离行为仍然是 `event/reported`，不能因为文字描述了发生动作就当作已证明。`position` 中表示“应当返还押金”等判断和诉求，而不是任何人说过的话。合同中的具体押金条件是 `rule`；“合同记载月租 3000 元”可以是 `state`。规则、状态和立场若同时具有独立核查价值，不应因来自同一合同或同一段笔录强行合并。
 

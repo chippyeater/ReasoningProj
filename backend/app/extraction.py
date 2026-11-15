@@ -15,9 +15,9 @@ from app.errors import AppError
 from app.quote_units import QuoteIndexEvent, quote_catalog, source_ref_from_quote_unit
 from app.schemas import (
     CaseData, Content, ContractModel, ExtractionOutput, InfoUnit, InfoUnitSubtype,
-    InfoUnitType, SourceRef, Text, Title, ValidationInput, check_info_classification,
+    InfoUnitType, SourceRef, Text, Title, ValidationInput, check_event_time, check_info_classification,
 )
-from app.validation import validate_extraction
+from app.validation import event_time_supported, validate_extraction
 from app.validation_repair import (
     BATCH_ITEM_ID, issue, item_errors, locatable_items, pydantic_issues,
     require_exact_fields, strict_json_object,
@@ -64,6 +64,11 @@ class ModelEntity(ModelInfoUnit):
 class ModelEvent(ModelInfoUnit):
     type: Literal["event"]
     subtype: Literal["reported", "documented"] | None
+    event_time: str | None = Field(description=(
+        "所选 Quote Units 支持的事件发生时间：YYYY-MM-DD、YYYY-MM、YYYY、"
+        "YYYY-MM-DD/YYYY-MM-DD；不能可靠规范化时为 null，不推测缺失年份。"))
+
+    _check_event_time = field_validator("event_time")(check_event_time)
 
 
 class ModelState(ModelInfoUnit):
@@ -301,6 +306,9 @@ def validate_extraction_candidates(payload: dict[str, Any], case: CaseData,
                 source_errors.append(issue(
                     item_id, f"evidence_ids.{evidence_index}", exc.code, str(exc)))
         errors.extend(source_errors)
+        if not event_time_supported(getattr(unit, "event_time", None), refs):
+            errors.append(issue(item_id, "event_time", "event_time_not_in_selected_evidence",
+                                "Event time must be explicit in selected Quote Units; otherwise use null"))
         source_diagnostics.append({
             "local_id": item_id,
             "evidence_ids": list(unit.evidence_ids),
@@ -399,7 +407,7 @@ def extraction_repair_evidence(case: CaseData, failed_items: list[dict[str, Any]
 
 def _semantic_key(unit: InfoUnit) -> tuple:
     return (unit.type, unit.subtype, unit.content, unit.speaker, unit.side,
-            unit.actor, unit.target, unit.related_issue)
+            unit.actor, unit.target, unit.related_issue, unit.event_time)
 
 
 def deduplicate_units(units: list[InfoUnit], existing: list[InfoUnit] | None = None) -> tuple[list[InfoUnit], list[dict]]:
